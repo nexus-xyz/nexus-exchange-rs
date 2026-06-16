@@ -284,13 +284,14 @@ pub struct WsClient {
 }
 
 impl WsClient {
-    /// Connect to `/ws` on `base_url`, authenticating with a single-use
-    /// `token`.
+    /// Connect to the indexer's `/ws` endpoint, authenticating with a
+    /// single-use `token` (mint one via `POST /ws/token`).
     ///
-    /// `base_url` is the HTTP(S) API origin (e.g. `https://exchange.nexus.xyz`
-    /// or [`crate::Network::base_url`]); the scheme is rewritten to `ws`/`wss`
-    /// and `/ws?token=…` is appended. A trailing `/api/exchange` path on the
-    /// base is preserved, so a [`crate::Network`] base URL works as-is.
+    /// `base_url` is the indexer's WebSocket origin (e.g. `wss://<indexer-host>`
+    /// or `ws://localhost:9090`). WebSockets connect **directly to the indexer
+    /// at host-root `/ws`** — the `/api/exchange` HTTP gateway cannot proxy WS
+    /// upgrades — so any path on `base_url` (such as `/api/exchange`) is
+    /// dropped, and the scheme is rewritten to `ws`/`wss`.
     pub async fn connect(base_url: &str, token: &str) -> Result<Self, WsError> {
         let url = ws_url(base_url, token)?;
         let (inner, _resp) = connect_async(url).await.map_err(Box::new)?;
@@ -354,10 +355,11 @@ impl Stream for WsClient {
     }
 }
 
-/// Derive a `ws`/`wss` `/ws?token=…` URL from an HTTP(S) base URL.
+/// Derive a `ws`/`wss` host-root `/ws?token=…` URL from a base URL.
 ///
-/// `http` → `ws`, `https` → `wss`. Any existing base path (e.g.
-/// `/api/exchange`) is preserved and `/ws` is appended to it.
+/// `http` → `ws`, `https` → `wss`. The WebSocket lives at the **host root**
+/// `/ws` — WS connects directly to the indexer, and the `/api/exchange` HTTP
+/// gateway cannot proxy upgrades — so any path on `base_url` is dropped.
 fn ws_url(base_url: &str, token: &str) -> Result<String, WsError> {
     let (scheme, rest) = if let Some(rest) = base_url.strip_prefix("https://") {
         ("wss", rest)
@@ -373,14 +375,16 @@ fn ws_url(base_url: &str, token: &str) -> Result<String, WsError> {
         )));
     };
 
-    let rest = rest.trim_end_matches('/');
-    if rest.is_empty() {
+    // WS lives at host-root `/ws`; drop any path (e.g. `/api/exchange`) and
+    // keep only `host[:port]`.
+    let host = rest.split('/').next().unwrap_or("");
+    if host.is_empty() {
         return Err(WsError::Url(format!("base url has no host: {base_url}")));
     }
 
     // The token is URL-safe (hex / base64url from the minting endpoint), so a
     // plain query append is sufficient.
-    Ok(format!("{scheme}://{rest}/ws?token={token}"))
+    Ok(format!("{scheme}://{host}/ws?token={token}"))
 }
 
 #[cfg(test)]
@@ -400,10 +404,12 @@ mod tests {
     }
 
     #[test]
-    fn ws_url_preserves_base_path_and_strips_trailing_slash() {
+    fn ws_url_uses_host_root_dropping_any_path() {
+        // WS connects directly to the indexer at host-root /ws; the
+        // /api/exchange HTTP gateway can't proxy upgrades, so the path is dropped.
         assert_eq!(
             ws_url("https://exchange.nexus.xyz/api/exchange/", "abc").unwrap(),
-            "wss://exchange.nexus.xyz/api/exchange/ws?token=abc"
+            "wss://exchange.nexus.xyz/ws?token=abc"
         );
     }
 

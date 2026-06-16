@@ -22,4 +22,8 @@ pub enum Error {
         /// Human-readable message.
         message: String,
     },
+
+    /// Authentication problem (missing credentials, malformed secret, etc.).
+    #[error("authentication error: {0}")]
+    Auth(String),
 }

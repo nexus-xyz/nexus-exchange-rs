@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 
 use crate::types::{
-    FundingSample, HealthStatus, MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, OrderBook,
-    Ticker, Trade,
+    ApiKeyInfo, FundingSample, HealthStatus, MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv,
+    OrderBook, Ticker, Trade,
 };
 use crate::{Client, Result};
 
@@ -94,5 +94,10 @@ impl Client {
     /// Indexer health/status snapshot. Unauthenticated.
     pub async fn health_check(&self) -> Result<HealthStatus> {
         self.get("/health", &[]).await
+    }
+
+    /// List the API keys for the authenticated session. Requires credentials.
+    pub async fn fetch_api_keys(&self) -> Result<Vec<ApiKeyInfo>> {
+        self.signed_get("/keys", &[]).await
     }
 }

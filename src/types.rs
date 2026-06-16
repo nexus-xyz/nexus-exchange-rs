@@ -236,3 +236,11 @@ pub struct HealthStatus {
     #[serde(default)]
     pub health: Option<String>,
 }
+
+/// An API key associated with the authenticated session (`GET /keys`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiKeyInfo {
+    pub key_id: String,
+    /// Rate-limit tier this key resolves to.
+    pub tier: String,
+}

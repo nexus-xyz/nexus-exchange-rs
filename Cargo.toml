@@ -1,0 +1,15 @@
+[package]
+name = "nexus-exchange"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Official Rust SDK for the Nexus Exchange API (REST + WebSocket)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/nexus-xyz/nexus-exchange-rs"
+keywords = ["nexus", "exchange", "trading", "crypto"]
+categories = ["api-bindings", "asynchronous"]
+publish = false # flip to true when release tooling lands (see SDK release issue)
+
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+thiserror = "2"

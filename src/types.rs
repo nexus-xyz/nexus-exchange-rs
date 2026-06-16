@@ -31,6 +31,33 @@ pub struct Market {
     pub max_leverage: u32,
 }
 
+/// Per-market summary with 24h volume and halt state.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MarketSummary {
+    pub market_id: String,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub mark_price: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub volume_24h: Decimal,
+    pub trade_count: u64,
+    /// Market lifecycle state, e.g. `active`, `halted`.
+    pub status: String,
+    pub halt_reason: Option<String>,
+    /// Unix ms when the market was halted, if it is.
+    pub halted_at: Option<i64>,
+    pub adl_event_count: u64,
+}
+
+/// Market lifecycle / halt status.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MarketStatus {
+    pub market_id: String,
+    pub status: String,
+    pub halt_reason: Option<String>,
+    pub halted_at: Option<i64>,
+    pub adl_event_count: u64,
+}
+
 /// CCXT-style ticker. Price fields are optional — the API sends `null` when a
 /// value is unavailable (e.g. no trades yet).
 #[derive(Debug, Clone, Deserialize)]
@@ -74,6 +101,121 @@ pub struct Ticker {
     /// Raw exchange-specific payload.
     #[serde(default)]
     pub info: Value,
+}
+
+/// A single order-book level, `[price, amount]` (CCXT format).
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct PriceLevel(
+    #[serde(with = "rust_decimal::serde::float")] pub Decimal,
+    #[serde(with = "rust_decimal::serde::float")] pub Decimal,
+);
+
+impl PriceLevel {
+    /// Price at this level.
+    pub fn price(&self) -> Decimal {
+        self.0
+    }
+    /// Resting size at this level.
+    pub fn amount(&self) -> Decimal {
+        self.1
+    }
+}
+
+/// Order book snapshot. Bids descending, asks ascending (CCXT convention).
+#[derive(Debug, Clone, Deserialize)]
+pub struct OrderBook {
+    pub symbol: String,
+    pub bids: Vec<PriceLevel>,
+    pub asks: Vec<PriceLevel>,
+    pub timestamp: i64,
+    pub datetime: String,
+    /// Monotonic sequence number for this snapshot.
+    pub nonce: i64,
+}
+
+/// Order side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Side {
+    Buy,
+    Sell,
+}
+
+/// A public trade print.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Trade {
+    pub id: String,
+    pub symbol: String,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub price: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub amount: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub cost: Decimal,
+    pub side: Side,
+    pub timestamp: i64,
+    pub datetime: String,
+    /// `taker` or `maker`, when known.
+    #[serde(rename = "takerOrMaker")]
+    pub taker_or_maker: Option<String>,
+    pub is_liquidation: bool,
+    #[serde(default)]
+    pub info: Value,
+}
+
+/// An OHLCV candle, `[timestamp_ms, open, high, low, close, volume]` (CCXT format).
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct Ohlcv(
+    pub i64,
+    #[serde(with = "rust_decimal::serde::float")] pub Decimal,
+    #[serde(with = "rust_decimal::serde::float")] pub Decimal,
+    #[serde(with = "rust_decimal::serde::float")] pub Decimal,
+    #[serde(with = "rust_decimal::serde::float")] pub Decimal,
+    #[serde(with = "rust_decimal::serde::float")] pub Decimal,
+);
+
+impl Ohlcv {
+    /// Open time, Unix ms.
+    pub fn timestamp(&self) -> i64 {
+        self.0
+    }
+    pub fn open(&self) -> Decimal {
+        self.1
+    }
+    pub fn high(&self) -> Decimal {
+        self.2
+    }
+    pub fn low(&self) -> Decimal {
+        self.3
+    }
+    pub fn close(&self) -> Decimal {
+        self.4
+    }
+    pub fn volume(&self) -> Decimal {
+        self.5
+    }
+}
+
+/// One intra-hour funding-rate sample.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FundingSample {
+    pub timestamp: i64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub funding_rate: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub premium_index: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub mark_price: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub oracle_price: Decimal,
+}
+
+/// Current mark price for a market.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MarkPrice {
+    pub market_id: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub mark_price: Decimal,
 }
 
 /// Indexer health/status snapshot (`GET /health`). Unknown fields are ignored,

@@ -73,3 +73,94 @@ async fn error_envelope_is_decoded() {
         other => panic!("expected Api error, got {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn fetch_order_book_parses_number_levels() {
+    let server = MockServer::start().await;
+    let body = serde_json::json!({
+        "symbol": "BTC-USDX-PERP",
+        "bids": [[50010.5, 1.2], [50010.0, 3.4]],
+        "asks": [[50011.0, 0.5]],
+        "timestamp": 1776033900000i64, "datetime": "2026-04-13T00:00:00Z", "nonce": 42
+    });
+    Mock::given(method("GET"))
+        .and(path("/markets/BTC-USDX-PERP/orderbook"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .mount(&server)
+        .await;
+
+    let ob = client(server.uri())
+        .fetch_order_book("BTC-USDX-PERP")
+        .await
+        .unwrap();
+    assert_eq!(ob.bids.len(), 2);
+    assert_eq!(ob.bids[0].price().to_string(), "50010.5");
+    assert_eq!(ob.bids[0].amount().to_string(), "1.2");
+    assert_eq!(ob.asks[0].price().to_string(), "50011");
+    assert_eq!(ob.nonce, 42);
+}
+
+#[tokio::test]
+async fn fetch_trades_parses_side_and_limit() {
+    use nexus_exchange::types::Side;
+    let server = MockServer::start().await;
+    let body = serde_json::json!([{
+        "id": "t1", "symbol": "BTC-USDX-PERP", "price": 50010.5, "amount": 0.1, "cost": 5001.05,
+        "side": "buy", "timestamp": 1776033900000i64, "datetime": "2026-04-13T00:00:00Z",
+        "takerOrMaker": "taker", "is_liquidation": false, "info": {}
+    }]);
+    Mock::given(method("GET"))
+        .and(path("/markets/BTC-USDX-PERP/trades"))
+        .and(wiremock::matchers::query_param("limit", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .mount(&server)
+        .await;
+
+    let trades = client(server.uri())
+        .fetch_trades("BTC-USDX-PERP", Some(1))
+        .await
+        .unwrap();
+    assert_eq!(trades.len(), 1);
+    assert_eq!(trades[0].side, Side::Buy);
+    assert_eq!(trades[0].taker_or_maker.as_deref(), Some("taker"));
+}
+
+#[tokio::test]
+async fn fetch_funding_parses_string_decimals() {
+    let server = MockServer::start().await;
+    let body = serde_json::json!([{
+        "timestamp": 1776033900000i64, "funding_rate": "0.0001", "premium_index": "0.00005",
+        "mark_price": "50011.60", "oracle_price": "50010.00"
+    }]);
+    Mock::given(method("GET"))
+        .and(path("/markets/BTC-USDX-PERP/funding"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .mount(&server)
+        .await;
+
+    let f = client(server.uri())
+        .fetch_funding_rate_history("BTC-USDX-PERP", None)
+        .await
+        .unwrap();
+    assert_eq!(f[0].funding_rate.to_string(), "0.0001");
+    assert_eq!(f[0].mark_price.to_string(), "50011.60");
+}
+
+#[tokio::test]
+async fn fetch_ohlcv_parses_array_candles() {
+    let server = MockServer::start().await;
+    let body = serde_json::json!([[1776033900000i64, 48062.0, 51903.0, 44992.0, 51903.0, 27.123]]);
+    Mock::given(method("GET"))
+        .and(path("/markets/BTC-USDX-PERP/candles"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .mount(&server)
+        .await;
+
+    let c = client(server.uri())
+        .fetch_ohlcv("BTC-USDX-PERP", Some("1m"), Some(1))
+        .await
+        .unwrap();
+    assert_eq!(c[0].timestamp(), 1776033900000);
+    assert_eq!(c[0].close().to_string(), "51903");
+    assert_eq!(c[0].volume().to_string(), "27.123");
+}

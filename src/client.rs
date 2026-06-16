@@ -1,7 +1,7 @@
 //! The HTTP client — entry point for the SDK.
 
 use crate::{Config, Error, Result};
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The `{ code, message }` error envelope returned by the API on failures.
@@ -80,6 +80,47 @@ impl Client {
             format!("{}{}?{}", self.config.base_url, path, qs)
         };
         let mut req = self.http.get(url);
+        for (name, value) in &headers {
+            req = req.header(*name, value);
+        }
+        self.handle(req.send().await?).await
+    }
+
+    /// Issue an HMAC/bearer-signed `POST` with a JSON body.
+    pub(crate) async fn signed_post<B: Serialize, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
+        let creds = self
+            .config
+            .credentials
+            .as_ref()
+            .ok_or_else(|| Error::Auth("this endpoint requires credentials".into()))?;
+        let body_bytes = serde_json::to_vec(body)?;
+        let headers = creds.headers("POST", path, "", &body_bytes, now_ms())?;
+        let mut req = self
+            .http
+            .post(format!("{}{}", self.config.base_url, path))
+            .header("content-type", "application/json")
+            .body(body_bytes);
+        for (name, value) in &headers {
+            req = req.header(*name, value);
+        }
+        self.handle(req.send().await?).await
+    }
+
+    /// Issue an HMAC/bearer-signed `DELETE` (no body).
+    pub(crate) async fn signed_delete<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        let creds = self
+            .config
+            .credentials
+            .as_ref()
+            .ok_or_else(|| Error::Auth("this endpoint requires credentials".into()))?;
+        let headers = creds.headers("DELETE", path, "", b"", now_ms())?;
+        let mut req = self
+            .http
+            .delete(format!("{}{}", self.config.base_url, path));
         for (name, value) in &headers {
             req = req.header(*name, value);
         }

@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 
 use crate::types::{
-    ApiKeyInfo, FundingSample, HealthStatus, MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv,
-    OrderBook, Ticker, Trade,
+    AccountSummary, ApiKeyInfo, Fill, FundingSample, HealthStatus, MarkPrice, Market, MarketStatus,
+    MarketSummary, Ohlcv, OrderBook, Position, RateLimitStatus, Ticker, Trade,
 };
 use crate::{Client, Result};
 
@@ -99,5 +99,26 @@ impl Client {
     /// List the API keys for the authenticated session. Requires credentials.
     pub async fn fetch_api_keys(&self) -> Result<Vec<ApiKeyInfo>> {
         self.signed_get("/keys", &[]).await
+    }
+
+    /// Account balance and collateral summary. Requires credentials.
+    pub async fn fetch_balance(&self) -> Result<AccountSummary> {
+        self.signed_get("/account", &[]).await
+    }
+
+    /// Open positions for the authenticated account. Requires credentials.
+    pub async fn fetch_positions(&self) -> Result<Vec<Position>> {
+        self.signed_get("/positions", &[]).await
+    }
+
+    /// Recent fills (private trade executions) for the authenticated account.
+    /// Requires credentials.
+    pub async fn fetch_my_trades(&self) -> Result<Vec<Fill>> {
+        self.signed_get("/fills", &[]).await
+    }
+
+    /// Current rate-limit status for the caller. Requires credentials.
+    pub async fn fetch_rate_limit_status(&self) -> Result<RateLimitStatus> {
+        self.signed_get("/account/rate-limit", &[]).await
     }
 }

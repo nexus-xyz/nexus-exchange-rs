@@ -6,9 +6,10 @@
 use std::collections::HashMap;
 
 use crate::types::{
-    AccountSummary, ApiKeyInfo, Fill, FundingSample, HealthStatus, MarkPrice, Market, MarketStatus,
-    MarketSummary, Ohlcv, Order, OrderBook, OrderRequest, OrderResponse, Position, RateLimitStatus,
-    Ticker, Trade,
+    AccountSummary, ApiKeyInfo, CreditResult, Decimal, DepositResult, Fill, FundingSample,
+    HealthStatus, MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook,
+    OrderRequest, OrderResponse, Position, RateLimitStatus, Ticker, TierOverride, Trade,
+    Withdrawal, WsToken,
 };
 use crate::{Client, Result};
 
@@ -152,5 +153,55 @@ impl Client {
     /// Fetch a single order by id. Requires credentials.
     pub async fn fetch_order(&self, order_id: &str) -> Result<Order> {
         self.signed_get(&format!("/orders/{order_id}"), &[]).await
+    }
+
+    /// Deposit USDX collateral. Requires credentials.
+    pub async fn deposit(&self, amount: Decimal) -> Result<DepositResult> {
+        self.signed_post(
+            "/account/deposit",
+            &serde_json::json!({ "amount": amount.to_string() }),
+        )
+        .await
+    }
+
+    /// Withdrawal history for the authenticated account. Requires credentials.
+    pub async fn fetch_withdrawals(&self) -> Result<Vec<Withdrawal>> {
+        self.signed_get("/withdrawals", &[]).await
+    }
+
+    /// Claim synthetic (testnet) USDX from the faucet, up to the per-key daily
+    /// allowance. Omit `amount` to claim the full remaining allowance. Requires
+    /// credentials.
+    pub async fn claim_credit(&self, amount: Option<Decimal>) -> Result<CreditResult> {
+        let body = match amount {
+            Some(a) => serde_json::json!({ "amount": a.to_string() }),
+            None => serde_json::json!({}),
+        };
+        self.signed_post("/account/credit", &body).await
+    }
+
+    /// Set an account's rate-limit tier (admin). Requires admin credentials.
+    pub async fn set_account_tier(&self, address: &str, tier: &str) -> Result<TierOverride> {
+        self.signed_put(
+            "/admin/tiers",
+            &serde_json::json!({ "address": address, "tier": tier }),
+        )
+        .await
+    }
+
+    /// List tier overrides (admin). Requires admin credentials.
+    pub async fn fetch_tier_overrides(&self) -> Result<Vec<TierOverride>> {
+        self.signed_get("/admin/tiers", &[]).await
+    }
+
+    /// Reset an account to its default tier (admin). Requires admin credentials.
+    pub async fn reset_account_tier(&self, address: &str) -> Result<serde_json::Value> {
+        self.signed_delete(&format!("/admin/tiers/{address}")).await
+    }
+
+    /// Mint a single-use, short-lived WebSocket token for the WebSocket
+    /// streaming client. Requires credentials.
+    pub async fn mint_web_socket_token(&self) -> Result<WsToken> {
+        self.signed_post_empty("/ws/token").await
     }
 }

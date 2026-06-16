@@ -411,3 +411,44 @@ pub struct OrderResponse {
     #[serde(default)]
     pub fills: Vec<serde_json::Value>,
 }
+
+/// Result of a deposit (`POST /account/deposit`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct DepositResult {
+    #[serde(with = "rust_decimal::serde::str")]
+    pub balance: Decimal,
+}
+
+/// A withdrawal record (`GET /withdrawals`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct Withdrawal {
+    pub id: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub amount: Decimal,
+    pub timestamp: i64,
+    pub status: String,
+}
+
+/// Result of claiming synthetic USDX credit (`POST /account/credit`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreditResult {
+    #[serde(with = "rust_decimal::serde::str")]
+    pub amount: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub credited_today: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub daily_limit: Decimal,
+}
+
+/// An account rate-limit tier override (`/admin/tiers`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct TierOverride {
+    pub address: String,
+    pub tier: String,
+}
+
+/// A freshly minted, single-use WebSocket token (`POST /ws/token`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct WsToken {
+    pub token: String,
+}

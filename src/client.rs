@@ -21,7 +21,7 @@ fn now_ms() -> u64 {
 /// Entry point for the Nexus Exchange API.
 ///
 /// Construct with [`Client::new`]. REST methods live in [`crate::rest`];
-/// streaming in [`crate::ws`] (added incrementally).
+/// streaming in [`crate::ws`].
 #[derive(Debug, Clone)]
 pub struct Client {
     http: reqwest::Client,
@@ -42,7 +42,7 @@ impl Client {
         &self.config.base_url
     }
 
-    /// Issue an unauthenticated `GET` and deserialize the JSON response.
+    /// Unauthenticated `GET`.
     pub(crate) async fn get<T: DeserializeOwned>(
         &self,
         path: &str,
@@ -57,23 +57,15 @@ impl Client {
         self.handle(resp).await
     }
 
-    /// Issue an HMAC/bearer-signed `GET`. Signs the exact path + query string,
-    /// then deserializes the JSON response.
+    /// Signed `GET` — signs the exact path + query string that is sent.
     pub(crate) async fn signed_get<T: DeserializeOwned>(
         &self,
         path: &str,
         query: &[(&str, String)],
     ) -> Result<T> {
-        let creds = self
-            .config
-            .credentials
-            .as_ref()
-            .ok_or_else(|| Error::Auth("this endpoint requires credentials".into()))?;
-
-        // Build the query string once so the signed bytes match what is sent.
+        let creds = self.creds()?;
         let qs = serde_urlencoded::to_string(query).unwrap_or_default();
         let headers = creds.headers("GET", path, &qs, b"", now_ms())?;
-
         let url = if qs.is_empty() {
             format!("{}{}", self.config.base_url, path)
         } else {
@@ -86,22 +78,56 @@ impl Client {
         self.handle(req.send().await?).await
     }
 
-    /// Issue an HMAC/bearer-signed `POST` with a JSON body.
+    /// Signed `POST` with a JSON body.
     pub(crate) async fn signed_post<B: Serialize, T: DeserializeOwned>(
         &self,
         path: &str,
         body: &B,
     ) -> Result<T> {
-        let creds = self
-            .config
+        self.signed_with_body(reqwest::Method::POST, path, body)
+            .await
+    }
+
+    /// Signed `PUT` with a JSON body.
+    pub(crate) async fn signed_put<B: Serialize, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
+        self.signed_with_body(reqwest::Method::PUT, path, body)
+            .await
+    }
+
+    /// Signed `DELETE` (no body).
+    pub(crate) async fn signed_delete<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        self.signed_no_body(reqwest::Method::DELETE, path).await
+    }
+
+    /// Signed `POST` with no body (e.g. token mint).
+    pub(crate) async fn signed_post_empty<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        self.signed_no_body(reqwest::Method::POST, path).await
+    }
+
+    fn creds(&self) -> Result<&crate::auth::Credentials> {
+        self.config
             .credentials
-            .as_ref()
-            .ok_or_else(|| Error::Auth("this endpoint requires credentials".into()))?;
+            .as_deref()
+            .ok_or_else(|| Error::Auth("this endpoint requires credentials".into()))
+    }
+
+    async fn signed_with_body<B: Serialize, T: DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
         let body_bytes = serde_json::to_vec(body)?;
-        let headers = creds.headers("POST", path, "", &body_bytes, now_ms())?;
+        let headers = self
+            .creds()?
+            .headers(method.as_str(), path, "", &body_bytes, now_ms())?;
         let mut req = self
             .http
-            .post(format!("{}{}", self.config.base_url, path))
+            .request(method, format!("{}{}", self.config.base_url, path))
             .header("content-type", "application/json")
             .body(body_bytes);
         for (name, value) in &headers {
@@ -110,17 +136,17 @@ impl Client {
         self.handle(req.send().await?).await
     }
 
-    /// Issue an HMAC/bearer-signed `DELETE` (no body).
-    pub(crate) async fn signed_delete<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-        let creds = self
-            .config
-            .credentials
-            .as_ref()
-            .ok_or_else(|| Error::Auth("this endpoint requires credentials".into()))?;
-        let headers = creds.headers("DELETE", path, "", b"", now_ms())?;
+    async fn signed_no_body<T: DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+    ) -> Result<T> {
+        let headers = self
+            .creds()?
+            .headers(method.as_str(), path, "", b"", now_ms())?;
         let mut req = self
             .http
-            .delete(format!("{}{}", self.config.base_url, path));
+            .request(method, format!("{}{}", self.config.base_url, path));
         for (name, value) in &headers {
             req = req.header(*name, value);
         }

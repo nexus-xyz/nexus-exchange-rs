@@ -16,7 +16,9 @@ async fn deposit_sends_amount_and_parses_balance() {
     Mock::given(method("POST"))
         .and(path("/account/deposit"))
         .and(body_json(serde_json::json!({ "amount": "10000" })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "balance": "110000.00" })))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "balance": "110000.00" })),
+        )
         .mount(&server)
         .await;
     let r = authed(server.uri())
@@ -46,13 +48,18 @@ async fn set_account_tier_uses_put_with_body() {
     let server = MockServer::start().await;
     Mock::given(method("PUT"))
         .and(path("/admin/tiers"))
-        .and(body_json(serde_json::json!({ "address": "0xabc", "tier": "MarketMaker" })))
+        .and(body_json(
+            serde_json::json!({ "address": "0xabc", "tier": "MarketMaker" }),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "address": "0xabc", "tier": "MarketMaker"
         })))
         .mount(&server)
         .await;
-    let t = authed(server.uri()).set_account_tier("0xabc", "MarketMaker").await.unwrap();
+    let t = authed(server.uri())
+        .set_account_tier("0xabc", "MarketMaker")
+        .await
+        .unwrap();
     assert_eq!(t.tier, "MarketMaker");
 }
 
@@ -61,7 +68,9 @@ async fn mint_ws_token_parses() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/ws/token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "token": "abc123" })))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "token": "abc123" })),
+        )
         .mount(&server)
         .await;
     let tok = authed(server.uri()).mint_web_socket_token().await.unwrap();

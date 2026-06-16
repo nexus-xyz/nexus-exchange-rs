@@ -1,0 +1,51 @@
+name: Spec drift
+
+# Verifies the endpoints the SDK targets (endpoints.txt) all still exist in the
+# pinned OpenAPI spec (.api-version), and reports any spec operations not yet
+# covered. Fetches the spec from the raw-at-tag URL (uncounted — the release
+# asset download_count is reserved as an external adoption signal) and caches
+# it by the pinned version so a normal run does no network.
+
+on:
+  pull_request:
+    paths:
+      - '.api-version'
+      - 'endpoints.txt'
+      - 'scripts/check_spec_drift.py'
+      - '.github/workflows/spec-drift.yml'
+  push:
+    branches: [main]
+    paths:
+      - '.api-version'
+      - 'endpoints.txt'
+      - 'scripts/check_spec_drift.py'
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned spec version
+        id: pin
+        run: echo "tag=$(cat .api-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the pinned spec
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: openapi.pinned.json
+          key: spec-${{ steps.pin.outputs.tag }}
+
+      - name: Fetch spec (cache miss only)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL \
+            "https://raw.githubusercontent.com/nexus-xyz/nexus-exchange-api/${{ steps.pin.outputs.tag }}/openapi.json" \
+            -o openapi.pinned.json
+
+      - name: Check drift
+        run: python3 scripts/check_spec_drift.py openapi.pinned.json

@@ -7,7 +7,8 @@ use std::collections::HashMap;
 
 use crate::types::{
     AccountSummary, ApiKeyInfo, Fill, FundingSample, HealthStatus, MarkPrice, Market, MarketStatus,
-    MarketSummary, Ohlcv, OrderBook, Position, RateLimitStatus, Ticker, Trade,
+    MarketSummary, Ohlcv, Order, OrderBook, OrderRequest, OrderResponse, Position, RateLimitStatus,
+    Ticker, Trade,
 };
 use crate::{Client, Result};
 
@@ -120,5 +121,36 @@ impl Client {
     /// Current rate-limit status for the caller. Requires credentials.
     pub async fn fetch_rate_limit_status(&self) -> Result<RateLimitStatus> {
         self.signed_get("/account/rate-limit", &[]).await
+    }
+
+    /// Place a single order. Requires credentials.
+    pub async fn create_order(&self, order: &OrderRequest) -> Result<OrderResponse> {
+        self.signed_post("/orders", order).await
+    }
+
+    /// Submit a batch of orders (sequential, non-atomic). Requires credentials.
+    /// The per-order result array is currently untyped in the spec.
+    pub async fn create_orders(&self, orders: &[OrderRequest]) -> Result<serde_json::Value> {
+        self.signed_post("/orders/batch", &orders).await
+    }
+
+    /// Cancel a single order by id. Requires credentials.
+    pub async fn cancel_order(&self, order_id: &str) -> Result<serde_json::Value> {
+        self.signed_delete(&format!("/orders/{order_id}")).await
+    }
+
+    /// Cancel all open orders for the account. Requires credentials.
+    pub async fn cancel_all_orders(&self) -> Result<serde_json::Value> {
+        self.signed_delete("/orders").await
+    }
+
+    /// List open orders for the authenticated account. Requires credentials.
+    pub async fn fetch_open_orders(&self) -> Result<Vec<Order>> {
+        self.signed_get("/orders", &[]).await
+    }
+
+    /// Fetch a single order by id. Requires credentials.
+    pub async fn fetch_order(&self, order_id: &str) -> Result<Order> {
+        self.signed_get(&format!("/orders/{order_id}"), &[]).await
     }
 }

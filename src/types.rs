@@ -5,8 +5,8 @@
 //! `float` adapter — so callers get one consistent money type regardless of
 //! the wire encoding.
 
-use rust_decimal::Decimal;
-use serde::Deserialize;
+pub use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// A tradable market and its trading rules.
@@ -135,12 +135,35 @@ pub struct OrderBook {
     pub nonce: i64,
 }
 
-/// Order side.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// Order side. Serializes as PascalCase (`Buy`/`Sell`, as order endpoints
+/// expect) and deserializes either case (public CCXT feeds use lowercase).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub enum Side {
+    #[serde(alias = "buy", alias = "BUY")]
     Buy,
+    #[serde(alias = "sell", alias = "SELL")]
     Sell,
+}
+
+/// Order type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum OrderType {
+    Limit,
+    Market,
+}
+
+/// Time-in-force policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum TimeInForce {
+    /// Good-till-cancelled.
+    Gtc,
+    /// Immediate-or-cancel.
+    Ioc,
+    /// Fill-or-kill.
+    Fok,
 }
 
 /// A public trade print.
@@ -311,4 +334,89 @@ pub struct RateLimitStatus {
     pub remaining: Option<i64>,
     /// Unix ms when the bucket refills to `limit`; `0` when already full.
     pub reset_at_ms: Option<i64>,
+}
+
+/// A new-order request (`POST /orders`). Construct with [`OrderRequest::limit`]
+/// or [`OrderRequest::market`].
+#[derive(Debug, Clone, Serialize)]
+pub struct OrderRequest {
+    pub market_id: String,
+    pub side: Side,
+    pub order_type: OrderType,
+    /// Limit price; omitted for market orders.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub price: Option<Decimal>,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub quantity: Decimal,
+    pub time_in_force: TimeInForce,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reduce_only: Option<bool>,
+}
+
+impl OrderRequest {
+    /// A limit order.
+    pub fn limit(
+        market_id: impl Into<String>,
+        side: Side,
+        price: Decimal,
+        quantity: Decimal,
+        time_in_force: TimeInForce,
+    ) -> Self {
+        Self {
+            market_id: market_id.into(),
+            side,
+            order_type: OrderType::Limit,
+            price: Some(price),
+            quantity,
+            time_in_force,
+            reduce_only: None,
+        }
+    }
+
+    /// A market order (immediate-or-cancel).
+    pub fn market(market_id: impl Into<String>, side: Side, quantity: Decimal) -> Self {
+        Self {
+            market_id: market_id.into(),
+            side,
+            order_type: OrderType::Market,
+            price: None,
+            quantity,
+            time_in_force: TimeInForce::Ioc,
+            reduce_only: None,
+        }
+    }
+}
+
+/// An order record.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Order {
+    pub id: String,
+    pub market_id: String,
+    pub account_id: String,
+    pub side: Side,
+    pub order_type: OrderType,
+    /// Limit price; `None` for market orders.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub price: Option<Decimal>,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub quantity: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub filled_qty: Decimal,
+    /// `Open`, `PartiallyFilled`, `Filled`, `Cancelled`, `Expired`, `Rejected`.
+    pub status: String,
+    pub time_in_force: TimeInForce,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Response to `POST /orders`: the resulting order plus any immediate fills.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OrderResponse {
+    pub order: Order,
+    /// Immediate fills (currently untyped in the spec).
+    #[serde(default)]
+    pub fills: Vec<serde_json::Value>,
 }

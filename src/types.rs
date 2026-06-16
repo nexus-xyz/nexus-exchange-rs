@@ -386,20 +386,26 @@ impl OrderRequest {
 pub struct Order {
     pub id: String,
     pub market_id: String,
+    // The spec marks every Order field optional, so the non-identity, non-enum
+    // fields default rather than fail deserialization if the API omits them.
+    #[serde(default)]
     pub account_id: String,
     pub side: Side,
     pub order_type: OrderType,
     /// Limit price; `None` for market orders.
     #[serde(default, with = "rust_decimal::serde::str_option")]
     pub price: Option<Decimal>,
-    #[serde(with = "rust_decimal::serde::str")]
+    #[serde(default, with = "rust_decimal::serde::str")]
     pub quantity: Decimal,
-    #[serde(with = "rust_decimal::serde::str")]
+    #[serde(default, with = "rust_decimal::serde::str")]
     pub filled_qty: Decimal,
     /// `Open`, `PartiallyFilled`, `Filled`, `Cancelled`, `Expired`, `Rejected`.
+    #[serde(default)]
     pub status: String,
     pub time_in_force: TimeInForce,
+    #[serde(default)]
     pub created_at: i64,
+    #[serde(default)]
     pub updated_at: i64,
 }
 

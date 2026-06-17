@@ -73,3 +73,55 @@ async fn error_envelope_is_decoded() {
         other => panic!("expected Api error, got {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn fetch_ticker_tolerates_omitted_fields() {
+    // Forward-compat: a *missing* (not null) number field must default to None
+    // rather than hard-error, so an older client keeps parsing a slimmer or
+    // re-shaped ticker. Here `high`/`low`/`change`/`info` are omitted entirely.
+    let server = MockServer::start().await;
+    let body = serde_json::json!({
+        "symbol": "BTC-USDX-PERP", "timestamp": 1776033900000i64,
+        "datetime": "2026-04-13T00:00:00Z", "bid": 50010.0, "ask": 50012.5,
+        "last": 50011.6
+    });
+    Mock::given(method("GET"))
+        .and(path("/markets/BTC-USDX-PERP/ticker"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .mount(&server)
+        .await;
+
+    let t = client(server.uri())
+        .fetch_ticker("BTC-USDX-PERP")
+        .await
+        .unwrap();
+    assert!(t.high.is_none());
+    assert!(t.low.is_none());
+    assert!(t.change.is_none());
+    assert_eq!(t.bid.unwrap().to_string(), "50010");
+}
+
+#[tokio::test]
+async fn fetch_ticker_float_decimal_is_not_lossy_for_nice_values() {
+    // Market-data money rides the f64 `float` adapter (the server sends these
+    // as JSON numbers). Guard the boundary with a value that is NOT f64-exact
+    // (1.1) so a regression that widened/changed the decode would surface here,
+    // rather than only testing f64-exact literals.
+    let server = MockServer::start().await;
+    let body = serde_json::json!({
+        "symbol": "BTC-USDX-PERP", "timestamp": 1776033900000i64,
+        "datetime": "2026-04-13T00:00:00Z", "last": 1.1, "percentage": 0.3, "info": {}
+    });
+    Mock::given(method("GET"))
+        .and(path("/markets/BTC-USDX-PERP/ticker"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .mount(&server)
+        .await;
+
+    let t = client(server.uri())
+        .fetch_ticker("BTC-USDX-PERP")
+        .await
+        .unwrap();
+    assert_eq!(t.last.unwrap().to_string(), "1.1");
+    assert_eq!(t.percentage.unwrap().to_string(), "0.3");
+}

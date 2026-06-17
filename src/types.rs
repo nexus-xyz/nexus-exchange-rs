@@ -41,35 +41,35 @@ pub struct Ticker {
     pub timestamp: i64,
     /// ISO-8601 timestamp.
     pub datetime: String,
-    #[serde(with = "rust_decimal::serde::float_option")]
+    #[serde(default, with = "rust_decimal::serde::float_option")]
     pub high: Option<Decimal>,
-    #[serde(with = "rust_decimal::serde::float_option")]
+    #[serde(default, with = "rust_decimal::serde::float_option")]
     pub low: Option<Decimal>,
-    #[serde(with = "rust_decimal::serde::float_option")]
+    #[serde(default, with = "rust_decimal::serde::float_option")]
     pub bid: Option<Decimal>,
-    #[serde(with = "rust_decimal::serde::float_option")]
+    #[serde(default, with = "rust_decimal::serde::float_option")]
     pub bid_volume: Option<Decimal>,
-    #[serde(with = "rust_decimal::serde::float_option")]
+    #[serde(default, with = "rust_decimal::serde::float_option")]
     pub ask: Option<Decimal>,
-    #[serde(with = "rust_decimal::serde::float_option")]
+    #[serde(default, with = "rust_decimal::serde::float_option")]
     pub ask_volume: Option<Decimal>,
-    #[serde(with = "rust_decimal::serde::float_option")]
+    #[serde(default, with = "rust_decimal::serde::float_option")]
     pub open: Option<Decimal>,
-    #[serde(with = "rust_decimal::serde::float_option")]
+    #[serde(default, with = "rust_decimal::serde::float_option")]
     pub close: Option<Decimal>,
-    #[serde(with = "rust_decimal::serde::float_option")]
+    #[serde(default, with = "rust_decimal::serde::float_option")]
     pub last: Option<Decimal>,
-    #[serde(with = "rust_decimal::serde::float_option")]
+    #[serde(default, with = "rust_decimal::serde::float_option")]
     pub change: Option<Decimal>,
-    #[serde(with = "rust_decimal::serde::float_option")]
+    #[serde(default, with = "rust_decimal::serde::float_option")]
     pub percentage: Option<Decimal>,
-    #[serde(with = "rust_decimal::serde::float_option")]
+    #[serde(default, with = "rust_decimal::serde::float_option")]
     pub base_volume: Option<Decimal>,
-    #[serde(with = "rust_decimal::serde::float_option")]
+    #[serde(default, with = "rust_decimal::serde::float_option")]
     pub quote_volume: Option<Decimal>,
-    #[serde(with = "rust_decimal::serde::float_option")]
+    #[serde(default, with = "rust_decimal::serde::float_option")]
     pub mark_price: Option<Decimal>,
-    #[serde(with = "rust_decimal::serde::float_option")]
+    #[serde(default, with = "rust_decimal::serde::float_option")]
     pub index_price: Option<Decimal>,
     /// Raw exchange-specific payload.
     #[serde(default)]
@@ -80,9 +80,13 @@ pub struct Ticker {
 /// so this stays forward-compatible as the snapshot grows.
 #[derive(Debug, Clone, Deserialize)]
 pub struct HealthStatus {
+    #[serde(default)]
     pub events_received: u64,
+    #[serde(default)]
     pub fills_total: u64,
+    #[serde(default)]
     pub uptime_seconds: u64,
+    #[serde(default)]
     pub connected: bool,
     /// Coarse health state, when reported (e.g. `healthy`, `degraded`).
     #[serde(default)]

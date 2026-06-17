@@ -66,7 +66,12 @@ async fn error_envelope_is_decoded() {
 
     let err = client(server.uri()).fetch_ticker("NOPE").await.unwrap_err();
     match err {
-        nexus_exchange::Error::Api { code, message } => {
+        nexus_exchange::Error::Api {
+            status,
+            code,
+            message,
+        } => {
+            assert_eq!(status, 404);
             assert_eq!(code, "market_not_found");
             assert_eq!(message, "no such market");
         }

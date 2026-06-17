@@ -16,7 +16,7 @@ pub mod types;
 pub mod ws;
 
 pub use client::Client;
-pub use config::{Config, Network};
+pub use config::{Config, Network, RetryConfig};
 pub use error::Error;
 
 /// Convenience `Result` using this crate's [`Error`].

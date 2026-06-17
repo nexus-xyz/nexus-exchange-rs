@@ -244,3 +244,71 @@ pub struct ApiKeyInfo {
     /// Rate-limit tier this key resolves to.
     pub tier: String,
 }
+
+/// Account balance and collateral summary (`GET /account`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct AccountSummary {
+    #[serde(with = "rust_decimal::serde::str")]
+    pub balance: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub collateral: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub equity: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub available_margin: Decimal,
+    pub positions: Vec<Position>,
+}
+
+/// An open position.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Position {
+    pub market_id: String,
+    /// Position direction (e.g. `long`/`short`).
+    pub side: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub size: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub entry_price: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub unrealized_pnl: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub realized_pnl: Decimal,
+    /// Liquidation price. The spec does not mark it required (it can be absent
+    /// in flat / cross-margin states), so it's optional rather than hard-failing
+    /// the whole balance/positions decode when omitted.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub liquidation_price: Option<Decimal>,
+}
+
+/// A fill (private trade execution) for the authenticated account.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Fill {
+    pub id: String,
+    pub order_id: String,
+    pub market_id: String,
+    pub side: Side,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub price: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub size: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub fee: Decimal,
+    /// `taker` or `maker`, when reported.
+    #[serde(default)]
+    pub taker_or_maker: Option<String>,
+    pub timestamp: i64,
+    pub is_liquidation: bool,
+}
+
+/// Current rate-limit status (`GET /account/rate-limit`). The numeric fields are
+/// `null` for the unlimited tier.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RateLimitStatus {
+    pub tier: String,
+    /// Requests per second ceiling (and burst capacity).
+    pub limit: Option<i64>,
+    /// Requests available right now.
+    pub remaining: Option<i64>,
+    /// Unix ms when the bucket refills to `limit`; `0` when already full.
+    pub reset_at_ms: Option<i64>,
+}

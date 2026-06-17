@@ -10,6 +10,10 @@ pub enum Error {
     #[error("http error: {0}")]
     Http(#[from] reqwest::Error),
 
+    /// Failed to (de)serialize a request or response body.
+    #[error("serialization error: {0}")]
+    Serde(#[from] serde_json::Error),
+
     /// The API returned a structured error envelope (`{ code, message }`).
     #[error("api error [{code}]: {message}")]
     Api {

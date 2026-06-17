@@ -13,11 +13,11 @@ pub use pagination::{Cursor, Page, PageRequest, Paginator};
 use std::collections::HashMap;
 
 use crate::types::{
-    AccountSummary, AgentInfo, AmendOrder, ApiKeyInfo, CreatedApiKey, CreditResult, Decimal,
-    DepositResult, Fill, FundingPayment, FundingSample, HealthStatus, LeverageUpdate, MarginMode,
-    MarginModeUpdate, MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook,
-    OrderRequest, OrderResponse, Position, RateLimitStatus, SubAccount, Ticker, TierOverride,
-    Trade, Transfer, TransferRequest, Withdrawal, WsToken,
+    AccountSummary, AdlEvent, AgentInfo, AmendOrder, ApiKeyInfo, CreatedApiKey, CreditResult,
+    Decimal, DepositResult, Fill, FundingPayment, FundingSample, HealthStatus, LeverageUpdate,
+    MarginMode, MarginModeUpdate, MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order,
+    OrderBook, OrderRequest, OrderResponse, Position, RateLimitStatus, SubAccount, Ticker,
+    TierOverride, Trade, Transfer, TransferRequest, Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
 
@@ -173,6 +173,45 @@ impl Client {
     pub async fn fetch_market_status(&self, market_id: &str) -> Result<MarketStatus> {
         self.get(&format!("/markets/{market_id}/status"), &[], COST_DEFAULT)
             .await
+    }
+
+    /// ADL settlement events for a market, most recent first (v0.21). `limit`
+    /// caps the number of events (server default 100, max 1000).
+    pub async fn fetch_market_adl_events(
+        &self,
+        market_id: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<AdlEvent>> {
+        let mut query = Vec::new();
+        if let Some(limit) = limit {
+            query.push(("limit", limit.to_string()));
+        }
+        self.get(
+            &format!("/markets/{market_id}/adl-events"),
+            &query,
+            COST_DEFAULT,
+        )
+        .await
+    }
+
+    /// ADL settlement events touching an account, where `address` was the
+    /// bankrupt target or a closed counterparty (v0.21). `limit` caps the
+    /// number of events (server default 100, max 1000).
+    pub async fn fetch_account_adl_history(
+        &self,
+        address: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<AdlEvent>> {
+        let mut query = Vec::new();
+        if let Some(limit) = limit {
+            query.push(("limit", limit.to_string()));
+        }
+        self.get(
+            &format!("/account/{address}/adl-history"),
+            &query,
+            COST_DEFAULT,
+        )
+        .await
     }
 
     /// Indexer health/status snapshot. Unauthenticated.

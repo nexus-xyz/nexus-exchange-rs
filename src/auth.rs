@@ -113,6 +113,37 @@ mod tests {
         );
     }
 
+    // Golden vector for a NON-EMPTY query, cross-checked against an independent
+    // HMAC-SHA256 of the canonical `{ts}\nGET\n/orders\n{query}\n{sha256_hex("")}`.
+    //
+    // `signed_get` signs the `serde_urlencoded` output and embeds that exact
+    // string in the URL (see `client::Client::signed_get`), so this asserts two
+    // things at once: (1) the signature is correct for a populated query, and
+    // (2) `serde_urlencoded` renders the pairs to the byte-for-byte string we
+    // signed — `limit=50&cursor=abc` — so signed === sent holds once a signed
+    // GET starts passing params. (Today every `signed_get` passes `&[]`.)
+    #[test]
+    fn hmac_signature_matches_golden_vector_with_query() {
+        // The exact query string a signed GET would sign and send.
+        let query = serde_urlencoded::to_string([("limit", "50"), ("cursor", "abc")]).unwrap();
+        assert_eq!(query, "limit=50&cursor=abc");
+
+        let creds = Credentials::api_key(
+            "nx_test",
+            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+        );
+        let headers = creds
+            .headers("GET", "/orders", &query, b"", 1_776_033_900_000)
+            .unwrap();
+        let get = |k: &str| headers.iter().find(|(hk, _)| *hk == k).unwrap().1.clone();
+        assert_eq!(get("x-api-key"), "nx_test");
+        assert_eq!(get("x-timestamp"), "1776033900000");
+        assert_eq!(
+            get("x-signature"),
+            "87b7a9ba5e28360dafe1e26d6c9bb28ae33ba399a60f6bd52e7b6551d997129e"
+        );
+    }
+
     #[test]
     fn session_sets_bearer() {
         let creds = Credentials::session("tok123");

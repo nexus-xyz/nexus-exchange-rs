@@ -172,3 +172,35 @@ impl Client {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Config;
+    use wiremock::matchers::{header_exists, method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn signed_get_signs_and_sends_query() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/x"))
+            .and(query_param("limit", "10"))
+            .and(header_exists("x-signature"))
+            .and(header_exists("x-timestamp"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "ok": true })),
+            )
+            .mount(&server)
+            .await;
+
+        let client = Client::new(Config::with_base_url(server.uri()).api_key(
+            "nx",
+            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+        ));
+        let _: serde_json::Value = client
+            .signed_get("/x", &[("limit", "10".to_string())])
+            .await
+            .unwrap();
+    }
+}

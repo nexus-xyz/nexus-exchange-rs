@@ -603,6 +603,62 @@ mod tests {
         );
     }
 
+    /// A read-only consumer that *only* polls the stream (never calls
+    /// `subscribe`/`unsubscribe`) must still answer a server Ping, or it would
+    /// trip the server's ping-timeout and get disconnected.
+    ///
+    /// tokio-tungstenite queues the Pong automatically when the Ping frame is
+    /// read, and its `read()` loop flushes any queued auto-reply before/after
+    /// reading the next frame — driven entirely by our `poll_next` delegating
+    /// to `inner.poll_next_unpin`. This test stands up a real server, sends a
+    /// Ping, and asserts the Pong lands back on the wire while the client side
+    /// does nothing but `next().await`.
+    #[tokio::test]
+    async fn poll_only_consumer_flushes_pong_for_server_ping() {
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::accept_async;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Server: accept, send a Ping with a known payload, then read frames
+        // until we observe the matching Pong (the client's auto-reply).
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = accept_async(stream).await.unwrap();
+            ws.send(Message::Ping(b"hb".to_vec().into())).await.unwrap();
+            // Drain until the Pong arrives (or the stream ends).
+            while let Some(frame) = ws.next().await {
+                if let Ok(Message::Pong(payload)) = frame {
+                    return payload.to_vec();
+                }
+            }
+            panic!("server never received a Pong");
+        });
+
+        // Client: connect and ONLY poll — never subscribe/unsubscribe, which
+        // are the obvious write paths. The Pong must flush regardless.
+        let url = ws_url(&format!("ws://{addr}"), "tok").unwrap();
+        let (inner, _) = connect_async(url).await.unwrap();
+        let mut client = WsClient { inner };
+
+        // Drive the client's read loop in the background. It only ever polls
+        // (`next()`), which is the read-only consumer pattern under test; the
+        // Pong flush must be driven purely by that polling. The task pends
+        // forever once the Ping is answered (no data frames follow), so it is
+        // abandoned when the test returns.
+        let poller = tokio::spawn(async move { while client.next().await.is_some() {} });
+
+        // The server returns the Pong payload it received; bound it so a
+        // regression (Pong never flushed) fails fast instead of hanging.
+        let pong = tokio::time::timeout(std::time::Duration::from_secs(5), server)
+            .await
+            .expect("timed out waiting for the client's Pong — flush not driven by poll")
+            .unwrap();
+        poller.abort();
+        assert_eq!(pong, b"hb", "client must echo the server's ping payload");
+    }
+
     #[test]
     fn channel_and_market_accessors() {
         let s = Subscription::Candles {

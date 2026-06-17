@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/nexus-xyz/nexus-exchange-rs"
 keywords = ["nexus", "exchange", "trading", "crypto"]
 categories = ["api-bindings", "asynchronous"]
-publish = false # flip to true when release tooling lands (see SDK release issue)
+publish = true
 
 [dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

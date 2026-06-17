@@ -22,7 +22,7 @@ drift.
 
 | SDK version | API spec |
 |---|---|
-| _unreleased_ | `v0.3.3` |
+| `0.1.x` | `v0.3.3` |
 
 ## License
 

@@ -1,5 +1,8 @@
 # Endpoints the SDK targets, checked against the pinned spec (.api-version) by
-# scripts/check_spec_drift.py. Add a line when you add an endpoint. Format:
+# scripts/check_spec_drift.py. This file is the hand-maintained SOURCE OF TRUTH
+# for SDK coverage — the check validates this list against the spec, NOT the
+# Rust code against this list. Add a line whenever you add an endpoint, or the
+# drift check won't see it. Format:
 #   METHOD /path   (path placeholders match the spec, e.g. {market_id})
 GET /markets
 GET /markets/summary

@@ -5,6 +5,11 @@ Fails if any endpoint the SDK targets (endpoints.txt) is missing from the spec
 (a breaking change, rename, or typo). Reports spec operations the SDK does not
 yet cover as an informational coverage gap.
 
+NOTE: endpoints.txt is the hand-maintained source of truth for what the SDK
+targets — this check validates that list against the spec, not the Rust code
+against the list. Adding an SDK wrapper without adding its line to endpoints.txt
+won't be caught here, so keep the two in sync when you add an endpoint.
+
 Usage: check_spec_drift.py <openapi.json>
 """
 import json

@@ -13,12 +13,18 @@ import sys
 
 def load_targeted(path="endpoints.txt"):
     out = []
-    for line in open(path):
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        method, p = line.split(None, 1)
-        out.append((method.upper(), p))
+    with open(path) as f:
+        for lineno, raw in enumerate(f, 1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(None, 1)
+            if len(parts) != 2:
+                sys.exit(
+                    f"ERROR: {path}:{lineno}: expected 'METHOD /path', got {line!r}"
+                )
+            method, p = parts
+            out.append((method.upper(), p))
     return out
 
 
@@ -32,7 +38,10 @@ def spec_ops(spec):
 
 
 def main():
-    spec = json.load(open(sys.argv[1]))
+    if len(sys.argv) != 2:
+        sys.exit(f"usage: {sys.argv[0]} <openapi.json>")
+    with open(sys.argv[1]) as f:
+        spec = json.load(f)
     version = spec.get("info", {}).get("version", "?")
     targeted = load_targeted()
     available = spec_ops(spec)

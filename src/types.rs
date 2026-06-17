@@ -76,6 +76,27 @@ pub struct Ticker {
     pub info: Value,
 }
 
+/// The caller's rate-limit status (`GET /account/rate-limit`).
+///
+/// Models a token bucket: `limit` is both the requests-per-second ceiling and
+/// the burst capacity, `remaining` is the tokens available right now, and
+/// `reset_at_ms` is when the bucket refills back to `limit` (`0` when full). All
+/// three are `null` for the unlimited tier (gateway keys). Polling this endpoint
+/// does not consume a token.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RateLimitStatus {
+    /// Rate-limit tier name (e.g. `pro`, `marketmaker`, `unlimited`).
+    pub tier: String,
+    /// Maximum requests per second / burst capacity. `None` for the unlimited tier.
+    pub limit: Option<u32>,
+    /// Requests that can be made right now before throttling. `None` for the
+    /// unlimited tier.
+    pub remaining: Option<u32>,
+    /// Unix timestamp (ms) when the bucket refills to `limit`; `0` when full.
+    /// `None` for the unlimited tier.
+    pub reset_at_ms: Option<i64>,
+}
+
 /// Indexer health/status snapshot (`GET /health`). Unknown fields are ignored,
 /// so this stays forward-compatible as the snapshot grows.
 #[derive(Debug, Clone, Deserialize)]

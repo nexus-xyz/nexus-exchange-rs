@@ -11,6 +11,10 @@ thin, idiomatic wrapper over the public REST + WebSocket API.
   serde models. Minimal business logic.
 - `reqwest` + `tokio`; WebSocket via `tokio-tungstenite`.
 - Money as `rust_decimal::Decimal`; one `thiserror` error type.
+- Rate-limit aware — honors `429` + `Retry-After`, and an optional cost-weighted
+  token bucket paces requests proactively. The bucket self-tunes to the caller's
+  real tier via `429` headers and `Client::fetch_rate_limit_status`. Configure or
+  disable it through `Config::with_rate_limit` / `Config::without_rate_limiter`.
 
 ## API version
 

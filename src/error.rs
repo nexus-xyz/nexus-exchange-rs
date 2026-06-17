@@ -1,5 +1,7 @@
 //! Error types.
 
+use std::time::Duration;
+
 use thiserror::Error;
 
 /// Errors returned by the SDK.
@@ -21,5 +23,16 @@ pub enum Error {
         code: String,
         /// Human-readable message.
         message: String,
+    },
+
+    /// The API returned `429 Too Many Requests` and automatic retries were
+    /// exhausted. `retry_after` carries the server's `Retry-After` hint, if any.
+    #[error("rate limited (retries exhausted){}", match .retry_after {
+        Some(d) => format!("; retry after {}s", d.as_secs()),
+        None => String::new(),
+    })]
+    RateLimited {
+        /// How long the server asked the caller to wait before retrying.
+        retry_after: Option<Duration>,
     },
 }

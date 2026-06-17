@@ -273,8 +273,11 @@ pub struct Position {
     pub unrealized_pnl: Decimal,
     #[serde(with = "rust_decimal::serde::str")]
     pub realized_pnl: Decimal,
-    #[serde(with = "rust_decimal::serde::str")]
-    pub liquidation_price: Decimal,
+    /// Liquidation price. The spec does not mark it required (it can be absent
+    /// in flat / cross-margin states), so it's optional rather than hard-failing
+    /// the whole balance/positions decode when omitted.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub liquidation_price: Option<Decimal>,
 }
 
 /// A fill (private trade execution) for the authenticated account.

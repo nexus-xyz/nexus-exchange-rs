@@ -38,6 +38,7 @@ async fn fetch_my_trades_parses_fills() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/fills"))
+        .and(header("x-api-key", "nx_test"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(serde_json::json!([{
                 "id": "f1", "order_id": "o1", "market_id": "BTC-USDX-PERP", "side": "sell",
@@ -57,6 +58,7 @@ async fn fetch_rate_limit_status_handles_nulls() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/account/rate-limit"))
+        .and(header("x-api-key", "nx_test"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "tier": "unlimited", "limit": null, "remaining": null, "reset_at_ms": null
         })))
@@ -68,4 +70,26 @@ async fn fetch_rate_limit_status_handles_nulls() {
         .unwrap();
     assert_eq!(rl.tier, "unlimited");
     assert!(rl.limit.is_none());
+}
+
+#[tokio::test]
+async fn fetch_balance_tolerates_missing_liquidation_price() {
+    // liquidation_price isn't `required` in the spec; a position that omits it
+    // must decode to None, not fail the whole fetch_balance call.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/account"))
+        .and(header("x-api-key", "nx_test"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "balance": "1000.00", "collateral": "1000.00", "equity": "1000.00",
+            "available_margin": "1000.00",
+            "positions": [{
+                "market_id": "ETH-USDX-PERP", "side": "long", "size": "1",
+                "entry_price": "3000", "unrealized_pnl": "0", "realized_pnl": "0"
+            }]
+        })))
+        .mount(&server)
+        .await;
+    let acct = authed(server.uri()).fetch_balance().await.unwrap();
+    assert!(acct.positions[0].liquidation_price.is_none());
 }

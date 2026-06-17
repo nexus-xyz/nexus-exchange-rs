@@ -18,6 +18,7 @@ pub mod ws;
 pub use client::Client;
 pub use config::{Config, Network};
 pub use error::Error;
+pub use ws::{ServerMessage, Subscription, WsClient, WsError};
 
 /// Convenience `Result` using this crate's [`Error`].
 pub type Result<T> = std::result::Result<T, Error>;

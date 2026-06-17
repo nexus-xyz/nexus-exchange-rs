@@ -17,7 +17,7 @@ struct ApiErrorBody {
 #[derive(Debug, Clone)]
 pub struct Client {
     http: reqwest::Client,
-    config: Config,
+    pub(crate) config: Config,
 }
 
 impl Client {

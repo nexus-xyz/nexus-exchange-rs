@@ -22,4 +22,13 @@ pub enum Error {
         /// Human-readable message.
         message: String,
     },
+
+    /// A WebSocket transport or protocol failure.
+    #[error("websocket error: {0}")]
+    Ws(#[from] tokio_tungstenite::tungstenite::Error),
+
+    /// The streaming client's background task has stopped, so commands such as
+    /// [`subscribe`](crate::ws::Subscription::subscribe) can no longer be sent.
+    #[error("websocket stream is closed")]
+    StreamClosed,
 }

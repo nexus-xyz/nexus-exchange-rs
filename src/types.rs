@@ -35,8 +35,10 @@ pub struct Market {
 #[derive(Debug, Clone, Deserialize)]
 pub struct MarketSummary {
     pub market_id: String,
-    #[serde(with = "rust_decimal::serde::float")]
-    pub mark_price: Decimal,
+    /// Mark price as a JSON number; `null` for a halted market with no recent
+    /// mark (the spec types this `["number","null"]`).
+    #[serde(with = "rust_decimal::serde::float_option")]
+    pub mark_price: Option<Decimal>,
     #[serde(with = "rust_decimal::serde::float")]
     pub volume_24h: Decimal,
     pub trade_count: u64,

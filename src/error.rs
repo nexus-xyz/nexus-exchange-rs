@@ -1,5 +1,6 @@
 //! Error types.
 
+use crate::markets::OrderError;
 use thiserror::Error;
 
 /// Errors returned by the SDK.
@@ -22,4 +23,9 @@ pub enum Error {
         /// Human-readable message.
         message: String,
     },
+
+    /// An order failed local validation against a market's trading rules
+    /// before submission. See [`OrderError`].
+    #[error("invalid order: {0}")]
+    InvalidOrder(#[from] OrderError),
 }

@@ -48,8 +48,10 @@ use std::task::{Context, Poll};
 use futures_util::{SinkExt, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+use url::Url;
 
 /// Errors surfaced by the WebSocket client.
 ///
@@ -74,6 +76,17 @@ pub enum WsError {
     /// A non-text frame arrived where a JSON envelope was expected.
     #[error("unexpected non-text frame")]
     UnexpectedFrame,
+
+    /// The server closed the connection with a non-normal close code (e.g.
+    /// token expiry, policy violation) rather than a graceful close. Surfaced
+    /// so callers can distinguish it from a clean end-of-stream.
+    #[error("connection closed by server (code {code}): {reason}")]
+    Closed {
+        /// WebSocket close code.
+        code: u16,
+        /// Server-supplied close reason, if any.
+        reason: String,
+    },
 }
 
 /// The engine sequence envelope (`epoch`, `sequence`, `emitted_at`) that rides
@@ -292,6 +305,10 @@ impl WsClient {
     /// at host-root `/ws`** — the `/api/exchange` HTTP gateway cannot proxy WS
     /// upgrades — so any path on `base_url` (such as `/api/exchange`) is
     /// dropped, and the scheme is rewritten to `ws`/`wss`.
+    ///
+    /// The single-use `token` is carried as a `?token=` query parameter on the
+    /// handshake URL (percent-encoded), so treat the connect URL as a secret —
+    /// do not log it.
     pub async fn connect(base_url: &str, token: &str) -> Result<Self, WsError> {
         let url = ws_url(base_url, token)?;
         let (inner, _resp) = connect_async(url).await.map_err(Box::new)?;
@@ -340,7 +357,20 @@ impl Stream for WsClient {
                     // Control frames are handled by tungstenite; skip and poll
                     // again so callers only ever see data envelopes.
                     Message::Ping(_) | Message::Pong(_) => continue,
-                    Message::Close(_) => return Poll::Ready(None),
+                    Message::Close(frame) => {
+                        return match frame {
+                            // A non-normal close (e.g. token expiry / policy)
+                            // surfaces its code+reason; a normal or frameless
+                            // close is a clean end-of-stream.
+                            Some(cf) if cf.code != CloseCode::Normal => {
+                                Poll::Ready(Some(Err(WsError::Closed {
+                                    code: cf.code.into(),
+                                    reason: cf.reason.to_string(),
+                                })))
+                            }
+                            _ => Poll::Ready(None),
+                        };
+                    }
                     Message::Binary(_) | Message::Frame(_) => {
                         return Poll::Ready(Some(Err(WsError::UnexpectedFrame)));
                     }
@@ -361,30 +391,29 @@ impl Stream for WsClient {
 /// `/ws` — WS connects directly to the indexer, and the `/api/exchange` HTTP
 /// gateway cannot proxy upgrades — so any path on `base_url` is dropped.
 fn ws_url(base_url: &str, token: &str) -> Result<String, WsError> {
-    let (scheme, rest) = if let Some(rest) = base_url.strip_prefix("https://") {
-        ("wss", rest)
-    } else if let Some(rest) = base_url.strip_prefix("http://") {
-        ("ws", rest)
-    } else if let Some(rest) = base_url.strip_prefix("wss://") {
-        ("wss", rest)
-    } else if let Some(rest) = base_url.strip_prefix("ws://") {
-        ("ws", rest)
-    } else {
-        return Err(WsError::Url(format!(
-            "base url must start with http(s):// or ws(s)://: {base_url}"
-        )));
+    let parsed = Url::parse(base_url).map_err(|e| WsError::Url(format!("{base_url}: {e}")))?;
+    let scheme = match parsed.scheme() {
+        "https" | "wss" => "wss",
+        "http" | "ws" => "ws",
+        other => {
+            return Err(WsError::Url(format!(
+                "unsupported scheme '{other}' (want http(s):// or ws(s)://): {base_url}"
+            )));
+        }
     };
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| WsError::Url(format!("base url has no host: {base_url}")))?;
+    // WS lives at host-root `/ws`; keep only host[:port] and drop any path
+    // (e.g. `/api/exchange`) — the HTTP gateway can't proxy WS upgrades.
+    let port = parsed.port().map(|p| format!(":{p}")).unwrap_or_default();
 
-    // WS lives at host-root `/ws`; drop any path (e.g. `/api/exchange`) and
-    // keep only `host[:port]`.
-    let host = rest.split('/').next().unwrap_or("");
-    if host.is_empty() {
-        return Err(WsError::Url(format!("base url has no host: {base_url}")));
-    }
-
-    // The token is URL-safe (hex / base64url from the minting endpoint), so a
-    // plain query append is sufficient.
-    Ok(format!("{scheme}://{host}/ws?token={token}"))
+    // Build via `Url` so the token is percent-encoded — removes the previous
+    // load-bearing assumption that the minted token is already URL-safe.
+    let mut url = Url::parse(&format!("{scheme}://{host}{port}/ws"))
+        .map_err(|e| WsError::Url(format!("{base_url}: {e}")))?;
+    url.query_pairs_mut().append_pair("token", token);
+    Ok(url.into())
 }
 
 #[cfg(test)]
@@ -425,6 +454,16 @@ mod tests {
     fn ws_url_rejects_unknown_scheme() {
         assert!(matches!(ws_url("ftp://host", "t"), Err(WsError::Url(_))));
         assert!(matches!(ws_url("https://", "t"), Err(WsError::Url(_))));
+    }
+
+    #[test]
+    fn ws_url_percent_encodes_token() {
+        // URL-significant characters in the token must be encoded, not appended
+        // raw — so connection no longer relies on the token being URL-safe.
+        assert_eq!(
+            ws_url("https://host", "a b/c+d").unwrap(),
+            "wss://host/ws?token=a+b%2Fc%2Bd"
+        );
     }
 
     #[test]

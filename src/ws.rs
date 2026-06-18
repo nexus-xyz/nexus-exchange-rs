@@ -626,7 +626,7 @@ mod tests {
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let mut ws = accept_async(stream).await.unwrap();
-            ws.send(Message::Ping(b"hb".to_vec().into())).await.unwrap();
+            ws.send(Message::Ping(b"hb".to_vec())).await.unwrap();
             // Drain until the Pong arrives (or the stream ends).
             while let Some(frame) = ws.next().await {
                 if let Ok(Message::Pong(payload)) = frame {

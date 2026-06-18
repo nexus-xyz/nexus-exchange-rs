@@ -24,6 +24,10 @@ pub enum Error {
         message: String,
     },
 
+    /// Authentication problem (missing credentials, malformed secret, etc.).
+    #[error("authentication error: {0}")]
+    Auth(String),
+
     /// An order failed local validation against a market's trading rules
     /// before submission. See [`OrderError`].
     #[error("invalid order: {0}")]

@@ -13,11 +13,12 @@ use rust_decimal::{Decimal, RoundingStrategy};
 use thiserror::Error;
 
 /// How to snap a value that falls between two valid grid points.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Rounding {
     /// Toward zero (truncate) — for negatives too (`-1.3 -> -1.0`, not `-1.5`).
-    /// Safe default for sizes — never rounds *up* into more risk than you asked
-    /// for.
+    /// The [`Default`]: safe for sizes — never rounds *up* into more risk than
+    /// you asked for.
+    #[default]
     Down,
     /// Away from zero — for negatives too (`-1.3 -> -1.5`, not `-1.0`).
     Up,
@@ -77,7 +78,7 @@ pub enum OrderError {
     },
 }
 
-/// Snap `value` to the nearest multiple of `increment` per `mode`.
+/// Snap `value` to a multiple of `increment`, choosing which one per `mode`.
 ///
 /// A zero (or absent) increment means "no grid" — the value passes through
 /// unchanged rather than dividing by zero. Likewise, a magnitude extreme enough
@@ -115,6 +116,12 @@ fn round_to_increment(value: Decimal, increment: Decimal, mode: Rounding) -> Dec
 impl Market {
     /// Round `price` to this market's `tick_size`.
     ///
+    /// If the market has no price grid (`tick_size` is zero) or `price` is
+    /// extreme enough to overflow `Decimal`, `price` is returned **unrounded**.
+    /// On the [`normalize_order`](Self::normalize_order) path
+    /// [`validate_order`](Self::validate_order) still rejects such a value, but a
+    /// standalone caller gets back a value that isn't snapped to the grid.
+    ///
     /// ```
     /// # use rust_decimal::Decimal;
     /// # use nexus_exchange::markets::Rounding;
@@ -130,6 +137,9 @@ impl Market {
     }
 
     /// Round `size` to this market's `lot_size`.
+    ///
+    /// As with [`round_price`](Self::round_price), a zero `lot_size` or an
+    /// overflow-inducing magnitude returns `size` unrounded.
     pub fn round_size(&self, size: Decimal, mode: Rounding) -> Decimal {
         round_to_increment(size, self.lot_size, mode)
     }

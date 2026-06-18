@@ -119,14 +119,14 @@ impl BackoffIter {
     pub fn next_delay(&mut self) -> Duration {
         let ceiling = self.ceiling.min(self.policy.max);
         let delay = if self.policy.jitter {
-            ceiling.mul_f64(self.rng.next_unit())
+            // `next_unit()` is in `[0, 1)`, so this never exceeds `ceiling`.
+            scale(ceiling, self.rng.next_unit(), ceiling)
         } else {
             ceiling
         };
 
         // Grow the ceiling for next time, saturating at the configured max.
-        let grown = ceiling.mul_f64(self.policy.multiplier);
-        self.ceiling = grown.min(self.policy.max);
+        self.ceiling = scale(ceiling, self.policy.multiplier, self.policy.max);
 
         delay
     }
@@ -136,6 +136,18 @@ impl BackoffIter {
     pub fn reset(&mut self) {
         self.ceiling = self.policy.initial;
     }
+}
+
+/// Multiply `d` by a non-negative `factor`, clamping to `cap`.
+///
+/// `Duration::mul_f64` *panics* when the product overflows `Duration`'s range
+/// (or is NaN), so an unbounded `with_max`/`with_multiplier` could abort the
+/// reconnect task on a later `next_delay()`. Going through `try_from_secs_f64`
+/// and falling back to `cap` turns that overflow into a saturating clamp.
+fn scale(d: Duration, factor: f64, cap: Duration) -> Duration {
+    Duration::try_from_secs_f64(d.as_secs_f64() * factor)
+        .unwrap_or(cap)
+        .min(cap)
 }
 
 /// A tiny SplitMix64 generator. Good enough to scatter reconnect delays; not
@@ -252,6 +264,32 @@ mod tests {
         let a = it.next_delay();
         let b = it.next_delay();
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn extreme_bounds_do_not_panic() {
+        // `with_max`/`with_multiplier` accept arbitrary values; the ceiling growth
+        // must saturate instead of panicking the way `Duration::mul_f64` would.
+        let policy = Backoff::new()
+            .with_initial(Duration::from_secs(1))
+            .with_max(Duration::from_secs(u64::MAX))
+            .with_multiplier(f64::MAX)
+            .with_jitter(false);
+        let mut it = policy.iter();
+        // Several pulls: the second multiplies an already-huge ceiling by f64::MAX.
+        for _ in 0..5 {
+            let d = it.next_delay();
+            assert!(d <= Duration::from_secs(u64::MAX));
+        }
+
+        // Same with jitter on (the delay draw also goes through `scale`).
+        let mut jittered = Backoff::new()
+            .with_max(Duration::from_secs(u64::MAX))
+            .with_multiplier(f64::MAX)
+            .iter();
+        for _ in 0..5 {
+            let _ = jittered.next_delay();
+        }
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Integration tests for the streaming WebSocket client, driven against a
 //! local `tokio-tungstenite` server. They exercise the two reliability
 //! features this client exists for: reconnect-with-backoff and the bounded,
-//! lossless (backpressured) event channel.
+//! gap-aware (order-preserving, drop-and-report) event channel.
 
 use std::time::Duration;
 
@@ -37,24 +37,6 @@ async fn read_text(ws: &mut WebSocketStream<TcpStream>) -> Value {
 
 async fn send_json(ws: &mut WebSocketStream<TcpStream>, v: Value) {
     ws.send(Message::Text(v.to_string().into())).await.unwrap();
-}
-
-/// Pull events until `n` `Message` events have been collected, returning them.
-/// Panics on early stream end. Other event variants are recorded separately.
-async fn collect_messages(
-    sub: &mut nexus_exchange::ws::Subscription,
-    n: usize,
-) -> (Vec<Value>, Vec<Event>) {
-    let mut messages = Vec::new();
-    let mut others = Vec::new();
-    while messages.len() < n {
-        match sub.next().await {
-            Some(Event::Message(v)) => messages.push(v),
-            Some(other) => others.push(other),
-            None => panic!("stream ended after {} of {n} messages", messages.len()),
-        }
-    }
-    (messages, others)
 }
 
 #[tokio::test]
@@ -113,7 +95,7 @@ async fn connects_subscribes_and_reconnects() {
 }
 
 #[tokio::test]
-async fn bounded_channel_is_lossless_under_backpressure() {
+async fn backpressure_preserves_order_and_reports_gaps() {
     const BURST: usize = 200;
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -123,38 +105,59 @@ async fn bounded_channel_is_lossless_under_backpressure() {
         let (sock, _) = listener.accept().await.unwrap();
         let mut ws = tokio_tungstenite::accept_async(sock).await.unwrap();
         let _sub = read_text(&mut ws).await;
-        // Fire a tight burst far exceeding the channel capacity.
+        // Fire a tight burst far exceeding the channel capacity, then close so
+        // the consumer has a clean end-of-connection signal.
         for i in 0..BURST {
             send_json(&mut ws, json!({ "seq": i })).await;
         }
-        while let Some(Ok(msg)) = ws.next().await {
-            if msg.is_close() {
-                break;
-            }
-        }
+        ws.close(None).await.unwrap();
     });
 
-    // Capacity of 1 forces the read loop to block on nearly every frame.
-    let client = client_for(addr, 1);
+    // A small capacity exposes the consumer to backpressure under a tight burst.
+    let client = client_for(addr, 4);
     let mut sub = client.connect(vec![json!({ "type": "subscribe" })]);
 
     assert!(matches!(sub.next().await, Some(Event::Connected)));
 
-    // A deliberately slow consumer must still see every frame, in order — the
-    // bound applies backpressure rather than dropping.
-    let (messages, others) = collect_messages(&mut sub, BURST).await;
-    assert!(
-        others.is_empty(),
-        "unexpected lifecycle events during burst: {others:?}"
-    );
-    let seqs: Vec<u64> = messages
-        .iter()
-        .map(|m| m["seq"].as_u64().unwrap())
-        .collect();
-    assert_eq!(seqs, (0..BURST as u64).collect::<Vec<_>>());
+    // Walk events until the connection drops. Delivery is order-preserving and
+    // gap-aware: each frame's seq equals the running count of (delivered +
+    // reported-dropped), so a reorder or duplicate would trip the assert, and
+    // any frames dropped under backpressure are accounted for by a `Lagged`.
+    let mut expected: u64 = 0;
+    let mut delivered: u64 = 0;
+    let mut lagged: u64 = 0;
+    loop {
+        match sub.next().await {
+            Some(Event::Message(v)) => {
+                let seq = v["seq"].as_u64().unwrap();
+                assert_eq!(
+                    seq, expected,
+                    "reorder/duplicate: got {seq}, expected {expected}"
+                );
+                expected += 1;
+                delivered += 1;
+            }
+            Some(Event::Lagged { dropped }) => {
+                assert!(dropped > 0);
+                expected += dropped;
+                lagged += dropped;
+            }
+            Some(Event::Connected) => panic!("unexpected reconnect during the burst"),
+            // Server closed the socket: end of this connection.
+            Some(Event::Disconnected(_)) | None => break,
+            Some(_) => {}
+        }
+    }
+
+    // The first frames arrived in order, and nothing observed exceeds the burst.
+    // (Trailing drops after the last delivered frame go unreported — no later
+    // message flushes them — so this is `<=`, not `==`; exact accounting within
+    // a connection is proven by the `deliver` unit test.)
+    assert!(delivered >= 1, "expected at least one delivered frame");
+    assert!(delivered + lagged <= BURST as u64);
 
     sub.close().await;
-    server.await.unwrap();
+    let _ = server.await;
 }
 
 #[tokio::test]

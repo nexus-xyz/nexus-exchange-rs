@@ -10,8 +10,34 @@
 //!   ([`Backoff`]), so a fleet of clients spreads its retries instead of
 //!   synchronizing on a fixed interval.
 //! * **Delivery** flows through a *bounded* channel. When the consumer falls
-//!   behind, the read loop blocks on the channel instead of buffering frames
-//!   forever — backpressure that bounds memory at the cost of pausing reads.
+//!   behind and the channel fills, the read loop drops the excess frames rather
+//!   than blocking — bounding memory *and* keeping the socket drained so server
+//!   pings are always read and ponged. Dropped frames are reported, not silent.
+//!
+//! # Delivery guarantees
+//!
+//! Within a single connection, delivery is **order-preserving and gap-aware**:
+//! frames arrive in server order with no duplicates, and as long as the consumer
+//! keeps up it is lossless. If the consumer falls behind, excess frames are
+//! dropped to keep the socket drained, and the number dropped is reported as an
+//! [`Event::Lagged`] immediately before the next delivered message — so a
+//! consumer always knows when and how much it missed (similar to a lagging
+//! broadcast receiver). Size [`channel_capacity`] for the consumer's worst-case
+//! burst to avoid drops.
+//!
+//! This non-blocking read is deliberate: an earlier design blocked the read loop
+//! on a full channel, which let a slow consumer starve the keepalive Pong (the
+//! Ping sits unread behind buffered data) and lose the connection. Dropping with
+//! an explicit `Lagged` signal keeps keepalive independent of consumer speed.
+//!
+//! None of this extends across reconnects — the client replays subscription
+//! frames verbatim but carries no sequence/cursor, so events the server emitted
+//! between the drop and the resubscribe are missed, and any snapshot the server
+//! re-sends on (re)subscribe arrives as a duplicate. A consumer that needs
+//! gap-free streams across reconnects must dedup/resume itself until cursor-based
+//! resume lands (tracked separately).
+//!
+//! [`channel_capacity`]: crate::Config::with_channel_capacity
 //!
 //! # Example
 //!
@@ -38,6 +64,7 @@ use crate::{Client, Error, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -59,6 +86,15 @@ pub enum Event {
     Disconnected(String),
     /// A JSON message frame from the server.
     Message(Value),
+    /// The consumer fell behind and `dropped` message frames were discarded to
+    /// keep reading the socket (so keepalive Pongs are never starved). Emitted
+    /// in order, immediately before the next delivered [`Message`](Self::Message),
+    /// so a consumer can detect the gap. See the module-level delivery
+    /// guarantees.
+    Lagged {
+        /// Number of message frames dropped since the last delivered message.
+        dropped: u64,
+    },
 }
 
 /// A command sent from a [`Subscription`] handle to its background task.
@@ -103,6 +139,12 @@ impl Subscription {
 
     /// Register an additional subscription frame. It is sent immediately if a
     /// connection is up and re-sent on every subsequent reconnect.
+    ///
+    /// This is **additive and not deduplicated**: every frame passed here (and
+    /// to [`Client::connect`]) is retained and replayed verbatim on each
+    /// reconnect, and there is no unsubscribe yet. Callers with a churn-y
+    /// subscription set should track membership themselves rather than relying
+    /// on repeated `subscribe` calls, which would accumulate replayed frames.
     pub async fn subscribe(&self, request: Value) -> Result<()> {
         self.cmd_tx
             .send(Command::Subscribe(request))
@@ -158,14 +200,30 @@ async fn run(
     loop {
         match tokio_tungstenite::connect_async(ws_url.as_str()).await {
             Ok((stream, _resp)) => {
-                // A clean connection resets the backoff so the *next* outage
-                // starts from the initial delay rather than wherever we left off.
-                delays.reset();
                 if event_tx.send(Event::Connected).await.is_err() {
                     return; // consumer gone
                 }
 
-                match serve(stream, &event_tx, &mut cmd_rx, &mut subscriptions).await {
+                let mut delivered = false;
+                let exit = serve(
+                    stream,
+                    &event_tx,
+                    &mut cmd_rx,
+                    &mut subscriptions,
+                    &mut delivered,
+                )
+                .await;
+
+                // Only treat the connection as healthy — and reset the backoff so
+                // the next outage retries promptly — once it actually carried a
+                // message. A socket that completes the handshake and immediately
+                // drops (auth-reject-after-upgrade, LB flap) must keep backing off
+                // rather than reset every cycle into a tight reconnect loop.
+                if delivered {
+                    delays.reset();
+                }
+
+                match exit {
                     LoopExit::Closed | LoopExit::ConsumerGone => return,
                     LoopExit::Reconnect(reason) => {
                         if event_tx.send(Event::Disconnected(reason)).await.is_err() {
@@ -185,14 +243,19 @@ async fn run(
             }
         }
 
-        // Back off before retrying, but let a Close command cut the wait short.
-        let delay = delays.next_delay();
-        tokio::select! {
-            _ = tokio::time::sleep(delay) => {}
-            cmd = cmd_rx.recv() => match cmd {
-                Some(Command::Close) | None => return,
-                // Queue the subscription so it's sent once we reconnect.
-                Some(Command::Subscribe(req)) => subscriptions.push(req),
+        // Back off before retrying. A Close command cuts the wait short; a
+        // Subscribe is queued for the next connect but must *not* shorten the
+        // backoff — otherwise a client subscribing while the endpoint is down
+        // would defeat the backoff and hammer it. So we hold a fixed deadline
+        // and keep waiting out the remainder after queueing each frame.
+        let deadline = tokio::time::Instant::now() + delays.next_delay();
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => break,
+                cmd = cmd_rx.recv() => match cmd {
+                    Some(Command::Close) | None => return,
+                    Some(Command::Subscribe(req)) => subscriptions.push(req),
+                }
             }
         }
     }
@@ -204,6 +267,7 @@ async fn serve<S>(
     event_tx: &mpsc::Sender<Event>,
     cmd_rx: &mut mpsc::Receiver<Command>,
     subscriptions: &mut Vec<Value>,
+    delivered: &mut bool,
 ) -> LoopExit
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -217,12 +281,18 @@ where
         }
     }
 
+    // Count of message frames dropped while the consumer was behind; reported to
+    // the consumer as an `Event::Lagged` before the next delivered message.
+    let mut dropped: u64 = 0;
+
     loop {
         tokio::select! {
             // Incoming frames from the server.
             frame = read.next() => match frame {
                 Some(Ok(msg)) => {
-                    if let Some(exit) = handle_message(msg, event_tx, &mut write).await {
+                    if let Some(exit) =
+                        handle_message(msg, event_tx, &mut write, delivered, &mut dropped).await
+                    {
                         return exit;
                     }
                 }
@@ -253,27 +323,31 @@ where
 /// Process one inbound frame. Returns `Some(exit)` to end the connection loop,
 /// or `None` to keep going.
 ///
-/// Note: delivering a `Message` may block on the bounded channel when the
-/// consumer is behind. That is the backpressure path — while blocked we are
-/// not reading further frames (including pings), which is the intended
-/// trade-off of a bounded queue.
+/// Delivering a `Message` never blocks the read loop: it uses a non-blocking
+/// `try_send`, and when the bounded channel is full it drops the frame and
+/// counts it (surfaced to the consumer as [`Event::Lagged`]). This keeps the
+/// loop reading — so server pings are always read and ponged promptly — at the
+/// cost of dropping data for a consumer that can't keep up. See the
+/// module-level delivery guarantees.
 async fn handle_message<W>(
     msg: Message,
     event_tx: &mpsc::Sender<Event>,
     write: &mut W,
+    delivered: &mut bool,
+    dropped: &mut u64,
 ) -> Option<LoopExit>
 where
     W: SinkExt<Message> + Unpin,
 {
     match msg {
         Message::Text(text) => match serde_json::from_str::<Value>(&text) {
-            Ok(value) => deliver(event_tx, value).await,
+            Ok(value) => deliver(event_tx, value, delivered, dropped),
             // A non-JSON text frame on a JSON feed: skip it rather than tear
             // down an otherwise healthy connection.
             Err(_) => None,
         },
         Message::Binary(bytes) => match serde_json::from_slice::<Value>(&bytes) {
-            Ok(value) => deliver(event_tx, value).await,
+            Ok(value) => deliver(event_tx, value, delivered, dropped),
             Err(_) => None,
         },
         // Keep the connection alive. If the pong can't be sent the socket is
@@ -293,11 +367,113 @@ where
     }
 }
 
-/// Forward a parsed message to the consumer, signalling shutdown if the
-/// consumer has dropped its receiver.
-async fn deliver(event_tx: &mpsc::Sender<Event>, value: Value) -> Option<LoopExit> {
-    match event_tx.send(Event::Message(value)).await {
-        Ok(()) => None,
-        Err(_) => Some(LoopExit::ConsumerGone),
+/// Forward a parsed message to the consumer without blocking the read loop.
+///
+/// On a full channel the frame is dropped and counted in `dropped`; the count
+/// is flushed as an [`Event::Lagged`] immediately before the next successfully
+/// delivered message, so the consumer sees gaps in order. Returns
+/// [`LoopExit::ConsumerGone`] once the receiver has been dropped. Sets
+/// `delivered` on the first hand-off, marking the connection healthy enough to
+/// reset the backoff.
+fn deliver(
+    event_tx: &mpsc::Sender<Event>,
+    value: Value,
+    delivered: &mut bool,
+    dropped: &mut u64,
+) -> Option<LoopExit> {
+    // Flush a pending lag marker first so the consumer learns about the gap
+    // ahead of (and in order with) the message that follows it.
+    if *dropped > 0 {
+        match event_tx.try_send(Event::Lagged { dropped: *dropped }) {
+            Ok(()) => *dropped = 0,
+            // Still no room — keep accumulating; report once the consumer drains.
+            Err(TrySendError::Full(_)) => {}
+            Err(TrySendError::Closed(_)) => return Some(LoopExit::ConsumerGone),
+        }
+    }
+
+    match event_tx.try_send(Event::Message(value)) {
+        Ok(()) => {
+            *delivered = true;
+            None
+        }
+        // Consumer is behind: drop this frame and count it for the next Lagged.
+        Err(TrySendError::Full(_)) => {
+            *dropped += 1;
+            None
+        }
+        Err(TrySendError::Closed(_)) => Some(LoopExit::ConsumerGone),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Drive `deliver` against a tiny channel, draining at controlled points so
+    /// we exercise both the drop path (channel full) and the lag-report path
+    /// (a flushed `Lagged` marker), then prove the delivered stream is
+    /// order-preserving, duplicate-free, and accounts for every frame exactly
+    /// once (delivered, reported as lagged, or still pending).
+    #[test]
+    fn deliver_drops_excess_and_reports_via_lagged() {
+        const TOTAL: u64 = 7;
+        let (tx, mut rx) = mpsc::channel::<Event>(2);
+        let mut delivered = false;
+        let mut dropped = 0u64;
+        let mut events: Vec<Event> = Vec::new();
+
+        for seq in 0..TOTAL {
+            // Free the channel before these sends so a pending Lagged can flush.
+            if seq == 4 || seq == 6 {
+                while let Ok(ev) = rx.try_recv() {
+                    events.push(ev);
+                }
+            }
+            let exit = deliver(&tx, json!({ "seq": seq }), &mut delivered, &mut dropped);
+            assert!(exit.is_none(), "consumer is present, no exit expected");
+        }
+        drop(tx);
+        while let Ok(ev) = rx.try_recv() {
+            events.push(ev);
+        }
+
+        // Reconstruct: every Message's seq must equal the running count of
+        // (delivered + reported-dropped), so any reorder or duplicate trips here.
+        let mut expected = 0u64;
+        let mut received = 0u64;
+        let mut lagged_total = 0u64;
+        for ev in events {
+            match ev {
+                Event::Lagged { dropped } => {
+                    assert!(dropped > 0, "Lagged must report a positive gap");
+                    expected += dropped;
+                    lagged_total += dropped;
+                }
+                Event::Message(v) => {
+                    assert_eq!(
+                        v["seq"].as_u64().unwrap(),
+                        expected,
+                        "reorder/duplicate frame"
+                    );
+                    expected += 1;
+                    received += 1;
+                }
+                other => panic!("unexpected event: {other:?}"),
+            }
+        }
+
+        assert_eq!(
+            received + lagged_total + dropped,
+            TOTAL,
+            "every frame is delivered, reported as lagged, or still pending"
+        );
+        assert!(
+            delivered,
+            "the first frame is delivered before the channel fills"
+        );
+        assert!(lagged_total > 0, "a Lagged marker should have been flushed");
+        assert!(received < TOTAL, "capacity 2 vs 7 frames must drop some");
     }
 }

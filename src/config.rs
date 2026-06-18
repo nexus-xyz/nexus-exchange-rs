@@ -1,5 +1,8 @@
 //! Client configuration.
 
+use crate::auth::Credentials;
+use std::sync::Arc;
+
 /// Which Nexus Exchange environment to target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -90,27 +93,31 @@ impl RateLimit {
     }
 }
 
-/// Client configuration.
+/// Client configuration. Credentials are optional — public market-data
+/// endpoints need none.
 #[derive(Debug, Clone)]
 pub struct Config {
     pub(crate) base_url: String,
     pub(crate) rate_limit: RateLimit,
+    pub(crate) credentials: Option<Arc<Credentials>>,
 }
 
 impl Config {
-    /// Target the given [`Network`].
+    /// Target the given [`Network`], unauthenticated.
     pub fn new(network: Network) -> Self {
         Self {
             base_url: network.base_url().to_string(),
             rate_limit: RateLimit::default(),
+            credentials: None,
         }
     }
 
-    /// Target a custom base URL (e.g. a preview deployment).
+    /// Target a custom base URL (e.g. a preview deployment), unauthenticated.
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
             rate_limit: RateLimit::default(),
+            credentials: None,
         }
     }
 
@@ -124,6 +131,19 @@ impl Config {
     /// honored reactively.
     pub fn without_rate_limiter(mut self) -> Self {
         self.rate_limit.limiter_enabled = false;
+        self
+    }
+
+    /// Authenticate with an HMAC API key — `key_id` and the 64-char hex
+    /// `secret` from `POST /keys`.
+    pub fn api_key(mut self, key_id: impl Into<String>, secret: impl Into<String>) -> Self {
+        self.credentials = Some(Arc::new(Credentials::api_key(key_id, secret)));
+        self
+    }
+
+    /// Authenticate with a session bearer token from `POST /auth/login`.
+    pub fn session_token(mut self, token: impl Into<String>) -> Self {
+        self.credentials = Some(Arc::new(Credentials::session(token)));
         self
     }
 }

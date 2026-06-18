@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use crate::markets::OrderError;
 use thiserror::Error;
 
 /// Errors returned by the SDK.
@@ -24,6 +25,15 @@ pub enum Error {
         /// Human-readable message.
         message: String,
     },
+
+    /// Authentication problem (missing credentials, malformed secret, etc.).
+    #[error("authentication error: {0}")]
+    Auth(String),
+
+    /// An order failed local validation against a market's trading rules
+    /// before submission. See [`OrderError`].
+    #[error("invalid order: {0}")]
+    InvalidOrder(#[from] OrderError),
 
     /// The API returned `429 Too Many Requests` and automatic retries were
     /// exhausted. `retry_after` carries the server's `Retry-After` hint, if any.

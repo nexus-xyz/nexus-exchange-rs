@@ -85,7 +85,9 @@ impl RateLimiter {
         if !self.enabled || cost <= 0.0 {
             return Duration::ZERO;
         }
-        let mut b = self.state.lock().unwrap();
+        // Critical section is panic-free, so the mutex can't truly be poisoned;
+        // recover the guard rather than panic in a published crate.
+        let mut b = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if b.unlimited {
             return Duration::ZERO;
         }
@@ -123,7 +125,9 @@ impl RateLimiter {
     /// Fold a `429`'s headers into the bucket: open a back-off window for the
     /// `Retry-After` duration and re-sync capacity/remaining to the server.
     pub(crate) fn note_throttle(&self, info: &ThrottleInfo) {
-        let mut b = self.state.lock().unwrap();
+        // Critical section is panic-free, so the mutex can't truly be poisoned;
+        // recover the guard rather than panic in a published crate.
+        let mut b = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let wait = info.wait(Duration::ZERO);
         if !wait.is_zero() {
             let until = Instant::now() + wait;
@@ -150,7 +154,9 @@ impl RateLimiter {
     /// disables throttling; otherwise capacity/refill follow `limit` and the
     /// available tokens are clamped down to the server's `remaining`.
     pub(crate) fn sync(&self, limit: Option<u32>, remaining: Option<u32>) {
-        let mut b = self.state.lock().unwrap();
+        // Critical section is panic-free, so the mutex can't truly be poisoned;
+        // recover the guard rather than panic in a published crate.
+        let mut b = self.state.lock().unwrap_or_else(|e| e.into_inner());
         match limit {
             Some(l) if l > 0 => {
                 b.unlimited = false;
@@ -176,7 +182,11 @@ pub(crate) struct ThrottleInfo {
     pub(crate) retry_after: Option<Duration>,
     pub(crate) limit: Option<u32>,
     pub(crate) remaining: Option<u32>,
-    /// `X-RateLimit-Reset`: unix timestamp (seconds) when the limit resets.
+    /// `X-RateLimit-Reset`: unix timestamp in **seconds** when the limit resets.
+    /// Per the v0.3.3 spec the header is a plain "Unix timestamp" (seconds),
+    /// distinct from the JSON body's `reset_at_ms`, which is explicitly
+    /// milliseconds — so the two sources are read in their own units. The
+    /// [`MAX_RETRY_AFTER`] clamp keeps a misread harmless regardless.
     pub(crate) reset: Option<i64>,
 }
 

@@ -5,12 +5,20 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// Build a client against `uri` with a fast, deterministic rate-limit policy:
 /// proactive pacing off (so tests don't sleep on the token bucket) but reactive
 /// `429` retries bounded at `max_retries`.
+///
+/// Credentials are attached so the signed `/account/rate-limit` endpoint works;
+/// the public-endpoint tests don't sign, so they're simply unused there.
 fn client(uri: String, max_retries: u32) -> Client {
-    let cfg = Config::with_base_url(uri).with_rate_limit(
-        RateLimit::new(10.0)
-            .with_limiter_enabled(false)
-            .with_max_retries(max_retries),
-    );
+    let cfg = Config::with_base_url(uri)
+        .api_key(
+            "nx",
+            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+        )
+        .with_rate_limit(
+            RateLimit::new(10.0)
+                .with_limiter_enabled(false)
+                .with_max_retries(max_retries),
+        );
     Client::new(cfg)
 }
 

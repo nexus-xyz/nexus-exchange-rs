@@ -102,6 +102,28 @@ async fn does_not_retry_non_transient_4xx() {
 }
 
 #[tokio::test]
+async fn does_not_retry_429_owned_by_rate_limit_layer() {
+    let server = MockServer::start().await;
+    // 429 is owned end-to-end by the rate-limit layer, not this generic retry
+    // layer: it must be tried exactly once here and never retried, so the two
+    // layers don't both back off on the same response.
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(429).set_body_json(serde_json::json!({
+            "code": "rate_limited", "message": "slow down"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let err = client(server.uri(), fast_retry())
+        .health_check()
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Api { status: 429, .. }));
+}
+
+#[tokio::test]
 async fn disabled_retry_makes_a_single_attempt() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

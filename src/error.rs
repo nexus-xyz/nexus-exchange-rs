@@ -37,18 +37,24 @@ impl Error {
     ///
     /// - **Connect/timeout transport errors** — the connection never completed,
     ///   so the request likely never reached the server.
-    /// - **HTTP 408 (Request Timeout)** and **429 (Too Many Requests)** — the
-    ///   server is explicitly asking us to slow down and try again.
+    /// - **HTTP 408 (Request Timeout)** — the server timed out waiting for the
+    ///   request and invites a retry.
     /// - **HTTP 5xx** — a server-side fault that is often momentary.
     ///
     /// Everything else — other 4xx, deserialization failures, body-decode
     /// errors — is treated as terminal and is *not* retried.
+    ///
+    /// **`429` is deliberately excluded here.** Rate limiting is owned end-to-end
+    /// by the rate-limit layer (`GET /account/rate-limit` + the cost-weighted
+    /// token bucket), which retries `429` honoring `Retry-After`/`X-RateLimit-*`
+    /// and otherwise surfaces a terminal `Error::RateLimited`. Classifying `429`
+    /// as transient here too would retry it twice — once with backoff that
+    /// ignores `Retry-After`, once with it — so this generic layer stays out of
+    /// the way and lets the rate-limit layer be the single owner.
     pub fn is_transient(&self) -> bool {
         match self {
             Error::Http(e) => e.is_timeout() || e.is_connect(),
-            Error::Api { status, .. } => {
-                *status == 408 || *status == 429 || (500..600).contains(status)
-            }
+            Error::Api { status, .. } => *status == 408 || (500..600).contains(status),
             Error::Serde(_) => false,
         }
     }

@@ -33,12 +33,12 @@
 //! # }
 //! ```
 
-use std::collections::VecDeque;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 
 use futures_core::Stream;
+use serde::{Deserialize, Serialize};
 
 use crate::Result;
 
@@ -48,7 +48,12 @@ use crate::Result;
 /// fetch the following page; their contents are an implementation detail.
 /// Time-windowed endpoints surface their next time bound through this same
 /// type, so callers never need to special-case the two pagination styles.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+///
+/// `Cursor` is `Serialize`/`Deserialize` so a caller can persist one (e.g. to a
+/// database or job state) and later resume from it via
+/// [`Paginator::starting_after`] without round-tripping through
+/// [`as_str`](Self::as_str) / [`into_inner`](Self::into_inner) by hand.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Cursor(String);
 
 impl Cursor {
@@ -136,6 +141,8 @@ pub struct Paginator<T> {
     fetch: FetchFn<T>,
     next_cursor: Option<Cursor>,
     page_size: Option<u32>,
+    max_pages: Option<usize>,
+    pages_fetched: usize,
     done: bool,
 }
 
@@ -155,6 +162,8 @@ impl<T> Paginator<T> {
             fetch: Box::new(move |req| Box::pin(fetch(req))),
             next_cursor: None,
             page_size: None,
+            max_pages: None,
+            pages_fetched: 0,
             done: false,
         }
     }
@@ -165,6 +174,19 @@ impl<T> Paginator<T> {
     /// returned — the paginator still walks every page.
     pub fn page_size(mut self, limit: u32) -> Self {
         self.page_size = Some(limit);
+        self
+    }
+
+    /// Cap the number of pages this paginator will fetch.
+    ///
+    /// Once `max` pages have been returned the paginator stops as if it had
+    /// reached the final page, even if the server is still handing back a next
+    /// cursor. This is a safety bound against a misbehaving backend that never
+    /// terminates; the [repeated-cursor guard](Self::next_page) already covers a
+    /// server that keeps echoing the *same* cursor, but `max_pages` also bounds
+    /// one that keeps advancing without end.
+    pub fn max_pages(mut self, max: usize) -> Self {
+        self.max_pages = Some(max);
         self
     }
 
@@ -180,19 +202,32 @@ impl<T> Paginator<T> {
     ///
     /// Advances the internal cursor so the following call fetches the page
     /// after this one.
+    ///
+    /// Termination is guarded against a misbehaving backend: if the server
+    /// returns a next cursor equal to the one just requested — a stuck server, a
+    /// time bound that fails to advance, or a cursor that round-trips to the same
+    /// window — the paginator returns this page and then stops rather than
+    /// re-issuing the identical request forever. A [`max_pages`](Self::max_pages)
+    /// cap, if set, bounds paging even when the cursor keeps advancing.
     pub async fn next_page(&mut self) -> Result<Option<Page<T>>> {
         if self.done {
             return Ok(None);
         }
 
+        let requested = self.next_cursor.take();
         let req = PageRequest {
-            cursor: self.next_cursor.take(),
+            cursor: requested.clone(),
             limit: self.page_size,
         };
         let page = (self.fetch)(req).await?;
+        self.pages_fetched += 1;
 
         match &page.next_cursor {
-            Some(cursor) => self.next_cursor = Some(cursor.clone()),
+            // Server handed back the same cursor it was given: refuse to spin.
+            Some(next) if Some(next) == requested.as_ref() => self.done = true,
+            // Page cap reached: stop as if this were the final page.
+            Some(_) if self.max_pages == Some(self.pages_fetched) => self.done = true,
+            Some(next) => self.next_cursor = Some(next.clone()),
             None => self.done = true,
         }
 
@@ -215,21 +250,27 @@ impl<T> Paginator<T> {
     /// Consume the paginator as a [`Stream`] yielding one item at a time.
     ///
     /// Pages are fetched on demand as the stream is polled; empty pages that
-    /// still carry a next cursor are skipped transparently. The stream stops at
-    /// the first error.
+    /// still carry a next cursor are skipped transparently.
+    ///
+    /// The stream ends at the first error and is **not** fused: once it has
+    /// yielded `None` (exhausted) or an `Err`, it should not be polled again —
+    /// doing so is not guaranteed to behave. On error the paginator is consumed
+    /// with it, so there is no resume-after-error; rebuild a fresh paginator with
+    /// [`starting_after`](Self::starting_after) from the last successfully
+    /// returned page's cursor to continue.
     pub fn into_stream(self) -> impl Stream<Item = Result<T>> + Send
     where
         T: Send + 'static,
     {
         futures_util::stream::try_unfold(
-            (self, VecDeque::<T>::new()),
-            |(mut pager, mut buffer)| async move {
+            (self, Vec::<T>::new().into_iter()),
+            |(mut pager, mut items)| async move {
                 loop {
-                    if let Some(item) = buffer.pop_front() {
-                        return Ok(Some((item, (pager, buffer))));
+                    if let Some(item) = items.next() {
+                        return Ok(Some((item, (pager, items))));
                     }
                     match pager.next_page().await? {
-                        Some(page) => buffer.extend(page.items),
+                        Some(page) => items = page.items.into_iter(),
                         None => return Ok(None),
                     }
                 }
@@ -366,5 +407,121 @@ mod tests {
         let mut stream = Box::pin(pager.into_stream());
         let first = stream.next().await.unwrap();
         assert!(matches!(first, Err(Error::Api { .. })));
+    }
+
+    /// Build a paginator whose closure errors after `ok_pages` successful pages.
+    fn errors_after(ok_pages: usize, calls: Arc<AtomicUsize>) -> Paginator<u64> {
+        Paginator::new(move |_req: PageRequest| {
+            let calls = Arc::clone(&calls);
+            async move {
+                let n = calls.fetch_add(1, Ordering::SeqCst);
+                if n < ok_pages {
+                    // Hand back an advancing cursor so paging continues into the
+                    // error (and isn't short-circuited by the repeated-cursor guard).
+                    Ok::<_, Error>(Page::new(vec![n as u64], Some(Cursor::new((n + 1).to_string()))))
+                } else {
+                    Err(Error::Api {
+                        code: "boom".into(),
+                        message: "kaboom".into(),
+                    })
+                }
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn errors_propagate_through_next_page() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut pager = errors_after(1, Arc::clone(&calls));
+
+        // First page succeeds.
+        let p1 = pager.next_page().await.unwrap().unwrap();
+        assert_eq!(p1.items, vec![0]);
+        // Second fetch errors and surfaces through next_page.
+        assert!(matches!(pager.next_page().await, Err(Error::Api { .. })));
+    }
+
+    #[tokio::test]
+    async fn errors_propagate_through_all() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let pager = errors_after(2, calls);
+        assert!(matches!(pager.all().await, Err(Error::Api { .. })));
+    }
+
+    #[tokio::test]
+    async fn empty_final_first_page_terminates_immediately() {
+        // Server returns [] with no next cursor on the very first page.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls2 = Arc::clone(&calls);
+        let make = move || {
+            let calls = Arc::clone(&calls2);
+            Paginator::<u64>::new(move |_req: PageRequest| {
+                let calls = Arc::clone(&calls);
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok::<_, Error>(Page::new(vec![], None))
+                }
+            })
+        };
+
+        assert_eq!(make().all().await.unwrap(), Vec::<u64>::new());
+
+        let collected: Vec<u64> = make().into_stream().map(|r| r.unwrap()).collect().await;
+        assert_eq!(collected, Vec::<u64>::new());
+        // One fetch for each of the two runs above — no spinning on the empty page.
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn repeated_cursor_does_not_spin() {
+        // Pathological server: always returns the same non-advancing cursor.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls2 = Arc::clone(&calls);
+        let mut pager = Paginator::<u64>::new(move |_req: PageRequest| {
+            let calls = Arc::clone(&calls2);
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, Error>(Page::new(vec![1u64], Some(Cursor::new("stuck"))))
+            }
+        })
+        .starting_after("stuck");
+
+        // First page comes back...
+        let p1 = pager.next_page().await.unwrap().unwrap();
+        assert_eq!(p1.items, vec![1]);
+        // ...then the paginator refuses to re-issue the identical request.
+        assert!(pager.next_page().await.unwrap().is_none());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn repeated_cursor_terminates_all() {
+        // `all()` must terminate even though the server never stops paging.
+        let pager = Paginator::<u64>::new(move |req: PageRequest| async move {
+            // Same cursor every time, regardless of what was requested.
+            let _ = req;
+            Ok::<_, Error>(Page::new(vec![7u64], Some(Cursor::new("loop"))))
+        })
+        .starting_after("loop");
+        assert_eq!(pager.all().await.unwrap(), vec![7]);
+    }
+
+    #[tokio::test]
+    async fn max_pages_caps_paging() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        // 100 items, 2 per page would be 50 pages — cap it at 3.
+        let pager = fake_endpoint(100, 2, Arc::clone(&calls)).max_pages(3);
+        let items = pager.all().await.unwrap();
+        assert_eq!(items, vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn cursor_serde_round_trips() {
+        let cursor = Cursor::new("opaque-token");
+        let json = serde_json::to_string(&cursor).unwrap();
+        assert_eq!(json, "\"opaque-token\"");
+        let back: Cursor = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cursor);
     }
 }

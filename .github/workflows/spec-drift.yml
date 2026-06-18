@@ -31,7 +31,15 @@ jobs:
 
       - name: Read pinned spec version
         id: pin
-        run: echo "tag=$(cat .api-version)" >> "$GITHUB_OUTPUT"
+        run: |
+          tag="$(cat .api-version)"
+          # Validate before it reaches any URL / cache key: a crafted
+          # .api-version on a fork PR could otherwise inject into the fetch.
+          if [[ ! "$tag" =~ ^v[0-9]+(\.[0-9]+)*$ ]]; then
+            echo "::error::.api-version must look like vX.Y.Z (got: '$tag')"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Cache the pinned spec
         id: cache
@@ -42,9 +50,13 @@ jobs:
 
       - name: Fetch spec (cache miss only)
         if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          # Passed via env (not interpolated into the script) so the tag is
+          # data, not code; validated to ^v[0-9.]+$ in the pin step above.
+          SPEC_TAG: ${{ steps.pin.outputs.tag }}
         run: |
           curl -fsSL \
-            "https://raw.githubusercontent.com/nexus-xyz/nexus-exchange-api/${{ steps.pin.outputs.tag }}/openapi.json" \
+            "https://raw.githubusercontent.com/nexus-xyz/nexus-exchange-api/${SPEC_TAG}/openapi.json" \
             -o openapi.pinned.json
 
       - name: Check drift

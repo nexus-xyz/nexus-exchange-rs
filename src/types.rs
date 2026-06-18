@@ -935,8 +935,10 @@ pub struct SubAccount {
 pub struct AdlClosure {
     /// 0x-prefixed address of the counterparty whose position was closed.
     pub account_id: String,
+    /// Size of the position that was forcibly closed.
     #[serde(with = "rust_decimal::serde::str")]
     pub position_closed: Decimal,
+    /// Collateral settled to this counterparty for the forced closure.
     #[serde(with = "rust_decimal::serde::str")]
     pub settlement_amount: Decimal,
 }
@@ -946,13 +948,17 @@ pub struct AdlClosure {
 /// bad debt. Returned by the market and account ADL history endpoints.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AdlEvent {
+    /// Market identifier, e.g. `BTC-USDX-PERP`.
     pub market_id: String,
     /// 0x-prefixed bankrupt account.
     pub target_account: String,
+    /// Bankruptcy price at which the target's position was settled.
     #[serde(with = "rust_decimal::serde::str")]
     pub bankruptcy_price: Decimal,
+    /// Bad debt absorbed by the insurance fund before counterparties were closed.
     #[serde(with = "rust_decimal::serde::str")]
     pub bad_debt_absorbed_by_fund: Decimal,
+    /// Opposite-side positions closed to absorb the bankrupt account's debt.
     #[serde(default)]
     pub counterparty_closures: Vec<AdlClosure>,
     /// Engine event sequence number.

@@ -95,7 +95,11 @@ impl fmt::Display for Cursor {
 ///
 /// Passed to the closure given to [`Paginator::new`]; the endpoint method
 /// translates it into query parameters on the underlying request.
+///
+/// `#[non_exhaustive]`: this is expected to grow fields (e.g. time-window bounds
+/// or a sort direction), so match it with `..` and read fields by name.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PageRequest {
     /// Cursor for the page to fetch, or `None` for the first page.
     pub cursor: Option<Cursor>,
@@ -104,7 +108,11 @@ pub struct PageRequest {
 }
 
 /// A single page returned by a list endpoint.
+///
+/// `#[non_exhaustive]`: build one with [`Page::new`] rather than a struct
+/// literal, so future fields (e.g. a total count) don't break callers.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Page<T> {
     /// The items in this page, in server order.
     pub items: Vec<T>,
@@ -179,12 +187,13 @@ impl<T> Paginator<T> {
 
     /// Cap the number of pages this paginator will fetch.
     ///
-    /// Once `max` pages have been returned the paginator stops as if it had
-    /// reached the final page, even if the server is still handing back a next
-    /// cursor. This is a safety bound against a misbehaving backend that never
-    /// terminates; the [repeated-cursor guard](Self::next_page) already covers a
-    /// server that keeps echoing the *same* cursor, but `max_pages` also bounds
-    /// one that keeps advancing without end.
+    /// At most `max` pages (hence requests) are fetched; once that many have
+    /// been returned the paginator stops as if it had reached the final page,
+    /// even if the server is still handing back a next cursor. `max_pages(0)`
+    /// fetches nothing. This is a safety bound against a misbehaving backend that
+    /// never terminates; the [repeated-cursor guard](Self::next_page) already
+    /// covers a server that keeps echoing the *same* cursor, but `max_pages` also
+    /// bounds one that keeps advancing without end.
     pub fn max_pages(mut self, max: usize) -> Self {
         self.max_pages = Some(max);
         self
@@ -210,7 +219,9 @@ impl<T> Paginator<T> {
     /// re-issuing the identical request forever. A [`max_pages`](Self::max_pages)
     /// cap, if set, bounds paging even when the cursor keeps advancing.
     pub async fn next_page(&mut self) -> Result<Option<Page<T>>> {
-        if self.done {
+        // Checked before fetching so a `max_pages` cap issues *at most* that many
+        // requests — `max_pages(0)` fetches nothing at all.
+        if self.done || self.max_pages == Some(self.pages_fetched) {
             return Ok(None);
         }
 
@@ -225,8 +236,6 @@ impl<T> Paginator<T> {
         match &page.next_cursor {
             // Server handed back the same cursor it was given: refuse to spin.
             Some(next) if Some(next) == requested.as_ref() => self.done = true,
-            // Page cap reached: stop as if this were the final page.
-            Some(_) if self.max_pages == Some(self.pages_fetched) => self.done = true,
             Some(next) => self.next_cursor = Some(next.clone()),
             None => self.done = true,
         }
@@ -252,16 +261,17 @@ impl<T> Paginator<T> {
     /// Pages are fetched on demand as the stream is polled; empty pages that
     /// still carry a next cursor are skipped transparently.
     ///
-    /// The stream ends at the first error and is **not** fused: once it has
-    /// yielded `None` (exhausted) or an `Err`, it should not be polled again —
-    /// doing so is not guaranteed to behave. On error the paginator is consumed
-    /// with it, so there is no resume-after-error; rebuild a fresh paginator with
-    /// [`starting_after`](Self::starting_after) from the last successfully
-    /// returned page's cursor to continue.
+    /// The stream ends at the first error. It is **fused**: after it yields
+    /// `None` (exhausted) or an `Err`, every later poll returns `None`, so it
+    /// composes safely with combinators that may poll past completion. On error
+    /// the paginator is consumed with it, so there is no resume-after-error;
+    /// rebuild a fresh paginator with [`starting_after`](Self::starting_after)
+    /// from the last successfully returned page's cursor to continue.
     pub fn into_stream(self) -> impl Stream<Item = Result<T>> + Send
     where
         T: Send + 'static,
     {
+        use futures_util::stream::StreamExt;
         futures_util::stream::try_unfold(
             (self, Vec::<T>::new().into_iter()),
             |(mut pager, mut items)| async move {
@@ -276,6 +286,9 @@ impl<T> Paginator<T> {
                 }
             },
         )
+        // `try_unfold` already stops producing after `None`/`Err`; `.fuse()` makes
+        // that a guarantee (`FusedStream`) so downstream combinators behave.
+        .fuse()
     }
 }
 
@@ -418,7 +431,10 @@ mod tests {
                 if n < ok_pages {
                     // Hand back an advancing cursor so paging continues into the
                     // error (and isn't short-circuited by the repeated-cursor guard).
-                    Ok::<_, Error>(Page::new(vec![n as u64], Some(Cursor::new((n + 1).to_string()))))
+                    Ok::<_, Error>(Page::new(
+                        vec![n as u64],
+                        Some(Cursor::new((n + 1).to_string())),
+                    ))
                 } else {
                     Err(Error::Api {
                         code: "boom".into(),
@@ -514,6 +530,46 @@ mod tests {
         let items = pager.all().await.unwrap();
         assert_eq!(items, vec![0, 1, 2, 3, 4, 5]);
         assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn max_pages_zero_fetches_nothing() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let pager = fake_endpoint(100, 2, Arc::clone(&calls)).max_pages(0);
+        assert_eq!(pager.all().await.unwrap(), Vec::<u64>::new());
+        // The cap is checked before fetching, so no request is ever issued.
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn into_stream_is_fused_after_completion() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let pager = fake_endpoint(3, 2, Arc::clone(&calls));
+        let mut stream = Box::pin(pager.into_stream());
+
+        let mut got = Vec::new();
+        while let Some(item) = stream.next().await {
+            got.push(item.unwrap());
+        }
+        assert_eq!(got, vec![0, 1, 2]);
+
+        // Polling past exhaustion keeps returning `None` (fused) — no re-fetch.
+        assert!(stream.next().await.is_none());
+        assert!(stream.next().await.is_none());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn into_stream_is_fused_after_error() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        // Errors on the very first fetch.
+        let pager = errors_after(0, Arc::clone(&calls));
+        let mut stream = Box::pin(pager.into_stream());
+
+        assert!(matches!(stream.next().await, Some(Err(Error::Api { .. }))));
+        // After the error the fused stream yields `None`, not another fetch.
+        assert!(stream.next().await.is_none());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

@@ -19,6 +19,13 @@ use reqwest::header::HeaderMap;
 
 use crate::RateLimit;
 
+/// Upper bound on any server-supplied back-off (`Retry-After` or
+/// `X-RateLimit-Reset`). A hostile or buggy gateway could otherwise send a
+/// `Retry-After` of years and wedge the client — or, via `note_throttle`, the
+/// whole shared limiter — indefinitely. We honor the server's hint up to this
+/// ceiling and no further.
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(300);
+
 /// Cost-weighted token bucket plus 429/`Retry-After` back-off state.
 #[derive(Debug)]
 pub(crate) struct RateLimiter {
@@ -100,7 +107,10 @@ impl RateLimiter {
         // Then wait for enough tokens to accrue, if we're short.
         if b.tokens < cost {
             let secs = ((cost - b.tokens) / b.refill_per_sec).max(0.0);
-            let token_wait = Duration::from_secs_f64(secs);
+            // Infallible: `try_from_secs_f64` rejects NaN/negative/overflow, so a
+            // pathological (tiny refill, huge cost) pair saturates instead of
+            // panicking in the request hot path.
+            let token_wait = Duration::try_from_secs_f64(secs).unwrap_or(Duration::MAX);
             if token_wait > wait {
                 wait = token_wait;
             }
@@ -176,7 +186,7 @@ impl ThrottleInfo {
             headers.get(name)?.to_str().ok()?.trim().parse().ok()
         }
         Self {
-            retry_after: parse::<u64>(headers, "retry-after").map(Duration::from_secs),
+            retry_after: parse_retry_after(headers),
             limit: parse(headers, "x-ratelimit-limit"),
             remaining: parse(headers, "x-ratelimit-remaining"),
             reset: parse(headers, "x-ratelimit-reset"),
@@ -184,21 +194,40 @@ impl ThrottleInfo {
     }
 
     /// How long to wait before retrying: prefer `Retry-After`, then the time
-    /// until `X-RateLimit-Reset`, else the caller's `fallback` back-off.
+    /// until `X-RateLimit-Reset`, else the caller's `fallback` back-off. Both
+    /// server-supplied hints are clamped to [`MAX_RETRY_AFTER`] so a bogus far-
+    /// future `reset` can't wedge the client any more than a bogus `Retry-After`.
     pub(crate) fn wait(&self, fallback: Duration) -> Duration {
         if let Some(d) = self.retry_after {
-            return d;
+            return d.min(MAX_RETRY_AFTER);
         }
         if let Some(reset) = self.reset {
             if let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) {
                 let now_secs = now.as_secs() as i64;
                 if reset > now_secs {
-                    return Duration::from_secs((reset - now_secs) as u64);
+                    return Duration::from_secs((reset - now_secs) as u64).min(MAX_RETRY_AFTER);
                 }
             }
         }
         fallback
     }
+}
+
+/// Parse the `Retry-After` header, honoring both RFC 9110 forms — `delta-seconds`
+/// (`Retry-After: 120`) and `HTTP-date` (`Retry-After: Wed, 21 Oct 2026 07:28:00
+/// GMT`) — and clamping the result to [`MAX_RETRY_AFTER`]. The date form is
+/// converted to a delay from now; a date in the past yields `Duration::ZERO`.
+fn parse_retry_after(headers: &HeaderMap) -> Option<Duration> {
+    let raw = headers.get("retry-after")?.to_str().ok()?;
+    let raw = raw.trim();
+    if let Ok(secs) = raw.parse::<u64>() {
+        return Some(Duration::from_secs(secs).min(MAX_RETRY_AFTER));
+    }
+    let when = httpdate::parse_http_date(raw).ok()?;
+    let delay = when
+        .duration_since(SystemTime::now())
+        .unwrap_or(Duration::ZERO);
+    Some(delay.min(MAX_RETRY_AFTER))
 }
 
 #[cfg(test)]
@@ -276,5 +305,98 @@ mod tests {
             wait > Duration::ZERO,
             "should wait when server reports empty"
         );
+    }
+
+    fn headers(pairs: &[(&str, &str)]) -> reqwest::header::HeaderMap {
+        use reqwest::header::{HeaderName, HeaderValue};
+        let mut h = reqwest::header::HeaderMap::new();
+        for (k, v) in pairs {
+            h.insert(
+                HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                HeaderValue::from_str(v).unwrap(),
+            );
+        }
+        h
+    }
+
+    #[test]
+    fn retry_after_delta_seconds_is_parsed() {
+        let info = ThrottleInfo::from_headers(&headers(&[("retry-after", "12")]));
+        assert_eq!(info.retry_after, Some(Duration::from_secs(12)));
+    }
+
+    #[test]
+    fn retry_after_is_clamped_to_max() {
+        // A hostile gateway asks the client to sleep for ~3170 years.
+        let info = ThrottleInfo::from_headers(&headers(&[("retry-after", "99999999999")]));
+        assert_eq!(info.retry_after, Some(MAX_RETRY_AFTER));
+        // And the clamp survives through `wait`, the value the client sleeps on.
+        assert_eq!(info.wait(Duration::ZERO), MAX_RETRY_AFTER);
+    }
+
+    #[test]
+    fn retry_after_http_date_form_is_honored() {
+        // RFC 9110 HTTP-date form, ~60s in the future.
+        let when = SystemTime::now() + Duration::from_secs(60);
+        let date = httpdate::fmt_http_date(when);
+        let info = ThrottleInfo::from_headers(&headers(&[("retry-after", &date)]));
+        let d = info.retry_after.expect("date form should parse to a delay");
+        assert!(
+            d > Duration::from_secs(50) && d <= Duration::from_secs(61),
+            "unexpected delay from HTTP-date: {d:?}"
+        );
+    }
+
+    #[test]
+    fn retry_after_http_date_in_past_is_zero() {
+        let when = SystemTime::now() - Duration::from_secs(60);
+        let date = httpdate::fmt_http_date(when);
+        let info = ThrottleInfo::from_headers(&headers(&[("retry-after", &date)]));
+        assert_eq!(info.retry_after, Some(Duration::ZERO));
+    }
+
+    #[test]
+    fn wait_falls_back_to_reset_when_no_retry_after() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let info = ThrottleInfo {
+            reset: Some(now + 30),
+            ..Default::default()
+        };
+        let d = info.wait(Duration::from_secs(1));
+        assert!(
+            d > Duration::from_secs(25) && d <= Duration::from_secs(31),
+            "expected ~30s from reset, got {d:?}"
+        );
+
+        // A bogus far-future reset is clamped, not honored verbatim.
+        let bogus = ThrottleInfo {
+            reset: Some(now + 1_000_000),
+            ..Default::default()
+        };
+        assert_eq!(bogus.wait(Duration::from_secs(1)), MAX_RETRY_AFTER);
+
+        // A reset in the past leaves the caller's fallback in place.
+        let past = ThrottleInfo {
+            reset: Some(now - 30),
+            ..Default::default()
+        };
+        assert_eq!(past.wait(Duration::from_secs(7)), Duration::from_secs(7));
+    }
+
+    #[test]
+    fn note_throttle_retunes_capacity_from_429_headers() {
+        let rl = limiter(2.0); // capacity 2 tokens
+                               // 429 reveals the real tier: 100 req/s, currently full.
+        rl.note_throttle(&ThrottleInfo {
+            limit: Some(100),
+            remaining: Some(100),
+            ..Default::default()
+        });
+        // With the old capacity of 2 this would wait; the re-tune to 100 lets it
+        // through immediately, proving the bucket self-corrected off the headers.
+        assert_eq!(rl.reserve(50.0), Duration::ZERO);
     }
 }

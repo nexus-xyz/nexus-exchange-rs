@@ -63,13 +63,18 @@ impl Client {
         cost: f64,
     ) -> Result<T> {
         let url = format!("{}{}", self.config.base_url, path);
+
+        // Reserve the endpoint's cost once for this logical request. Retries
+        // below reuse that reservation and pace off `Retry-After` instead, so a
+        // request that needs N attempts is still charged the bucket only once —
+        // matching how the server accounts for it.
+        let wait = self.limiter.reserve(cost);
+        if !wait.is_zero() {
+            tokio::time::sleep(wait).await;
+        }
+
         let mut attempt: u32 = 0;
         loop {
-            let wait = self.limiter.reserve(cost);
-            if !wait.is_zero() {
-                tokio::time::sleep(wait).await;
-            }
-
             let resp = self.http.get(&url).query(query).send().await?;
             let status = resp.status();
 

@@ -6,11 +6,11 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// proactive pacing off (so tests don't sleep on the token bucket) but reactive
 /// `429` retries bounded at `max_retries`.
 fn client(uri: String, max_retries: u32) -> Client {
-    let cfg = Config::with_base_url(uri).with_rate_limit(RateLimit {
-        limiter_enabled: false,
-        requests_per_second: 10.0,
-        max_retries,
-    });
+    let cfg = Config::with_base_url(uri).with_rate_limit(
+        RateLimit::new(10.0)
+            .with_limiter_enabled(false)
+            .with_max_retries(max_retries),
+    );
     Client::new(cfg)
 }
 

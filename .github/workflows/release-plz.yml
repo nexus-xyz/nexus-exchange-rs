@@ -8,6 +8,10 @@ permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release-plz:
     runs-on: ubuntu-latest

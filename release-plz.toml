@@ -1,3 +1,4 @@
+# Global config section (called [workspace] in release-plz schema, not a Cargo workspace assertion).
 [workspace]
 allow_dirty = false
 

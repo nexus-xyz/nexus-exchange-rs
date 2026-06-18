@@ -105,6 +105,27 @@ pub struct Ticker {
     pub info: Value,
 }
 
+/// The caller's rate-limit status (`GET /account/rate-limit`).
+///
+/// Models a token bucket: `limit` is both the requests-per-second ceiling and
+/// the burst capacity, `remaining` is the tokens available right now, and
+/// `reset_at_ms` is when the bucket refills back to `limit` (`0` when full). All
+/// three are `null` for the unlimited tier (gateway keys). Polling this endpoint
+/// does not consume a token.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RateLimitStatus {
+    /// Rate-limit tier name (e.g. `pro`, `marketmaker`, `unlimited`).
+    pub tier: String,
+    /// Maximum requests per second / burst capacity. `None` for the unlimited tier.
+    pub limit: Option<u32>,
+    /// Requests that can be made right now before throttling. `None` for the
+    /// unlimited tier.
+    pub remaining: Option<u32>,
+    /// Unix timestamp (ms) when the bucket refills to `limit`; `0` when full.
+    /// `None` for the unlimited tier.
+    pub reset_at_ms: Option<i64>,
+}
+
 /// A single order-book level, `[price, amount]` (CCXT format).
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct PriceLevel(
@@ -321,19 +342,6 @@ pub struct Fill {
     pub taker_or_maker: Option<String>,
     pub timestamp: i64,
     pub is_liquidation: bool,
-}
-
-/// Current rate-limit status (`GET /account/rate-limit`). The numeric fields are
-/// `null` for the unlimited tier.
-#[derive(Debug, Clone, Deserialize)]
-pub struct RateLimitStatus {
-    pub tier: String,
-    /// Requests per second ceiling (and burst capacity).
-    pub limit: Option<i64>,
-    /// Requests available right now.
-    pub remaining: Option<i64>,
-    /// Unix ms when the bucket refills to `limit`; `0` when already full.
-    pub reset_at_ms: Option<i64>,
 }
 
 /// A new-order request (`POST /orders`). Construct with [`OrderRequest::limit`]

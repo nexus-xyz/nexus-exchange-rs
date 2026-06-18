@@ -20,31 +20,42 @@ use crate::types::{
 };
 use crate::{Client, Result};
 
+/// Per-endpoint rate-limit cost weight (CCXT-style) for the proactively metered
+/// public `GET`s. The server prices most endpoints at one token. (The signed
+/// endpoints go through the auth path, which isn't proactively metered; the
+/// free `/account/rate-limit` poll is one of them.)
+const COST_DEFAULT: f64 = 1.0;
+
 impl Client {
     /// List all tradable markets and their trading rules.
     pub async fn fetch_markets(&self) -> Result<Vec<Market>> {
-        self.get("/markets", &[]).await
+        self.get("/markets", &[], COST_DEFAULT).await
     }
 
     /// Per-market summaries with 24h volume and halt state.
     pub async fn fetch_market_summaries(&self) -> Result<Vec<MarketSummary>> {
-        self.get("/markets/summary", &[]).await
+        self.get("/markets/summary", &[], COST_DEFAULT).await
     }
 
     /// Tickers for all markets, keyed by symbol.
     pub async fn fetch_tickers(&self) -> Result<HashMap<String, Ticker>> {
-        self.get("/tickers", &[]).await
+        self.get("/tickers", &[], COST_DEFAULT).await
     }
 
     /// Fetch the ticker for a single market, e.g. `BTC-USDX-PERP`.
     pub async fn fetch_ticker(&self, market_id: &str) -> Result<Ticker> {
-        self.get(&format!("/markets/{market_id}/ticker"), &[]).await
+        self.get(&format!("/markets/{market_id}/ticker"), &[], COST_DEFAULT)
+            .await
     }
 
     /// Order book snapshot for a market.
     pub async fn fetch_order_book(&self, market_id: &str) -> Result<OrderBook> {
-        self.get(&format!("/markets/{market_id}/orderbook"), &[])
-            .await
+        self.get(
+            &format!("/markets/{market_id}/orderbook"),
+            &[],
+            COST_DEFAULT,
+        )
+        .await
     }
 
     /// Recent public trades for a market (newest first), optionally limited.
@@ -53,8 +64,12 @@ impl Client {
         if let Some(limit) = limit {
             query.push(("limit", limit.to_string()));
         }
-        self.get(&format!("/markets/{market_id}/trades"), &query)
-            .await
+        self.get(
+            &format!("/markets/{market_id}/trades"),
+            &query,
+            COST_DEFAULT,
+        )
+        .await
     }
 
     /// OHLCV candles for a market.
@@ -71,8 +86,12 @@ impl Client {
         if let Some(limit) = limit {
             query.push(("limit", limit.to_string()));
         }
-        self.get(&format!("/markets/{market_id}/candles"), &query)
-            .await
+        self.get(
+            &format!("/markets/{market_id}/candles"),
+            &query,
+            COST_DEFAULT,
+        )
+        .await
     }
 
     /// Intra-hour funding-rate history for a market.
@@ -85,24 +104,46 @@ impl Client {
         if let Some(limit) = limit {
             query.push(("limit", limit.to_string()));
         }
-        self.get(&format!("/markets/{market_id}/funding"), &query)
-            .await
+        self.get(
+            &format!("/markets/{market_id}/funding"),
+            &query,
+            COST_DEFAULT,
+        )
+        .await
     }
 
     /// Current mark price for a market.
     pub async fn fetch_mark_price(&self, market_id: &str) -> Result<MarkPrice> {
-        self.get(&format!("/markets/{market_id}/mark-price"), &[])
-            .await
+        self.get(
+            &format!("/markets/{market_id}/mark-price"),
+            &[],
+            COST_DEFAULT,
+        )
+        .await
     }
 
     /// Lifecycle / halt status for a market.
     pub async fn fetch_market_status(&self, market_id: &str) -> Result<MarketStatus> {
-        self.get(&format!("/markets/{market_id}/status"), &[]).await
+        self.get(&format!("/markets/{market_id}/status"), &[], COST_DEFAULT)
+            .await
     }
 
     /// Indexer health/status snapshot. Unauthenticated.
     pub async fn health_check(&self) -> Result<HealthStatus> {
-        self.get("/health", &[]).await
+        self.get("/health", &[], COST_DEFAULT).await
+    }
+
+    /// Fetch the caller's current rate-limit status (tier, ceiling, remaining,
+    /// reset) and sync the client-side limiter to it. Requires credentials.
+    ///
+    /// This endpoint does not consume a rate-limit token, so it can be polled
+    /// freely to self-pace. Calling it teaches the client the caller's real
+    /// tier, so subsequent requests are metered against the actual server-side
+    /// budget instead of the conservative default.
+    pub async fn fetch_rate_limit_status(&self) -> Result<RateLimitStatus> {
+        let status: RateLimitStatus = self.signed_get("/account/rate-limit", &[]).await?;
+        self.sync_rate_limit(&status);
+        Ok(status)
     }
 
     /// List the API keys for the authenticated session. Requires credentials.
@@ -124,11 +165,6 @@ impl Client {
     /// Requires credentials.
     pub async fn fetch_my_trades(&self) -> Result<Vec<Fill>> {
         self.signed_get("/fills", &[]).await
-    }
-
-    /// Current rate-limit status for the caller. Requires credentials.
-    pub async fn fetch_rate_limit_status(&self) -> Result<RateLimitStatus> {
-        self.signed_get("/account/rate-limit", &[]).await
     }
 
     /// Place a single order. Requires credentials.

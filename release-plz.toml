@@ -1,0 +1,10 @@
+# Global config section (called [workspace] in release-plz schema, not a Cargo workspace assertion).
+[workspace]
+allow_dirty = false
+
+[[package]]
+name = "nexus-exchange"
+semver_check = true
+# Pre-1.0: bump minor on breaking changes, patch on fixes/features.
+release = true
+publish = true

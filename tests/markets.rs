@@ -54,6 +54,58 @@ fn round_size_snaps_to_lot() {
 }
 
 #[test]
+fn round_is_sign_symmetric_for_negatives() {
+    let m = market();
+    // `Down` truncates toward zero, `Up` rounds away from zero — both directions
+    // for negatives too (regression guard against floor/ceil toward ∓∞).
+    assert_eq!(
+        m.round_price(dec!(-50000.3), Rounding::Down),
+        dec!(-50000.0)
+    );
+    assert_eq!(m.round_price(dec!(-50000.3), Rounding::Up), dec!(-50000.5));
+    assert_eq!(m.round_size(dec!(-1.23456), Rounding::Down), dec!(-1.234));
+    assert_eq!(m.round_size(dec!(-1.23456), Rounding::Up), dec!(-1.235));
+    // Ties still go away from zero on the negative side.
+    assert_eq!(
+        m.round_price(dec!(-50000.25), Rounding::Nearest),
+        dec!(-50000.5)
+    );
+}
+
+#[test]
+fn zero_increment_passes_through() {
+    // tick_size / lot_size of 0 means "no grid": values pass through untouched
+    // instead of dividing by zero.
+    let m: Market = serde_json::from_value(serde_json::json!({
+        "market_id": "BTC-USDX-PERP",
+        "base_asset": "BTC",
+        "quote_asset": "USDX",
+        "tick_size": "0",
+        "lot_size": "0",
+        "min_order_size": "0",
+        "max_order_size": "1000000",
+        "initial_margin_rate": "0.05",
+        "maintenance_margin_rate": "0.03",
+        "max_leverage": 20
+    }))
+    .unwrap();
+    assert_eq!(m.round_price(dec!(50000.3), Rounding::Down), dec!(50000.3));
+    assert_eq!(
+        m.round_size(dec!(1.23456), Rounding::Nearest),
+        dec!(1.23456)
+    );
+}
+
+#[test]
+fn round_does_not_panic_on_extreme_magnitude() {
+    let m = market();
+    // `Decimal::MAX / 0.5` overflows; the helper must pass the value through
+    // rather than panicking on arbitrary public input.
+    assert_eq!(m.round_price(Decimal::MAX, Rounding::Down), Decimal::MAX);
+    assert_eq!(m.round_size(Decimal::MIN, Rounding::Up), Decimal::MIN);
+}
+
+#[test]
 fn round_result_is_clean_scale() {
     let m = market();
     // Re-multiplying 100002 * 0.5 must not leave a noisy "50001.0" scale.

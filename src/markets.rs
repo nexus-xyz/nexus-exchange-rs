@@ -15,10 +15,11 @@ use thiserror::Error;
 /// How to snap a value that falls between two valid grid points.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rounding {
-    /// Toward zero (truncate). Safe default for sizes — never rounds *up* into
-    /// more risk than you asked for.
+    /// Toward zero (truncate) — for negatives too (`-1.3 -> -1.0`, not `-1.5`).
+    /// Safe default for sizes — never rounds *up* into more risk than you asked
+    /// for.
     Down,
-    /// Away from zero.
+    /// Away from zero — for negatives too (`-1.3 -> -1.5`, not `-1.0`).
     Up,
     /// To the nearest grid point; ties go away from zero.
     Nearest,
@@ -79,22 +80,36 @@ pub enum OrderError {
 /// Snap `value` to the nearest multiple of `increment` per `mode`.
 ///
 /// A zero (or absent) increment means "no grid" — the value passes through
-/// unchanged rather than dividing by zero.
+/// unchanged rather than dividing by zero. Likewise, a magnitude extreme enough
+/// to overflow `Decimal` division or multiplication passes through unrounded
+/// rather than panicking; on the [`Market::normalize_order`] path
+/// [`Market::validate_order`] then rejects it cleanly (off-grid / out of range).
 fn round_to_increment(value: Decimal, increment: Decimal, mode: Rounding) -> Decimal {
     if increment.is_zero() {
         return value;
     }
-    let steps = value / increment;
+    // `checked_div` rather than `/`: an extreme value against a tiny increment
+    // overflows `Decimal` and would otherwise panic on public caller input.
+    let Some(steps) = value.checked_div(increment) else {
+        return value;
+    };
+    // Strategies are sign-symmetric so the public `round_price`/`round_size`
+    // match their docs for negatives too: `Down` truncates toward zero, `Up`
+    // rounds away from zero (`floor`/`ceil` would round toward ∓∞ instead).
     let snapped = match mode {
-        Rounding::Down => steps.floor(),
-        Rounding::Up => steps.ceil(),
+        Rounding::Down => steps.round_dp_with_strategy(0, RoundingStrategy::ToZero),
+        Rounding::Up => steps.round_dp_with_strategy(0, RoundingStrategy::AwayFromZero),
         Rounding::Nearest => {
             steps.round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero)
         }
     };
     // Re-multiplying can leave trailing-zero scale (e.g. `100.10`); normalize so
-    // the result reads like a hand-typed price.
-    (snapped * increment).normalize()
+    // the result reads like a hand-typed price. Guard the multiply too: the
+    // snapped step count can still overflow when scaled back up.
+    match snapped.checked_mul(increment) {
+        Some(snapped) => snapped.normalize(),
+        None => value,
+    }
 }
 
 impl Market {

@@ -56,6 +56,16 @@ fn encoded_segment(value: &str, name: &str) -> Result<String> {
     Ok(encode_path_segment(value))
 }
 
+/// Reject an empty identifier carried in a request *body* (not the path).
+/// Mirrors the [`encoded_segment`] guard so body-borne ids are validated as
+/// consistently as path-borne ones, just without the percent-encoding.
+fn require_non_empty(value: &str, name: &str) -> Result<()> {
+    if value.is_empty() {
+        return Err(Error::InvalidRequest(format!("{name} must not be empty")));
+    }
+    Ok(())
+}
+
 impl Client {
     /// List all tradable markets and their trading rules.
     pub async fn fetch_markets(&self) -> Result<Vec<Market>> {
@@ -289,6 +299,7 @@ impl Client {
     /// ceiling ([`Market::max_leverage`](crate::types::Market::max_leverage)) is
     /// enforced server-side.
     pub async fn set_leverage(&self, market_id: &str, leverage: u32) -> Result<LeverageUpdate> {
+        require_non_empty(market_id, "market_id")?;
         if leverage == 0 {
             return Err(Error::InvalidRequest("leverage must be at least 1".into()));
         }
@@ -306,6 +317,7 @@ impl Client {
         market_id: &str,
         margin_mode: MarginMode,
     ) -> Result<MarginModeUpdate> {
+        require_non_empty(market_id, "market_id")?;
         self.signed_post(
             "/account/margin-mode",
             &serde_json::json!({ "market_id": market_id, "margin_mode": margin_mode }),

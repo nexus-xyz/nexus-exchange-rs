@@ -3,7 +3,9 @@
 //! history, and sub-accounts. Covers wire (de)serialization, request signing,
 //! path-segment encoding, and the client-side validation guards.
 
-use nexus_exchange::types::{AmendOrder, Decimal, MarginMode, OrderRequest, Side, TransferRequest};
+use nexus_exchange::types::{
+    AmendOrder, Decimal, MarginMode, OrderRequest, Side, TimeInForce, TransferRequest,
+};
 use nexus_exchange::{Client, Config, Error};
 use wiremock::matchers::{body_json, header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -99,6 +101,37 @@ async fn amend_order_puts_only_changed_fields() {
         .unwrap();
     assert_eq!(resp.order.price, Some(dec("50500")));
     assert_eq!(resp.order.quantity, dec("0.2"));
+}
+
+#[tokio::test]
+async fn amend_order_serializes_tif_and_client_order_id() {
+    let server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path("/orders/o1"))
+        .and(header_exists("x-signature"))
+        // Exercises the `time_in_force` and `client_order_id` setters: TIF
+        // serializes UPPERCASE, and only the two set fields appear in the body.
+        .and(body_json(
+            serde_json::json!({ "time_in_force": "IOC", "client_order_id": "replacement-1" }),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "order": {
+                "id": "o1", "market_id": "BTC-USDX-PERP", "side": "Buy", "order_type": "Limit",
+                "time_in_force": "IOC", "status": "Open", "client_order_id": "replacement-1"
+            },
+            "fills": []
+        })))
+        .mount(&server)
+        .await;
+    let amend = AmendOrder::new()
+        .time_in_force(TimeInForce::Ioc)
+        .client_order_id("replacement-1");
+    let resp = authed(server.uri())
+        .amend_order("o1", &amend)
+        .await
+        .unwrap();
+    assert_eq!(resp.order.time_in_force, TimeInForce::Ioc);
+    assert_eq!(resp.order.client_order_id.as_deref(), Some("replacement-1"));
 }
 
 #[tokio::test]
@@ -263,6 +296,45 @@ async fn create_transfer_sends_body_and_rejects_non_positive() {
         .await
         .unwrap_err();
     assert!(matches!(err, Error::InvalidRequest(_)));
+}
+
+#[tokio::test]
+async fn fetch_transfers_lists_history() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/transfers"))
+        .and(header_exists("x-signature"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "id": "t1", "from_account": "main", "to_account": "sub1",
+                "amount": "100", "timestamp": 1776033900000i64, "status": "completed"
+            },
+            // Slim record: a missing `status` defaults rather than failing decode.
+            { "id": "t2", "from_account": "sub1", "to_account": "main",
+              "amount": "25.5", "timestamp": 1776034000000i64 }
+        ])))
+        .mount(&server)
+        .await;
+    let transfers = authed(server.uri()).fetch_transfers().await.unwrap();
+    assert_eq!(transfers.len(), 2);
+    assert_eq!(transfers[0].id, "t1");
+    assert_eq!(transfers[0].amount, dec("100"));
+    assert_eq!(transfers[1].status, "");
+}
+
+#[tokio::test]
+async fn leverage_and_margin_mode_reject_empty_market_id() {
+    // The market id rides in the JSON body, so it isn't covered by the path
+    // segment guard — these assert the explicit body-side check. No mock is
+    // mounted: a request escaping the client would surface as a transport error.
+    let client = authed("http://127.0.0.1:1".to_string());
+    let lev = client.set_leverage("", 10).await.unwrap_err();
+    assert!(matches!(lev, Error::InvalidRequest(_)));
+    let margin = client
+        .set_margin_mode("", MarginMode::Cross)
+        .await
+        .unwrap_err();
+    assert!(matches!(margin, Error::InvalidRequest(_)));
 }
 
 #[tokio::test]

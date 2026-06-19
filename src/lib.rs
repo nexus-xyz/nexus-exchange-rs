@@ -4,6 +4,7 @@
 //! skeleton; REST endpoints ([`rest`]), authentication ([`auth`]), and
 //! streaming ([`ws`]) are filled in incrementally.
 #![deny(unreachable_pub)]
+#![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
 
 mod client;

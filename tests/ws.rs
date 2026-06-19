@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use nexus_exchange::ws::{Backoff, Event};
+use nexus_exchange::ws::{Backoff, Event, Subscription};
 use nexus_exchange::{Client, Config};
 use serde_json::{json, Value};
 use tokio::net::{TcpListener, TcpStream};
@@ -37,6 +37,17 @@ async fn read_text(ws: &mut WebSocketStream<TcpStream>) -> Value {
 
 async fn send_json(ws: &mut WebSocketStream<TcpStream>, v: Value) {
     ws.send(Message::Text(v.to_string().into())).await.unwrap();
+}
+
+/// Await the next event with a hard upper bound, so a *missing* event (a
+/// regression that drops a frame the test expects) fails with a named timeout
+/// instead of hanging until the test harness kills the whole process. The bound
+/// is generous relative to the millisecond-scale backoff used in these tests.
+async fn next_event(sub: &mut Subscription) -> Option<Event> {
+    match tokio::time::timeout(Duration::from_secs(5), sub.next()).await {
+        Ok(event) => event,
+        Err(_) => panic!("timed out waiting for the next event"),
+    }
 }
 
 #[tokio::test]
@@ -77,18 +88,27 @@ async fn connects_subscribes_and_reconnects() {
     let mut sub = client.connect(vec![subscribe.clone()]);
 
     // First lifecycle: Connected, echoed-sub, n=1, n=2.
-    assert!(matches!(sub.next().await, Some(Event::Connected)));
-    assert_eq!(sub.next().await.unwrap_message()["echo_sub"], subscribe);
-    assert_eq!(sub.next().await.unwrap_message()["n"], json!(1));
-    assert_eq!(sub.next().await.unwrap_message()["n"], json!(2));
+    assert!(matches!(next_event(&mut sub).await, Some(Event::Connected)));
+    assert_eq!(
+        next_event(&mut sub).await.unwrap_message()["echo_sub"],
+        subscribe
+    );
+    assert_eq!(next_event(&mut sub).await.unwrap_message()["n"], json!(1));
+    assert_eq!(next_event(&mut sub).await.unwrap_message()["n"], json!(2));
 
     // The drop surfaces as Disconnected, then a fresh Connected.
-    assert!(matches!(sub.next().await, Some(Event::Disconnected(_))));
-    assert!(matches!(sub.next().await, Some(Event::Connected)));
+    assert!(matches!(
+        next_event(&mut sub).await,
+        Some(Event::Disconnected(_))
+    ));
+    assert!(matches!(next_event(&mut sub).await, Some(Event::Connected)));
 
     // Reconnect replayed the subscription frame.
-    assert_eq!(sub.next().await.unwrap_message()["echo_sub"], subscribe);
-    assert_eq!(sub.next().await.unwrap_message()["n"], json!(3));
+    assert_eq!(
+        next_event(&mut sub).await.unwrap_message()["echo_sub"],
+        subscribe
+    );
+    assert_eq!(next_event(&mut sub).await.unwrap_message()["n"], json!(3));
 
     sub.close().await;
     server.await.unwrap();
@@ -117,7 +137,7 @@ async fn backpressure_preserves_order_and_reports_gaps() {
     let client = client_for(addr, 4);
     let mut sub = client.connect(vec![json!({ "type": "subscribe" })]);
 
-    assert!(matches!(sub.next().await, Some(Event::Connected)));
+    assert!(matches!(next_event(&mut sub).await, Some(Event::Connected)));
 
     // Walk events until the connection drops. Delivery is order-preserving and
     // gap-aware: each frame's seq equals the running count of (delivered +
@@ -127,7 +147,7 @@ async fn backpressure_preserves_order_and_reports_gaps() {
     let mut delivered: u64 = 0;
     let mut lagged: u64 = 0;
     loop {
-        match sub.next().await {
+        match next_event(&mut sub).await {
             Some(Event::Message(v)) => {
                 let seq = v["seq"].as_u64().unwrap();
                 assert_eq!(
@@ -174,7 +194,7 @@ async fn connect_failure_surfaces_disconnected_and_keeps_retrying() {
     // The client reports the failure rather than panicking, and (because it
     // keeps retrying against a dead port) keeps reporting it.
     for _ in 0..3 {
-        match sub.next().await {
+        match next_event(&mut sub).await {
             Some(Event::Disconnected(reason)) => assert!(reason.contains("connect failed")),
             other => panic!("expected Disconnected, got {other:?}"),
         }

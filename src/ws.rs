@@ -186,6 +186,19 @@ impl Client {
     }
 }
 
+/// Emit a lifecycle event ([`Event::Connected`] / [`Event::Disconnected`])
+/// without blocking the task.
+///
+/// Like data frames, lifecycle markers go out via a non-blocking `try_send`: a
+/// consumer that left the channel full must never stall the task — in
+/// particular at the reconnect boundary, where a blocked `Connected` would
+/// delay the read loop and with it the keepalive Pong. A full channel drops the
+/// marker (the consumer is already behind and will see [`Event::Lagged`]).
+/// Returns `false` only once the consumer is gone, so the caller can stop.
+fn emit_lifecycle(event_tx: &mpsc::Sender<Event>, event: Event) -> bool {
+    !matches!(event_tx.try_send(event), Err(TrySendError::Closed(_)))
+}
+
 /// The background reconnect loop: connect, run until the socket drops or a
 /// command stops it, then back off and try again.
 async fn run(
@@ -200,7 +213,7 @@ async fn run(
     loop {
         match tokio_tungstenite::connect_async(ws_url.as_str()).await {
             Ok((stream, _resp)) => {
-                if event_tx.send(Event::Connected).await.is_err() {
+                if !emit_lifecycle(&event_tx, Event::Connected) {
                     return; // consumer gone
                 }
 
@@ -226,18 +239,17 @@ async fn run(
                 match exit {
                     LoopExit::Closed | LoopExit::ConsumerGone => return,
                     LoopExit::Reconnect(reason) => {
-                        if event_tx.send(Event::Disconnected(reason)).await.is_err() {
+                        if !emit_lifecycle(&event_tx, Event::Disconnected(reason)) {
                             return;
                         }
                     }
                 }
             }
             Err(err) => {
-                if event_tx
-                    .send(Event::Disconnected(format!("connect failed: {err}")))
-                    .await
-                    .is_err()
-                {
+                if !emit_lifecycle(
+                    &event_tx,
+                    Event::Disconnected(format!("connect failed: {err}")),
+                ) {
                     return;
                 }
             }
@@ -338,6 +350,7 @@ async fn handle_message<W>(
 ) -> Option<LoopExit>
 where
     W: SinkExt<Message> + Unpin,
+    <W as futures_util::Sink<Message>>::Error: std::fmt::Display,
 {
     match msg {
         Message::Text(text) => match serde_json::from_str::<Value>(&text) {
@@ -351,10 +364,11 @@ where
             Err(_) => None,
         },
         // Keep the connection alive. If the pong can't be sent the socket is
-        // already gone; reconnect.
+        // already gone; reconnect, surfacing the underlying error like the
+        // read/connect paths do.
         Message::Ping(payload) => match write.send(Message::Pong(payload)).await {
             Ok(()) => None,
-            Err(_) => Some(LoopExit::Reconnect("pong send failed".to_string())),
+            Err(err) => Some(LoopExit::Reconnect(format!("pong send failed: {err}"))),
         },
         Message::Close(frame) => {
             let reason = frame

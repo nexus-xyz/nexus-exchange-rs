@@ -13,18 +13,48 @@ pub use pagination::{Cursor, Page, PageRequest, Paginator};
 use std::collections::HashMap;
 
 use crate::types::{
-    AccountSummary, ApiKeyInfo, CreditResult, Decimal, DepositResult, Fill, FundingSample,
-    HealthStatus, MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook,
-    OrderRequest, OrderResponse, Position, RateLimitStatus, Ticker, TierOverride, Trade,
-    Withdrawal, WsToken,
+    AccountSummary, AmendOrder, ApiKeyInfo, CreditResult, Decimal, DepositResult, Fill,
+    FundingPayment, FundingSample, HealthStatus, LeverageUpdate, MarginMode, MarginModeUpdate,
+    MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderRequest,
+    OrderResponse, Position, RateLimitStatus, SubAccount, Ticker, TierOverride, Trade, Transfer,
+    TransferRequest, Withdrawal, WsToken,
 };
-use crate::{Client, Result};
+use crate::{Client, Error, Result};
 
 /// Per-endpoint rate-limit cost weight (CCXT-style) for the proactively metered
 /// public `GET`s. The server prices most endpoints at one token. (The signed
 /// endpoints go through the auth path, which isn't proactively metered; the
 /// free `/account/rate-limit` poll is one of them.)
 const COST_DEFAULT: f64 = 1.0;
+
+/// Percent-encode a single path segment so a caller-supplied identifier (e.g. a
+/// client order id) cannot break out of its position in the request path.
+/// Everything outside the RFC 3986 *unreserved* set is escaped, so `/`, `?`,
+/// `#`, `..`, whitespace, etc. become `%XX` rather than altering the path that
+/// is both signed and sent — keeping `signed === sent` and ruling out path
+/// traversal / injection through untrusted identifiers.
+fn encode_path_segment(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for &b in value.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Reject an empty identifier and percent-encode the rest for safe use as a
+/// path segment. Keeps a blank id from collapsing `/orders/by-client-id/{id}`
+/// into the parent collection route.
+fn encoded_segment(value: &str, name: &str) -> Result<String> {
+    if value.is_empty() {
+        return Err(Error::InvalidRequest(format!("{name} must not be empty")));
+    }
+    Ok(encode_path_segment(value))
+}
 
 impl Client {
     /// List all tradable markets and their trading rules.
@@ -246,5 +276,137 @@ impl Client {
     /// streaming client. Requires credentials.
     pub async fn mint_web_socket_token(&self) -> Result<WsToken> {
         self.signed_post_empty("/ws/token").await
+    }
+
+    // --- Tier 3: leverage / margin, order amend, batch, client order ids,
+    // funding & transfer history, sub-accounts. ---
+
+    /// Set the leverage used for a market (`POST /account/leverage`). Requires
+    /// credentials.
+    ///
+    /// `leverage` is the integer multiplier (e.g. `10` for 10×). Must be at
+    /// least 1 — that's checked locally before sending; the market's actual
+    /// ceiling ([`Market::max_leverage`](crate::types::Market::max_leverage)) is
+    /// enforced server-side.
+    pub async fn set_leverage(&self, market_id: &str, leverage: u32) -> Result<LeverageUpdate> {
+        if leverage == 0 {
+            return Err(Error::InvalidRequest("leverage must be at least 1".into()));
+        }
+        self.signed_post(
+            "/account/leverage",
+            &serde_json::json!({ "market_id": market_id, "leverage": leverage }),
+        )
+        .await
+    }
+
+    /// Set the margin mode (cross or isolated) for a market
+    /// (`POST /account/margin-mode`). Requires credentials.
+    pub async fn set_margin_mode(
+        &self,
+        market_id: &str,
+        margin_mode: MarginMode,
+    ) -> Result<MarginModeUpdate> {
+        self.signed_post(
+            "/account/margin-mode",
+            &serde_json::json!({ "market_id": market_id, "margin_mode": margin_mode }),
+        )
+        .await
+    }
+
+    /// Amend an open order in place (`PUT /orders/{id}`) — an atomic server-side
+    /// cancel-replace. Requires credentials.
+    ///
+    /// Only the fields set on `amend` change; the rest of the order is left as
+    /// is. An amend that would change nothing is rejected locally (no request is
+    /// sent) so a stray no-op can't silently churn the order's queue priority.
+    pub async fn amend_order(&self, order_id: &str, amend: &AmendOrder) -> Result<OrderResponse> {
+        if !amend.has_changes() {
+            return Err(Error::InvalidRequest(
+                "amend_order requires at least one field to change".into(),
+            ));
+        }
+        let id = encoded_segment(order_id, "order_id")?;
+        self.signed_put(&format!("/orders/{id}"), amend).await
+    }
+
+    /// Cancel a batch of orders by id (`POST /orders/batch-cancel`). Requires
+    /// credentials. Sequential and non-atomic, mirroring
+    /// [`create_orders`](Self::create_orders); the per-order result array is
+    /// currently untyped in the spec. An empty batch is rejected locally.
+    pub async fn cancel_orders(&self, order_ids: &[&str]) -> Result<serde_json::Value> {
+        if order_ids.is_empty() {
+            return Err(Error::InvalidRequest(
+                "cancel_orders requires at least one order id".into(),
+            ));
+        }
+        self.signed_post(
+            "/orders/batch-cancel",
+            &serde_json::json!({ "order_ids": order_ids }),
+        )
+        .await
+    }
+
+    /// Fetch a single order by its caller-assigned client order id
+    /// (`GET /orders/by-client-id/{client_order_id}`). Requires credentials.
+    pub async fn fetch_order_by_client_id(&self, client_order_id: &str) -> Result<Order> {
+        let id = encoded_segment(client_order_id, "client_order_id")?;
+        self.signed_get(&format!("/orders/by-client-id/{id}"), &[])
+            .await
+    }
+
+    /// Cancel a single order by its caller-assigned client order id
+    /// (`DELETE /orders/by-client-id/{client_order_id}`). Requires credentials.
+    pub async fn cancel_order_by_client_id(
+        &self,
+        client_order_id: &str,
+    ) -> Result<serde_json::Value> {
+        let id = encoded_segment(client_order_id, "client_order_id")?;
+        self.signed_delete(&format!("/orders/by-client-id/{id}"))
+            .await
+    }
+
+    /// Funding-payment history for the authenticated account
+    /// (`GET /funding-payments`), optionally filtered to a single market.
+    /// Requires credentials.
+    pub async fn fetch_funding_payments(
+        &self,
+        market_id: Option<&str>,
+    ) -> Result<Vec<FundingPayment>> {
+        let mut query = Vec::new();
+        if let Some(market_id) = market_id {
+            query.push(("market_id", market_id.to_string()));
+        }
+        self.signed_get("/funding-payments", &query).await
+    }
+
+    /// Move collateral between accounts (`POST /transfers`), e.g. to or from a
+    /// sub-account. Requires credentials. A non-positive amount is rejected
+    /// locally before sending.
+    pub async fn create_transfer(&self, transfer: &TransferRequest) -> Result<Transfer> {
+        if transfer.amount <= Decimal::ZERO {
+            return Err(Error::InvalidRequest(
+                "transfer amount must be positive".into(),
+            ));
+        }
+        self.signed_post("/transfers", transfer).await
+    }
+
+    /// Collateral-transfer history for the authenticated account
+    /// (`GET /transfers`). Requires credentials.
+    pub async fn fetch_transfers(&self) -> Result<Vec<Transfer>> {
+        self.signed_get("/transfers", &[]).await
+    }
+
+    /// List the sub-accounts of the authenticated master account
+    /// (`GET /sub-accounts`). Requires credentials.
+    pub async fn fetch_sub_accounts(&self) -> Result<Vec<SubAccount>> {
+        self.signed_get("/sub-accounts", &[]).await
+    }
+
+    /// Create a new sub-account with the given label (`POST /sub-accounts`).
+    /// Requires credentials.
+    pub async fn create_sub_account(&self, label: &str) -> Result<SubAccount> {
+        self.signed_post("/sub-accounts", &serde_json::json!({ "label": label }))
+            .await
     }
 }

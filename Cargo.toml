@@ -10,12 +10,6 @@ keywords = ["nexus", "exchange", "trading", "crypto"]
 categories = ["api-bindings", "asynchronous"]
 publish = true
 
-# docs.rs builds with all features so the full API surface is documented, and
-# sets `--cfg docsrs` to enable feature annotations on items behind cfgs.
-[package.metadata.docs.rs]
-all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
-
 [dependencies]
 futures-core = "0.3"
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }

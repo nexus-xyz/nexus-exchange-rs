@@ -1,6 +1,6 @@
 //! Client configuration.
 
-use crate::auth::Credentials;
+use crate::auth::{Credential, Credentials, Nonce, SystemTimeNonce};
 use std::sync::Arc;
 
 /// Which Nexus Exchange environment to target.
@@ -99,7 +99,8 @@ impl RateLimit {
 pub struct Config {
     pub(crate) base_url: String,
     pub(crate) rate_limit: RateLimit,
-    pub(crate) credentials: Option<Arc<Credentials>>,
+    pub(crate) credentials: Option<Arc<dyn Credential>>,
+    pub(crate) nonce: Arc<dyn Nonce>,
 }
 
 impl Config {
@@ -109,6 +110,7 @@ impl Config {
             base_url: network.base_url().to_string(),
             rate_limit: RateLimit::default(),
             credentials: None,
+            nonce: Arc::new(SystemTimeNonce),
         }
     }
 
@@ -118,6 +120,7 @@ impl Config {
             base_url: base_url.into(),
             rate_limit: RateLimit::default(),
             credentials: None,
+            nonce: Arc::new(SystemTimeNonce),
         }
     }
 
@@ -137,13 +140,26 @@ impl Config {
     /// Authenticate with an HMAC API key — `key_id` and the 64-char hex
     /// `secret` from `POST /keys`.
     pub fn api_key(mut self, key_id: impl Into<String>, secret: impl Into<String>) -> Self {
-        self.credentials = Some(Arc::new(Credentials::api_key(key_id, secret)));
+        self.credentials = Some(Credentials::api_key(key_id, secret).into_arc());
         self
     }
 
     /// Authenticate with a session bearer token from `POST /auth/login`.
     pub fn session_token(mut self, token: impl Into<String>) -> Self {
-        self.credentials = Some(Arc::new(Credentials::session(token)));
+        self.credentials = Some(Credentials::session(token).into_arc());
+        self
+    }
+
+    /// Authenticate with a custom [`Credential`] implementation.
+    pub fn with_credential(mut self, credential: Arc<dyn Credential>) -> Self {
+        self.credentials = Some(credential);
+        self
+    }
+
+    /// Override the [`Nonce`] source used to timestamp signed requests. Defaults
+    /// to [`SystemTimeNonce`].
+    pub fn with_nonce(mut self, nonce: Arc<dyn Nonce>) -> Self {
+        self.nonce = nonce;
         self
     }
 }

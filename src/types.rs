@@ -6,6 +6,7 @@
 //! the wire encoding.
 
 pub use rust_decimal::Decimal;
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -806,4 +807,28 @@ pub struct SubAccount {
     /// Sub-account equity, when reported.
     #[serde(default, with = "rust_decimal::serde::str_option")]
     pub equity: Option<Decimal>,
+}
+
+/// Response to EIP-191 session login (`POST /auth/login`).
+///
+/// The session token authenticates `/keys` management only; for trading, mint
+/// an HMAC API key and use [`Config::api_key`](crate::Config::api_key). Tokens
+/// expire after 24 hours — this SDK does not refresh them.
+#[derive(Debug, Deserialize)]
+pub struct LoginResponse {
+    /// Session bearer token (64-char hex). Kept secret; expose with
+    /// [`secrecy::ExposeSecret`] to pass to
+    /// [`Config::session_token`](crate::Config::session_token).
+    pub token: SecretString,
+    /// Ethereum address recovered from the login signature (`0x`-prefixed).
+    pub address: String,
+}
+
+/// Response to EIP-712 agent registration (`POST /agents/register`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentRegistered {
+    /// The registered agent's address (`0x`-prefixed).
+    pub agent_address: String,
+    /// Expiry as Unix milliseconds.
+    pub expires_at: u64,
 }

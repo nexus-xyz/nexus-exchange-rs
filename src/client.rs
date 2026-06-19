@@ -1,10 +1,11 @@
 //! The HTTP client — entry point for the SDK.
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde::{de::DeserializeOwned, Serialize};
 
+use crate::auth::SigningContext;
 use crate::ratelimit::{RateLimiter, ThrottleInfo};
 use crate::types::RateLimitStatus;
 use crate::{Config, Error, Result};
@@ -14,13 +15,6 @@ use crate::{Config, Error, Result};
 struct ApiErrorBody {
     code: String,
     message: Option<String>,
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
 }
 
 /// Entry point for the Nexus Exchange API.
@@ -105,6 +99,23 @@ impl Client {
         }
     }
 
+    /// Unauthenticated `POST` with a JSON body — used by the wallet-signed auth
+    /// flows (`/auth/login`, `/agents/register`), where authorization travels
+    /// in the request body rather than HMAC headers. Not proactively metered.
+    pub(crate) async fn post_unsigned<B: Serialize, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
+        let body_bytes = serde_json::to_vec(body)?;
+        let req = self
+            .http
+            .post(format!("{}{}", self.config.base_url, path))
+            .header("content-type", "application/json")
+            .body(body_bytes);
+        self.handle(req.send().await?).await
+    }
+
     /// Signed `GET` — signs the exact path + query string that is sent.
     pub(crate) async fn signed_get<T: DeserializeOwned>(
         &self,
@@ -113,7 +124,13 @@ impl Client {
     ) -> Result<T> {
         let creds = self.creds()?;
         let qs = serde_urlencoded::to_string(query).unwrap_or_default();
-        let headers = creds.headers("GET", path, &qs, b"", now_ms())?;
+        let headers = creds.auth_headers(&SigningContext {
+            method: "GET",
+            path,
+            query: &qs,
+            body: b"",
+            timestamp_ms: self.nonce(),
+        })?;
         let url = if qs.is_empty() {
             format!("{}{}", self.config.base_url, path)
         } else {
@@ -156,11 +173,16 @@ impl Client {
         self.signed_no_body(reqwest::Method::POST, path).await
     }
 
-    fn creds(&self) -> Result<&crate::auth::Credentials> {
+    fn creds(&self) -> Result<&dyn crate::auth::Credential> {
         self.config
             .credentials
             .as_deref()
             .ok_or_else(|| Error::Auth("this endpoint requires credentials".into()))
+    }
+
+    /// Next millisecond timestamp/nonce from the configured [`Nonce`] source.
+    fn nonce(&self) -> u64 {
+        self.config.nonce.next()
     }
 
     async fn signed_with_body<B: Serialize, T: DeserializeOwned>(
@@ -170,9 +192,13 @@ impl Client {
         body: &B,
     ) -> Result<T> {
         let body_bytes = serde_json::to_vec(body)?;
-        let headers = self
-            .creds()?
-            .headers(method.as_str(), path, "", &body_bytes, now_ms())?;
+        let headers = self.creds()?.auth_headers(&SigningContext {
+            method: method.as_str(),
+            path,
+            query: "",
+            body: &body_bytes,
+            timestamp_ms: self.nonce(),
+        })?;
         let mut req = self
             .http
             .request(method, format!("{}{}", self.config.base_url, path))
@@ -189,9 +215,13 @@ impl Client {
         method: reqwest::Method,
         path: &str,
     ) -> Result<T> {
-        let headers = self
-            .creds()?
-            .headers(method.as_str(), path, "", b"", now_ms())?;
+        let headers = self.creds()?.auth_headers(&SigningContext {
+            method: method.as_str(),
+            path,
+            query: "",
+            body: b"",
+            timestamp_ms: self.nonce(),
+        })?;
         let mut req = self
             .http
             .request(method, format!("{}{}", self.config.base_url, path));

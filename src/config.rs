@@ -62,11 +62,16 @@ pub struct RetryConfig {
     pub max_retries: usize,
     /// Base delay used for the first backoff step.
     pub min_delay: Duration,
-    /// Upper bound on any single backoff delay.
+    /// Upper bound on the *base* backoff delay before jitter. With
+    /// [`jitter`](Self::jitter) enabled, a single delay can exceed this by up to
+    /// the base again (jitter adds a random `(0, current_delay)` on top), so
+    /// this is not a hard per-delay ceiling — only [`max_total_delay`](Self::max_total_delay)
+    /// bounds total sleep.
     pub max_delay: Duration,
-    /// Multiplier applied to the delay after each attempt. Should be `>= 1.0`;
-    /// values below `1.0` (or `NaN`) shrink the delay each step and degrade the
-    /// backoff.
+    /// Multiplier applied to the delay after each attempt. Must be `>= 1.0`;
+    /// values below `1.0` (or `NaN`) would shrink the delay each step, so they
+    /// are clamped up to `1.0` (constant delay) rather than silently degrading
+    /// the backoff.
     pub factor: f32,
     /// Whether to add jitter (a random amount in `(0, current_delay)`) to
     /// backoff delays.
@@ -89,10 +94,14 @@ impl RetryConfig {
 
     /// Translate into the backoff policy consumed by the retry layer.
     pub(crate) fn backoff(&self) -> ExponentialBuilder {
+        // A factor below 1.0 (or NaN) would shrink the delay each step instead
+        // of growing it — backon accepts it silently, so clamp to 1.0 (constant
+        // delay) here to keep backoff monotonic regardless of caller input.
+        let factor = if self.factor >= 1.0 { self.factor } else { 1.0 };
         let builder = ExponentialBuilder::default()
             .with_min_delay(self.min_delay)
             .with_max_delay(self.max_delay)
-            .with_factor(self.factor)
+            .with_factor(factor)
             .with_max_times(self.max_retries)
             .with_total_delay(self.max_total_delay);
         if self.jitter {
@@ -167,5 +176,34 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self::new(Network::Stable)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use backon::BackoffBuilder;
+
+    /// A `factor < 1.0` (or NaN) must not produce a shrinking backoff — it is
+    /// clamped to a constant delay rather than degrading silently.
+    #[test]
+    fn degenerate_factor_is_clamped_to_non_shrinking_delay() {
+        for factor in [0.5_f32, f32::NAN] {
+            let cfg = RetryConfig {
+                factor,
+                jitter: false,
+                min_delay: Duration::from_millis(100),
+                max_delay: Duration::from_secs(5),
+                max_retries: 3,
+                max_total_delay: None,
+            };
+            let mut delays = cfg.backoff().build();
+            let first = delays.next().expect("at least one delay");
+            let second = delays.next().expect("at least two delays");
+            assert!(
+                second >= first,
+                "factor {factor} produced a shrinking delay: {second:?} < {first:?}",
+            );
+        }
     }
 }

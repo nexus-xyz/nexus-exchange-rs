@@ -44,6 +44,12 @@ pub enum Error {
     #[error("invalid order: {0}")]
     InvalidOrder(#[from] OrderError),
 
+    /// A request failed local validation before being sent — e.g. an amend
+    /// with no changes, non-positive leverage or transfer amount, an empty
+    /// batch, or an empty identifier. The request is never transmitted.
+    #[error("invalid request: {0}")]
+    InvalidRequest(String),
+
     /// The API returned `429 Too Many Requests` and automatic retries were
     /// exhausted. `retry_after` carries the server's `Retry-After` hint, if any.
     #[error("rate limited (retries exhausted){}", match .retry_after {

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use backon::BackoffBuilder;
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::ratelimit::{RateLimiter, ThrottleInfo};
@@ -63,6 +64,14 @@ impl Client {
     /// bucket before the request goes out (0 for endpoints the server does not
     /// charge). On `429` the request is retried, honoring `Retry-After`, up to
     /// the configured retry ceiling.
+    ///
+    /// Each attempt is bounded by [`Config::with_timeout`]. Transient transport
+    /// failures (connect/timeout) and `5xx`/`408` responses are retried with
+    /// exponential backoff per [`Config::with_retry`]; `429` stays owned by the
+    /// rate-limit path above so the two layers never double-retry it. **Retry
+    /// is only safe because this is a `GET`** — non-idempotent methods must not
+    /// reuse this path (a lost-response retry would double-submit); see the
+    /// signed helpers, which time out per attempt but do not auto-retry.
     pub(crate) async fn get<T: DeserializeOwned>(
         &self,
         path: &str,
@@ -81,8 +90,34 @@ impl Client {
         }
 
         let mut attempt: u32 = 0;
+        // Backoff for transient transport / 5xx / 408 failures on this
+        // idempotent GET. Independent of the 429 path below, which the rate
+        // limiter owns end-to-end.
+        let mut transient = self.config.retry.backoff().build();
         loop {
-            let resp = self.http.get(&url).query(query).send().await?;
+            let resp = match self
+                .http
+                .get(&url)
+                .query(query)
+                .timeout(self.config.timeout)
+                .send()
+                .await
+            {
+                Ok(resp) => resp,
+                Err(e) => {
+                    // Only connect/timeout transport errors are transient; a
+                    // mid-body-read failure is not, and exhausted backoff
+                    // surfaces the error.
+                    let err = Error::Http(e);
+                    if err.is_transient() {
+                        if let Some(delay) = transient.next() {
+                            tokio::time::sleep(delay).await;
+                            continue;
+                        }
+                    }
+                    return Err(err);
+                }
+            };
 
             if resp.status().as_u16() == 429 {
                 let info = ThrottleInfo::from_headers(resp.headers());
@@ -101,7 +136,18 @@ impl Client {
                 });
             }
 
-            return self.handle(resp).await;
+            // A 5xx / 408 response is transient: retry per the backoff before
+            // giving up. Success and terminal errors return unchanged.
+            match self.handle(resp).await {
+                Err(err) if err.is_transient() => {
+                    if let Some(delay) = transient.next() {
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    return Err(err);
+                }
+                other => return other,
+            }
         }
     }
 
@@ -119,7 +165,7 @@ impl Client {
         } else {
             format!("{}{}?{}", self.config.base_url, path, qs)
         };
-        let mut req = self.http.get(url);
+        let mut req = self.http.get(url).timeout(self.config.timeout);
         for (name, value) in &headers {
             req = req.header(*name, value);
         }
@@ -176,6 +222,7 @@ impl Client {
         let mut req = self
             .http
             .request(method, format!("{}{}", self.config.base_url, path))
+            .timeout(self.config.timeout)
             .header("content-type", "application/json")
             .body(body_bytes);
         for (name, value) in &headers {
@@ -194,7 +241,8 @@ impl Client {
             .headers(method.as_str(), path, "", b"", now_ms())?;
         let mut req = self
             .http
-            .request(method, format!("{}{}", self.config.base_url, path));
+            .request(method, format!("{}{}", self.config.base_url, path))
+            .timeout(self.config.timeout);
         for (name, value) in &headers {
             req = req.header(*name, value);
         }
@@ -209,11 +257,13 @@ impl Client {
             Ok(serde_json::from_slice(&bytes)?)
         } else if let Ok(env) = serde_json::from_slice::<ApiErrorBody>(&bytes) {
             Err(Error::Api {
+                status: status.as_u16(),
                 code: env.code,
                 message: env.message.unwrap_or_default(),
             })
         } else {
             Err(Error::Api {
+                status: status.as_u16(),
                 code: status.as_str().to_string(),
                 message: String::from_utf8_lossy(&bytes).into_owned(),
             })

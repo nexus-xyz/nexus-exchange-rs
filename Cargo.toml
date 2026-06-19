@@ -17,6 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
+backon = "~1.5" # 1.6 bumps MSRV to 1.85; stay on 1.5.x for rust-version = 1.82
 futures-core = "0.3"
 futures-util = { version = "0.3", default-features = false, features = ["alloc", "sink", "std"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

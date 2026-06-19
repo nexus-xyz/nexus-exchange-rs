@@ -19,7 +19,7 @@ pub mod types;
 pub mod ws;
 
 pub use client::Client;
-pub use config::{Config, Network, RateLimit};
+pub use config::{Config, Network, RateLimit, RetryConfig};
 pub use error::Error;
 pub use markets::{OrderError, Rounding};
 

@@ -413,6 +413,7 @@ mod tests {
     async fn errors_propagate_and_halt_paging() {
         let pager = Paginator::<u64>::new(move |_req| async move {
             Err(Error::Api {
+                status: 429,
                 code: "rate_limited".into(),
                 message: "slow down".into(),
             })
@@ -437,6 +438,7 @@ mod tests {
                     ))
                 } else {
                     Err(Error::Api {
+                        status: 500,
                         code: "boom".into(),
                         message: "kaboom".into(),
                     })

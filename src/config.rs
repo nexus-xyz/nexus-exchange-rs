@@ -3,6 +3,9 @@
 use crate::auth::Credentials;
 use crate::ws::Backoff;
 use std::sync::Arc;
+use std::time::Duration;
+
+use backon::ExponentialBuilder;
 
 /// Default bound on the WebSocket event channel. Once this many events are
 /// buffered ahead of a slow consumer, the read loop stops pulling frames off
@@ -126,6 +129,111 @@ impl RateLimit {
     }
 }
 
+/// How the client retries [transient](crate::Error::is_transient) failures on
+/// idempotent (`GET`) requests.
+///
+/// This layer is distinct from the rate limiter: it covers connect/timeout
+/// transport errors and `5xx`/`408` responses. `429` is **not** retried here —
+/// that is owned end-to-end by [`RateLimit`] (`Retry-After` + token bucket), so
+/// the two don't double-retry the same failure.
+///
+/// Retries use exponential backoff with jitter: the base delay before retry `n`
+/// is `min_delay * factor^n` (capped at `max_delay`), and jitter adds a random
+/// amount in `(0, current_delay)` *on top of* that base. Jitter spreads retries
+/// out so that many clients failing at once don't synchronize into a thundering
+/// herd. Disable it with [`RetryConfig::jitter`] set to `false` (e.g. for
+/// deterministic tests).
+///
+/// **The per-request timeout is per *attempt*, not per call.** A call that
+/// retries `max_retries` times can take up to `(max_retries + 1) * timeout`
+/// plus backoff before it surfaces an error. Use [`RetryConfig::max_total_delay`]
+/// to bound the time spent *sleeping* between attempts (it does not bound the
+/// attempts themselves).
+///
+/// ```
+/// use std::time::Duration;
+/// use nexus_exchange::RetryConfig;
+///
+/// let retry = RetryConfig {
+///     max_retries: 5,
+///     min_delay: Duration::from_millis(50),
+///     ..RetryConfig::default()
+/// };
+/// ```
+#[derive(Debug, Clone)]
+pub struct RetryConfig {
+    /// Maximum number of retries *after* the initial attempt. `0` disables
+    /// retries entirely (one attempt, no backoff).
+    pub max_retries: usize,
+    /// Base delay used for the first backoff step.
+    pub min_delay: Duration,
+    /// Upper bound on the *base* backoff delay before jitter. With
+    /// [`jitter`](Self::jitter) enabled, a single delay can exceed this by up to
+    /// the base again (jitter adds a random `(0, current_delay)` on top), so
+    /// this is not a hard per-delay ceiling — only [`max_total_delay`](Self::max_total_delay)
+    /// bounds total sleep.
+    pub max_delay: Duration,
+    /// Multiplier applied to the delay after each attempt. Must be `>= 1.0`;
+    /// values below `1.0` (or `NaN`) would shrink the delay each step, so they
+    /// are clamped up to `1.0` (constant delay) rather than silently degrading
+    /// the backoff.
+    pub factor: f32,
+    /// Whether to add jitter (a random amount in `(0, current_delay)`) to
+    /// backoff delays.
+    pub jitter: bool,
+    /// Optional cap on the *total* time spent sleeping between attempts. `None`
+    /// (the default) means retries are bounded only by `max_retries` and
+    /// `max_delay`. Note this bounds inter-attempt backoff, not the time spent
+    /// inside the attempts themselves (which the per-request timeout bounds).
+    pub max_total_delay: Option<Duration>,
+}
+
+impl RetryConfig {
+    /// A [`RetryConfig`] that performs no retries.
+    pub fn disabled() -> Self {
+        Self {
+            max_retries: 0,
+            ..Self::default()
+        }
+    }
+
+    /// Translate into the backoff policy consumed by the retry layer.
+    pub(crate) fn backoff(&self) -> ExponentialBuilder {
+        // A factor below 1.0 (or NaN) would shrink the delay each step instead
+        // of growing it — backon accepts it silently, so clamp to 1.0 (constant
+        // delay) here to keep backoff monotonic regardless of caller input.
+        let factor = if self.factor >= 1.0 { self.factor } else { 1.0 };
+        let builder = ExponentialBuilder::default()
+            .with_min_delay(self.min_delay)
+            .with_max_delay(self.max_delay)
+            .with_factor(factor)
+            .with_max_times(self.max_retries)
+            .with_total_delay(self.max_total_delay);
+        if self.jitter {
+            builder.with_jitter()
+        } else {
+            builder
+        }
+    }
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            min_delay: Duration::from_millis(100),
+            max_delay: Duration::from_secs(5),
+            factor: 2.0,
+            jitter: true,
+            max_total_delay: None,
+        }
+    }
+}
+
+/// Default per-request timeout. Generous enough for cold connections, tight
+/// enough to surface a stalled request rather than hang indefinitely.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Client configuration. Credentials are optional — public market-data
 /// endpoints need none.
 #[derive(Debug, Clone)]
@@ -135,6 +243,8 @@ pub struct Config {
     pub(crate) ws: WsConfig,
     pub(crate) rate_limit: RateLimit,
     pub(crate) credentials: Option<Arc<Credentials>>,
+    pub(crate) timeout: Duration,
+    pub(crate) retry: RetryConfig,
 }
 
 impl Config {
@@ -146,6 +256,8 @@ impl Config {
             ws: WsConfig::default(),
             rate_limit: RateLimit::default(),
             credentials: None,
+            timeout: DEFAULT_TIMEOUT,
+            retry: RetryConfig::default(),
         }
     }
 
@@ -162,7 +274,27 @@ impl Config {
             ws: WsConfig::default(),
             rate_limit: RateLimit::default(),
             credentials: None,
+            timeout: DEFAULT_TIMEOUT,
+            retry: RetryConfig::default(),
         }
+    }
+
+    /// Set the per-request timeout. This bounds each individual attempt; a
+    /// timed-out attempt is [transient](crate::Error::is_transient) and so is
+    /// subject to retry on idempotent (`GET`) requests. Because it is
+    /// per-attempt, a retried call can take a multiple of this value — see
+    /// [`RetryConfig`] for the total-time bound.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// Configure how transient failures on idempotent requests are retried.
+    /// Pass [`RetryConfig::disabled`] to turn this layer off (the `429`
+    /// rate-limit handling is independent — see [`Config::with_rate_limit`]).
+    pub fn with_retry(mut self, retry: RetryConfig) -> Self {
+        self.retry = retry;
+        self
     }
 
     /// Override the WebSocket URL.
@@ -245,6 +377,30 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use backon::BackoffBuilder;
+
+    /// A `factor < 1.0` (or NaN) must not produce a shrinking backoff — it is
+    /// clamped to a constant delay rather than degrading silently.
+    #[test]
+    fn degenerate_factor_is_clamped_to_non_shrinking_delay() {
+        for factor in [0.5_f32, f32::NAN] {
+            let cfg = RetryConfig {
+                factor,
+                jitter: false,
+                min_delay: Duration::from_millis(100),
+                max_delay: Duration::from_secs(5),
+                max_retries: 3,
+                max_total_delay: None,
+            };
+            let mut delays = cfg.backoff().build();
+            let first = delays.next().expect("at least one delay");
+            let second = delays.next().expect("at least two delays");
+            assert!(
+                second >= first,
+                "factor {factor} produced a shrinking delay: {second:?} < {first:?}",
+            );
+        }
+    }
 
     #[test]
     fn derives_ws_url_from_https_base() {

@@ -29,8 +29,11 @@ serde_urlencoded = "0.7"
 rust_decimal = { version = "1", features = ["serde-with-str", "serde-with-float"] }
 hmac = "0.12"
 sha2 = "0.10"
+sha3 = "0.10"
+k256 = { version = "0.13", features = ["ecdsa"] }
 hex = "0.4"
-secrecy = "0.10"
+secrecy = { version = "0.10", features = ["serde"] }
+zeroize = "1"
 thiserror = "2"
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 
@@ -38,3 +41,4 @@ tokio-tungstenite = { version = "0.29", default-features = false, features = ["c
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"] }
 wiremock = "0.6"
 rust_decimal_macros = "1"
+secrecy = "0.10"

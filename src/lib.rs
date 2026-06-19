@@ -18,6 +18,7 @@ pub mod rest;
 pub mod types;
 pub mod ws;
 
+pub use auth::{Credential, Credentials, EthSigner, Nonce, SystemTimeNonce};
 pub use client::Client;
 pub use config::{Config, Network, RateLimit, RetryConfig};
 pub use error::Error;

@@ -15,11 +15,16 @@ use std::collections::HashMap;
 use crate::types::{
     AccountSummary, AdlEvent, AgentInfo, AmendOrder, ApiKeyInfo, CreatedApiKey, CreditResult,
     Decimal, DepositResult, Fill, FundingPayment, FundingSample, HealthStatus, LeverageUpdate,
-    MarginMode, MarginModeUpdate, MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order,
-    OrderBook, OrderRequest, OrderResponse, Position, RateLimitStatus, SubAccount, Ticker,
-    TierOverride, Trade, Transfer, TransferRequest, Withdrawal, WsToken,
+    LoginResponse, MarginMode, MarginModeUpdate, MarkPrice, Market, MarketStatus, MarketSummary,
+    Ohlcv, Order, OrderBook, OrderRequest, OrderResponse, Position, RateLimitStatus, SubAccount,
+    Ticker, TierOverride, Trade, Transfer, TransferRequest, Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
+
+/// The exact message a wallet must EIP-191 `personal_sign` to authenticate via
+/// [`Client::login`]. Sign these bytes with your wallet; the resulting
+/// signature is what `login` exchanges for a session token.
+pub const LOGIN_MESSAGE: &str = "Sign in to Nexus Exchange";
 
 /// Per-endpoint rate-limit cost weight (CCXT-style) for the proactively metered
 /// public `GET`s. The server prices most endpoints at one token. (The signed
@@ -177,41 +182,45 @@ impl Client {
 
     /// ADL settlement events for a market, most recent first (v0.21). `limit`
     /// caps the number of events (server default 100, max 1000).
+    ///
+    /// Requires API-key credentials (see
+    /// [`Config::api_key`](crate::Config::api_key)): the endpoint is HMAC-gated
+    /// server-side (`hmacAuth`), not a public market-data read, so the call is
+    /// signed and rejected without credentials.
     pub async fn fetch_market_adl_events(
         &self,
         market_id: &str,
         limit: Option<u32>,
     ) -> Result<Vec<AdlEvent>> {
+        let id = encoded_segment(market_id, "market_id")?;
         let mut query = Vec::new();
         if let Some(limit) = limit {
             query.push(("limit", limit.to_string()));
         }
-        self.get(
-            &format!("/markets/{market_id}/adl-events"),
-            &query,
-            COST_DEFAULT,
-        )
-        .await
+        self.signed_get(&format!("/markets/{id}/adl-events"), &query)
+            .await
     }
 
     /// ADL settlement events touching an account, where `address` was the
     /// bankrupt target or a closed counterparty (v0.21). `limit` caps the
     /// number of events (server default 100, max 1000).
+    ///
+    /// Requires API-key credentials (see
+    /// [`Config::api_key`](crate::Config::api_key)): the endpoint is HMAC-gated
+    /// server-side (`hmacAuth`), so the call is signed and rejected without
+    /// credentials.
     pub async fn fetch_account_adl_history(
         &self,
         address: &str,
         limit: Option<u32>,
     ) -> Result<Vec<AdlEvent>> {
+        let addr = encoded_segment(address, "address")?;
         let mut query = Vec::new();
         if let Some(limit) = limit {
             query.push(("limit", limit.to_string()));
         }
-        self.get(
-            &format!("/account/{address}/adl-history"),
-            &query,
-            COST_DEFAULT,
-        )
-        .await
+        self.signed_get(&format!("/account/{addr}/adl-history"), &query)
+            .await
     }
 
     /// Indexer health/status snapshot. Unauthenticated.
@@ -232,40 +241,68 @@ impl Client {
         Ok(status)
     }
 
+    /// Exchange an EIP-191 wallet signature for a session bearer token
+    /// (`POST /auth/login`). Unauthenticated.
+    ///
+    /// `signature` is the 0x-prefixed `personal_sign` of [`LOGIN_MESSAGE`] (65
+    /// bytes) produced by the caller's wallet — this SDK holds no keys and does
+    /// not sign. The message sent is fixed to [`LOGIN_MESSAGE`] so the signed
+    /// and submitted bytes can't drift apart. On success, hand
+    /// [`LoginResponse::token`] to
+    /// [`Config::session_token`](crate::Config::session_token) to authenticate
+    /// the `/keys` endpoints.
+    pub async fn login(&self, signature: &str) -> Result<LoginResponse> {
+        require_non_empty(signature, "signature")?;
+        self.post_public(
+            "/auth/login",
+            &serde_json::json!({ "message": LOGIN_MESSAGE, "signature": signature }),
+        )
+        .await
+    }
+
     /// List the API keys for the authenticated session. Requires credentials.
     pub async fn fetch_api_keys(&self) -> Result<Vec<ApiKeyInfo>> {
         self.signed_get("/keys", &[]).await
     }
 
-    /// Create a new HMAC API key for the authenticated wallet.
+    /// Create a new HMAC API key for the authenticated wallet (`POST /keys`).
     ///
     /// The secret is returned **once** in [`CreatedApiKey::secret`] and is never
-    /// shown again — persist it immediately. Signed with the configured
-    /// credential; the server expects a session token (see
-    /// [`Config::session_token`](crate::Config::session_token)) on the `/keys`
-    /// endpoints and rejects other credential schemes.
+    /// shown again — persist it immediately. Requires a session token (see
+    /// [`Client::login`] and
+    /// [`Config::session_token`](crate::Config::session_token)), the credential
+    /// the `/keys` endpoints expect. The SDK signs with whatever credential is
+    /// configured and does not enforce the scheme per endpoint, so the server
+    /// rejects other credential schemes.
     pub async fn create_api_key(&self) -> Result<CreatedApiKey> {
         self.signed_post_empty("/keys").await
     }
 
-    /// Delete an API key you own, by `key_id`. Deleting a key you don't own
-    /// fails with a not-found error rather than affecting another wallet.
-    /// Signed with the configured credential; the server expects a session
-    /// token (see [`Config::session_token`](crate::Config::session_token)) here.
+    /// Delete an API key you own, by `key_id` (`DELETE /keys/{key_id}`).
+    /// Deleting a key you don't own fails with not-found rather than touching
+    /// another wallet. Requires a session token (see
+    /// [`Config::session_token`](crate::Config::session_token)), the credential
+    /// the `/keys` endpoints expect. As with [`Client::create_api_key`], the SDK
+    /// signs with whatever credential is configured and does not enforce the
+    /// scheme per endpoint.
     pub async fn delete_api_key(&self, key_id: &str) -> Result<serde_json::Value> {
         let id = encoded_segment(key_id, "key_id")?;
         self.signed_delete(&format!("/keys/{id}")).await
     }
 
-    /// List the non-expired agent keys registered to the authenticated wallet.
-    /// Requires API-key credentials (see [`Config::api_key`](crate::Config::api_key)).
+    /// List the non-expired agent keys registered to the authenticated wallet
+    /// (`GET /agents`). Requires API-key credentials (see
+    /// [`Config::api_key`](crate::Config::api_key)). The SDK signs with whatever
+    /// credential is configured and does not enforce the scheme per endpoint.
     pub async fn fetch_agents(&self) -> Result<Vec<AgentInfo>> {
         self.signed_get("/agents", &[]).await
     }
 
-    /// Revoke an agent key by `address`. After this returns, in-flight requests
-    /// signed by the revoked agent are rejected. Requires API-key credentials
-    /// (see [`Config::api_key`](crate::Config::api_key)).
+    /// Revoke an agent key by `address` (`DELETE /agents/{address}`). After this
+    /// returns, in-flight requests signed by the agent are rejected. Requires
+    /// API-key credentials (see [`Config::api_key`](crate::Config::api_key)). As
+    /// with [`Client::fetch_agents`], the SDK signs with whatever credential is
+    /// configured and does not enforce the scheme per endpoint.
     pub async fn revoke_agent(&self, address: &str) -> Result<serde_json::Value> {
         let addr = encoded_segment(address, "address")?;
         self.signed_delete(&format!("/agents/{addr}")).await

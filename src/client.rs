@@ -151,6 +151,28 @@ impl Client {
         }
     }
 
+    /// Unauthenticated `POST` with a JSON body (e.g. `/auth/login`).
+    ///
+    /// Not auto-retried: a `POST` is non-idempotent, so replaying it after a
+    /// lost response could double-submit. Each attempt is still bounded by
+    /// [`Config::with_timeout`]. No credentials are attached and the rate-limit
+    /// bucket is not charged — this is a bootstrap call made before the caller
+    /// holds a key.
+    pub(crate) async fn post_public<B: Serialize, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
+        let body_bytes = serde_json::to_vec(body)?;
+        let req = self
+            .http
+            .post(format!("{}{}", self.config.base_url, path))
+            .timeout(self.config.timeout)
+            .header("content-type", "application/json")
+            .body(body_bytes);
+        self.handle(req.send().await?).await
+    }
+
     /// Signed `GET` — signs the exact path + query string that is sent.
     pub(crate) async fn signed_get<T: DeserializeOwned>(
         &self,

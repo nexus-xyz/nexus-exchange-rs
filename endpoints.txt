@@ -14,9 +14,16 @@ GET /markets/{market_id}/candles
 GET /markets/{market_id}/funding
 GET /markets/{market_id}/mark-price
 GET /markets/{market_id}/status
+GET /markets/{market_id}/adl-events
 GET /health
+POST /auth/login
 GET /keys
+POST /keys
+DELETE /keys/{key_id}
+GET /agents
+DELETE /agents/{address}
 GET /account
+GET /account/{address}/adl-history
 GET /positions
 GET /fills
 GET /account/rate-limit

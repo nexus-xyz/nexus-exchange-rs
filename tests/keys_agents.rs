@@ -1,13 +1,20 @@
-//! Integration tests for the key-management and agent endpoints.
+//! Integration tests for login + key-management + agent endpoints (ENG-3403).
 //!
-//! `/keys` create/delete use a session bearer token (per the spec's
-//! `bearerAuth`); `/agents` list/revoke use HMAC API-key signing
-//! (`hmacAuth`). The tests assert the right credential lands on the wire and
-//! that caller-supplied path ids are confined to a single, encoded segment.
+//! `POST /auth/login` is unauthenticated and yields the session token. `/keys`
+//! create/delete use that session bearer token (spec `bearerAuth`); `/agents`
+//! list/revoke use HMAC API-key signing (`hmacAuth`). The tests assert the
+//! right credential lands on the wire and that caller-supplied path ids are
+//! confined to a single, encoded segment.
 
+use nexus_exchange::rest::LOGIN_MESSAGE;
 use nexus_exchange::{Client, Config, Error, ExposeSecret};
-use wiremock::matchers::{body_string, header, header_exists, method, path};
+use wiremock::matchers::{body_json, body_string, header, header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// Unauthenticated client (login needs no credentials).
+fn anon(uri: String) -> Client {
+    Client::new(Config::with_base_url(uri))
+}
 
 /// Client authenticated with a session bearer token (the `/keys` credential).
 fn session(uri: String) -> Client {
@@ -20,6 +27,39 @@ fn hmac(uri: String) -> Client {
         "nx_test",
         "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
     ))
+}
+
+#[tokio::test]
+async fn login_sends_canonical_message_and_redacts_token() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/auth/login"))
+        // The SDK fixes the message to the canonical value; only the signature
+        // varies. This proves signed-bytes and sent-bytes can't drift.
+        .and(body_json(serde_json::json!({
+            "message": LOGIN_MESSAGE, "signature": "0xdeadbeef"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "token": "sometoken", "address": "0xabc"
+        })))
+        .mount(&server)
+        .await;
+
+    let resp = anon(server.uri()).login("0xdeadbeef").await.unwrap();
+    assert_eq!(resp.token, "sometoken");
+    assert_eq!(resp.address, "0xabc");
+    // The session token must not leak through Debug.
+    assert!(!format!("{resp:?}").contains("sometoken"));
+}
+
+#[tokio::test]
+async fn login_rejects_empty_signature_without_io() {
+    // No server: an empty signature must fail locally before any request.
+    let err = anon("http://localhost:1".into())
+        .login("")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::InvalidRequest(_)));
 }
 
 #[tokio::test]
@@ -138,12 +178,18 @@ async fn path_parameters_cannot_traverse_to_another_route() {
         .mount(&server)
         .await;
 
-    let result = session(server.uri()).delete_api_key("../account").await;
-    match result {
-        // Unmatched request → wiremock's default 404; the point is we did NOT
-        // reach `/account`.
+    match session(server.uri()).delete_api_key("../account").await {
         Err(Error::Api { .. }) => {}
         Err(other) => panic!("expected Api error, got {other:?}"),
         Ok(v) => panic!("traversal reached another route: {v:?}"),
     }
+}
+
+#[tokio::test]
+async fn empty_path_id_is_rejected_locally() {
+    let err = session("http://localhost:1".into())
+        .delete_api_key("")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::InvalidRequest(_)));
 }

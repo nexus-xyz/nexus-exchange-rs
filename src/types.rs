@@ -496,6 +496,29 @@ pub struct AgentInfo {
     pub label: Option<String>,
 }
 
+/// The result of an EIP-191 wallet login (`POST /auth/login`).
+///
+/// [`token`](Self::token) is a session bearer secret; hand it to
+/// [`Config::session_token`](crate::Config::session_token) to authenticate the
+/// `/keys` endpoints. The [`Debug`] impl redacts it so it cannot leak through
+/// `{:?}`; `address` (the recovered public address) is shown.
+#[derive(Clone, Deserialize)]
+pub struct LoginResponse {
+    /// Session token (hex). Treat as a secret — it grants `/keys` access.
+    pub token: String,
+    /// The Ethereum address recovered from the signature (0x-prefixed).
+    pub address: String,
+}
+
+impl fmt::Debug for LoginResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LoginResponse")
+            .field("token", &"<redacted>")
+            .field("address", &self.address)
+            .finish()
+    }
+}
+
 /// Account balance and collateral summary (`GET /account`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct AccountSummary {
@@ -1004,6 +1027,21 @@ mod tests {
     }
 
     #[test]
+    fn login_response_debug_redacts_token() {
+        let resp: LoginResponse = serde_json::from_value(serde_json::json!({
+            "token": "deadbeefsessiontoken", "address": "0xabc",
+        }))
+        .unwrap();
+        assert_eq!(resp.token, "deadbeefsessiontoken");
+        let rendered = format!("{resp:?}");
+        assert!(
+            !rendered.contains("deadbeefsessiontoken"),
+            "leaked: {rendered}"
+        );
+        assert!(rendered.contains("0xabc") && rendered.contains("<redacted>"));
+    }
+
+    #[test]
     fn agent_info_parses_camel_case_and_defaults() {
         let agent: AgentInfo = serde_json::from_value(serde_json::json!({
             "address": "0xagent",
@@ -1021,5 +1059,35 @@ mod tests {
             serde_json::from_value(serde_json::json!({ "address": "0xagent" })).unwrap();
         assert_eq!(slim.registered_at, 0);
         assert!(slim.label.is_none());
+    }
+
+    #[test]
+    fn adl_event_parses_nested_closures() {
+        let ev: AdlEvent = serde_json::from_value(serde_json::json!({
+            "market_id": "BTC-USDX-PERP", "target_account": "0xbankrupt",
+            "bankruptcy_price": "49999.5", "bad_debt_absorbed_by_fund": "12.25",
+            "counterparty_closures": [
+                { "account_id": "0xcp", "position_closed": "0.5", "settlement_amount": "25000" }
+            ],
+            "sequence": 42, "timestamp": 1_776_033_900_000i64,
+        }))
+        .unwrap();
+        assert_eq!(ev.market_id, "BTC-USDX-PERP");
+        assert_eq!(ev.bankruptcy_price.to_string(), "49999.5");
+        assert_eq!(ev.counterparty_closures.len(), 1);
+        assert_eq!(
+            ev.counterparty_closures[0].position_closed.to_string(),
+            "0.5"
+        );
+        assert_eq!(ev.sequence, 42);
+
+        // counterparty_closures defaults to empty when the server omits it.
+        let no_closures: AdlEvent = serde_json::from_value(serde_json::json!({
+            "market_id": "BTC-USDX-PERP", "target_account": "0xbankrupt",
+            "bankruptcy_price": "1", "bad_debt_absorbed_by_fund": "0",
+            "sequence": 1, "timestamp": 1i64,
+        }))
+        .unwrap();
+        assert!(no_closures.counterparty_closures.is_empty());
     }
 }

@@ -1,5 +1,8 @@
 //! Error types.
 
+use std::time::Duration;
+
+use crate::markets::OrderError;
 use thiserror::Error;
 
 /// Errors returned by the SDK.
@@ -31,4 +34,24 @@ pub enum Error {
     /// [`subscribe`](crate::ws::Subscription::subscribe) can no longer be sent.
     #[error("websocket stream is closed")]
     StreamClosed,
+
+    /// Authentication problem (missing credentials, malformed secret, etc.).
+    #[error("authentication error: {0}")]
+    Auth(String),
+
+    /// An order failed local validation against a market's trading rules
+    /// before submission. See [`OrderError`].
+    #[error("invalid order: {0}")]
+    InvalidOrder(#[from] OrderError),
+
+    /// The API returned `429 Too Many Requests` and automatic retries were
+    /// exhausted. `retry_after` carries the server's `Retry-After` hint, if any.
+    #[error("rate limited (retries exhausted){}", match .retry_after {
+        Some(d) => format!("; retry after {}s", d.as_secs()),
+        None => String::new(),
+    })]
+    RateLimited {
+        /// How long the server asked the caller to wait before retrying.
+        retry_after: Option<Duration>,
+    },
 }

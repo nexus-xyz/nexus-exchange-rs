@@ -9,15 +9,18 @@
 mod client;
 mod config;
 mod error;
+mod ratelimit;
 
 pub mod auth;
+pub mod markets;
 pub mod rest;
 pub mod types;
 pub mod ws;
 
 pub use client::Client;
-pub use config::{Config, Network};
+pub use config::{Config, Network, RateLimit};
 pub use error::Error;
+pub use markets::{OrderError, Rounding};
 
 /// Convenience `Result` using this crate's [`Error`].
 pub type Result<T> = std::result::Result<T, Error>;

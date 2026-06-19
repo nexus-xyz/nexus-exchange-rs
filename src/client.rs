@@ -36,7 +36,7 @@ fn now_ms() -> u64 {
 #[derive(Debug, Clone)]
 pub struct Client {
     http: reqwest::Client,
-    config: Config,
+    pub(crate) config: Config,
     limiter: Arc<RateLimiter>,
 }
 

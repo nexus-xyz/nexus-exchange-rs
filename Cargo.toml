@@ -12,6 +12,7 @@ publish = false # flip to true when release tooling lands (see SDK release issue
 
 [dependencies]
 backon = "~1.5" # 1.6 bumps MSRV to 1.85; stay on 1.5.x for rust-version = 1.82
+bytes = "1" # re-exported by reqwest; lets response bodies pass through without a copy
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

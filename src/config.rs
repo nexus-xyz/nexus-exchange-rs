@@ -29,11 +29,18 @@ impl Network {
 
 /// How the client retries [transient](crate::Error::is_transient) failures.
 ///
-/// Retries use exponential backoff with full jitter: the delay before retry
-/// `n` is drawn uniformly from `[0, min_delay * factor^n]`, capped at
-/// `max_delay`. Jitter spreads retries out so that many clients failing at once
-/// don't synchronize into a thundering herd. Disable it with [`RetryConfig::jitter`]
-/// set to `false` (e.g. for deterministic tests).
+/// Retries use exponential backoff with jitter: the base delay before retry `n`
+/// is `min_delay * factor^n` (capped at `max_delay`), and jitter adds a random
+/// amount in `(0, current_delay)` *on top of* that base. Jitter spreads retries
+/// out so that many clients failing at once don't synchronize into a thundering
+/// herd. Disable it with [`RetryConfig::jitter`] set to `false` (e.g. for
+/// deterministic tests).
+///
+/// **The per-request timeout is per *attempt*, not per call.** A call that
+/// retries `max_retries` times can take up to `(max_retries + 1) * timeout`
+/// plus backoff before it surfaces an error. Use [`RetryConfig::max_total_delay`]
+/// to bound the time spent *sleeping* between attempts (it does not bound the
+/// attempts themselves).
 ///
 /// Only transient errors are retried; deterministic failures surface
 /// immediately. Construct the [`Default`], or tune fields directly:
@@ -57,10 +64,18 @@ pub struct RetryConfig {
     pub min_delay: Duration,
     /// Upper bound on any single backoff delay.
     pub max_delay: Duration,
-    /// Multiplier applied to the delay after each attempt.
+    /// Multiplier applied to the delay after each attempt. Should be `>= 1.0`;
+    /// values below `1.0` (or `NaN`) shrink the delay each step and degrade the
+    /// backoff.
     pub factor: f32,
-    /// Whether to apply full jitter to backoff delays.
+    /// Whether to add jitter (a random amount in `(0, current_delay)`) to
+    /// backoff delays.
     pub jitter: bool,
+    /// Optional cap on the *total* time spent sleeping between attempts. `None`
+    /// (the default) means retries are bounded only by `max_retries` and
+    /// `max_delay`. Note this bounds inter-attempt backoff, not the time spent
+    /// inside the attempts themselves (which the per-request timeout bounds).
+    pub max_total_delay: Option<Duration>,
 }
 
 impl RetryConfig {
@@ -78,7 +93,8 @@ impl RetryConfig {
             .with_min_delay(self.min_delay)
             .with_max_delay(self.max_delay)
             .with_factor(self.factor)
-            .with_max_times(self.max_retries);
+            .with_max_times(self.max_retries)
+            .with_total_delay(self.max_total_delay);
         if self.jitter {
             builder.with_jitter()
         } else {
@@ -95,6 +111,7 @@ impl Default for RetryConfig {
             max_delay: Duration::from_secs(5),
             factor: 2.0,
             jitter: true,
+            max_total_delay: None,
         }
     }
 }
@@ -132,7 +149,8 @@ impl Config {
 
     /// Set the per-request timeout. This bounds each individual attempt; a
     /// timed-out attempt is [transient](crate::Error::is_transient) and so is
-    /// subject to retry.
+    /// subject to retry. Because it is per-attempt, a retried call can take a
+    /// multiple of this value — see [`RetryConfig`] for the total-time bound.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self

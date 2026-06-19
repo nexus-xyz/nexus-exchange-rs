@@ -36,7 +36,10 @@ impl Error {
     /// [`Config::with_retry`](crate::Config::with_retry). The transient classes are:
     ///
     /// - **Connect/timeout transport errors** — the connection never completed,
-    ///   so the request likely never reached the server.
+    ///   so the request likely never reached the server. Note only
+    ///   [`reqwest::Error::is_timeout`]/[`is_connect`](reqwest::Error::is_connect)
+    ///   count: an error mid-body-read (e.g. a decode failure) is *not*
+    ///   transient, since replaying it would fail the same way.
     /// - **HTTP 408 (Request Timeout)** — the server timed out waiting for the
     ///   request and invites a retry.
     /// - **HTTP 5xx** — a server-side fault that is often momentary.
@@ -44,15 +47,17 @@ impl Error {
     /// Everything else — other 4xx, deserialization failures, body-decode
     /// errors — is treated as terminal and is *not* retried.
     ///
-    /// **`429` is deliberately excluded here.** Rate limiting is owned end-to-end
-    /// by the rate-limit layer (`GET /account/rate-limit` + the cost-weighted
-    /// token bucket), which retries `429` honoring `Retry-After`/`X-RateLimit-*`
-    /// and otherwise surfaces a terminal `Error::RateLimited`. Classifying `429`
-    /// as transient here too would retry it twice — once with backoff that
-    /// ignores `Retry-After`, once with it — so this generic layer stays out of
-    /// the way and lets the rate-limit layer be the single owner.
+    /// **`429` is deliberately excluded here.** Today a `429` surfaces as a
+    /// terminal `Error::Api { status: 429, .. }`. Rate limiting is intended to be
+    /// owned end-to-end by the dedicated rate-limit layer (tracked separately;
+    /// land after that PR), which will honor `Retry-After`/`X-RateLimit-*`.
+    /// Classifying `429` as transient here too would double-retry it — once with
+    /// backoff that ignores `Retry-After`, once with it — so this generic layer
+    /// stays out of the way and leaves `429` to the single owner.
     pub fn is_transient(&self) -> bool {
         match self {
+            // Only connect/timeout failures are retried; a body-read error that
+            // sets neither flag is deterministic and treated as terminal.
             Error::Http(e) => e.is_timeout() || e.is_connect(),
             Error::Api { status, .. } => *status == 408 || (500..600).contains(status),
             Error::Serde(_) => false,

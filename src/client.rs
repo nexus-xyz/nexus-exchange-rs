@@ -45,6 +45,15 @@ impl Client {
     ///
     /// The send is retried on transient failures; the final JSON
     /// deserialization is not (a malformed body fails identically on retry).
+    ///
+    /// **Retry safety:** this wraps the request in the retry layer, so it must
+    /// only be used for idempotent methods (`GET`). A transient failure on a
+    /// non-idempotent request (e.g. a `POST` that places an order) can mean the
+    /// server applied it but the response was lost — a blind retry would
+    /// double-submit. Future non-idempotent endpoints must use a separate,
+    /// non-retrying path (or a client-supplied idempotency key), not this
+    /// helper. Tracked in
+    /// <https://github.com/nexus-xyz/nexus-exchange-rs/issues/27>.
     pub(crate) async fn get<T: DeserializeOwned>(
         &self,
         path: &str,
@@ -61,7 +70,7 @@ impl Client {
     /// Perform a single `GET` attempt: send the request, read the body, and map
     /// a non-2xx status onto [`Error::Api`]. One success or error here is one
     /// unit the retry layer may repeat.
-    async fn send_get(&self, url: &str, query: &[(&str, String)]) -> Result<Vec<u8>> {
+    async fn send_get(&self, url: &str, query: &[(&str, String)]) -> Result<bytes::Bytes> {
         let resp = self
             .http
             .get(url)
@@ -72,7 +81,7 @@ impl Client {
         let status = resp.status();
         let bytes = resp.bytes().await?;
         if status.is_success() {
-            Ok(bytes.to_vec())
+            Ok(bytes)
         } else if let Ok(env) = serde_json::from_slice::<ApiErrorBody>(&bytes) {
             Err(Error::Api {
                 status: status.as_u16(),

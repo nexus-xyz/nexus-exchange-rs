@@ -16,6 +16,7 @@ fn fast_retry() -> RetryConfig {
         max_delay: Duration::from_millis(5),
         factor: 2.0,
         jitter: false,
+        max_total_delay: None,
     }
 }
 
@@ -32,7 +33,10 @@ fn health_body() -> serde_json::Value {
 #[tokio::test]
 async fn retries_transient_5xx_then_succeeds() {
     let server = MockServer::start().await;
-    // First two attempts get a 503; the third (priority falls through) succeeds.
+    // First two attempts get a 503, then a 200. wiremock matches the
+    // highest-priority mock that still has responses left, so the priority-1
+    // 503 mock serves its 2 allotted responses and the next request falls
+    // through to the priority-2 200 mock.
     Mock::given(method("GET"))
         .and(path("/health"))
         .respond_with(ResponseTemplate::new(503))
@@ -51,6 +55,62 @@ async fn retries_transient_5xx_then_succeeds() {
         .health_check()
         .await
         .expect("should recover after transient 503s");
+    assert_eq!(health.events_received, 1);
+}
+
+#[tokio::test]
+async fn retries_transient_408_then_succeeds() {
+    let server = MockServer::start().await;
+    // 408 (Request Timeout) is transient: the first two attempts get a 408,
+    // then the request falls through to the 200.
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(408))
+        .up_to_n_times(2)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(health_body()))
+        .with_priority(2)
+        .mount(&server)
+        .await;
+
+    let health = client(server.uri(), fast_retry())
+        .health_check()
+        .await
+        .expect("should recover after transient 408s");
+    assert_eq!(health.events_received, 1);
+}
+
+#[tokio::test]
+async fn per_attempt_timeout_is_transient_and_retried() {
+    let server = MockServer::start().await;
+    // The first attempt's response is delayed past the per-request timeout, so
+    // it surfaces as a transient timeout and is retried; the next attempt falls
+    // through to the fast 200.
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(10)))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(health_body()))
+        .with_priority(2)
+        .mount(&server)
+        .await;
+
+    let cfg = Config::with_base_url(server.uri())
+        .with_timeout(Duration::from_millis(100))
+        .with_retry(fast_retry());
+    let health = Client::new(cfg)
+        .health_check()
+        .await
+        .expect("should recover after a timed-out attempt");
     assert_eq!(health.events_received, 1);
 }
 

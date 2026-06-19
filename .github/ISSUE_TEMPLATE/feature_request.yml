@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest an endpoint, type, or capability for the SDK.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea? Note that this crate is a **thin wrapper** over the Exchange
+        API — feature requests that mirror API routes or models are most likely
+        to land; broad business logic generally belongs in your application.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      description: What are you trying to do that the SDK doesn't support today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What API surface (methods, types) would you like? Sketch it in Rust if you can.
+      render: rust
+    validations:
+      required: false
+  - type: input
+    id: api-route
+    attributes:
+      label: Related API route / spec section
+      description: If this maps to an Exchange API endpoint, link or name it.
+      placeholder: "GET /v1/orders"
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

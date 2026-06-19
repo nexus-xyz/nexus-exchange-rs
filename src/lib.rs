@@ -22,6 +22,9 @@ pub use client::Client;
 pub use config::{Config, Network, RateLimit, RetryConfig};
 pub use error::Error;
 pub use markets::{OrderError, Rounding};
+// Re-exported so callers can read a [`types::CreatedApiKey`] secret without
+// taking a direct dependency on `secrecy`.
+pub use secrecy::{ExposeSecret, SecretString};
 
 /// Convenience `Result` using this crate's [`Error`].
 pub type Result<T> = std::result::Result<T, Error>;

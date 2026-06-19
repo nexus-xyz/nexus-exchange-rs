@@ -13,11 +13,11 @@ pub use pagination::{Cursor, Page, PageRequest, Paginator};
 use std::collections::HashMap;
 
 use crate::types::{
-    AccountSummary, AmendOrder, ApiKeyInfo, CreditResult, Decimal, DepositResult, Fill,
-    FundingPayment, FundingSample, HealthStatus, LeverageUpdate, MarginMode, MarginModeUpdate,
-    MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderRequest,
-    OrderResponse, Position, RateLimitStatus, SubAccount, Ticker, TierOverride, Trade, Transfer,
-    TransferRequest, Withdrawal, WsToken,
+    AccountSummary, AgentInfo, AmendOrder, ApiKeyInfo, CreatedApiKey, CreditResult, Decimal,
+    DepositResult, Fill, FundingPayment, FundingSample, HealthStatus, LeverageUpdate, MarginMode,
+    MarginModeUpdate, MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook,
+    OrderRequest, OrderResponse, Position, RateLimitStatus, SubAccount, Ticker, TierOverride,
+    Trade, Transfer, TransferRequest, Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
 
@@ -189,6 +189,40 @@ impl Client {
     /// List the API keys for the authenticated session. Requires credentials.
     pub async fn fetch_api_keys(&self) -> Result<Vec<ApiKeyInfo>> {
         self.signed_get("/keys", &[]).await
+    }
+
+    /// Create a new HMAC API key for the authenticated wallet.
+    ///
+    /// The secret is returned **once** in [`CreatedApiKey::secret`] and is never
+    /// shown again — persist it immediately. Signed with the configured
+    /// credential; the server expects a session token (see
+    /// [`Config::session_token`](crate::Config::session_token)) on the `/keys`
+    /// endpoints and rejects other credential schemes.
+    pub async fn create_api_key(&self) -> Result<CreatedApiKey> {
+        self.signed_post_empty("/keys").await
+    }
+
+    /// Delete an API key you own, by `key_id`. Deleting a key you don't own
+    /// fails with a not-found error rather than affecting another wallet.
+    /// Signed with the configured credential; the server expects a session
+    /// token (see [`Config::session_token`](crate::Config::session_token)) here.
+    pub async fn delete_api_key(&self, key_id: &str) -> Result<serde_json::Value> {
+        let id = encoded_segment(key_id, "key_id")?;
+        self.signed_delete(&format!("/keys/{id}")).await
+    }
+
+    /// List the non-expired agent keys registered to the authenticated wallet.
+    /// Requires API-key credentials (see [`Config::api_key`](crate::Config::api_key)).
+    pub async fn fetch_agents(&self) -> Result<Vec<AgentInfo>> {
+        self.signed_get("/agents", &[]).await
+    }
+
+    /// Revoke an agent key by `address`. After this returns, in-flight requests
+    /// signed by the revoked agent are rejected. Requires API-key credentials
+    /// (see [`Config::api_key`](crate::Config::api_key)).
+    pub async fn revoke_agent(&self, address: &str) -> Result<serde_json::Value> {
+        let addr = encoded_segment(address, "address")?;
+        self.signed_delete(&format!("/agents/{addr}")).await
     }
 
     /// Account balance and collateral summary. Requires credentials.
@@ -420,5 +454,29 @@ impl Client {
     pub async fn create_sub_account(&self, label: &str) -> Result<SubAccount> {
         self.signed_post("/sub-accounts", &serde_json::json!({ "label": label }))
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode_path_segment;
+
+    #[test]
+    fn encode_path_segment_is_noop_for_ids_and_addresses() {
+        assert_eq!(encode_path_segment("nx_a1B2-c3~d"), "nx_a1B2-c3~d");
+        assert_eq!(
+            encode_path_segment("0xAbC0123456789abcdef"),
+            "0xAbC0123456789abcdef"
+        );
+    }
+
+    #[test]
+    fn encode_path_segment_neutralizes_injection() {
+        // A slash can't graft on extra path / route to a sibling resource, so
+        // `..` is confined to a single segment and can't traverse upward.
+        assert_eq!(encode_path_segment("../account"), "..%2Faccount");
+        // Query and fragment delimiters are escaped, not honored.
+        assert_eq!(encode_path_segment("k?a=1"), "k%3Fa%3D1");
+        assert_eq!(encode_path_segment("k#frag"), "k%23frag");
     }
 }

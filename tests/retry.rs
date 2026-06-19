@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use nexus_exchange::{Client, Config, Error, RetryConfig};
+use nexus_exchange::{Client, Config, Error, RateLimit, RetryConfig};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -165,8 +165,10 @@ async fn does_not_retry_non_transient_4xx() {
 async fn does_not_retry_429_owned_by_rate_limit_layer() {
     let server = MockServer::start().await;
     // 429 is owned end-to-end by the rate-limit layer, not this generic retry
-    // layer: it must be tried exactly once here and never retried, so the two
-    // layers don't both back off on the same response.
+    // layer. With the rate limiter's own 429 retries turned off, a 429 is tried
+    // exactly once and surfaces as `Error::RateLimited` — proving the generic
+    // transient-retry layer does not *also* back off on it (otherwise we'd see
+    // extra attempts and an `Error::Api`).
     Mock::given(method("GET"))
         .and(path("/health"))
         .respond_with(ResponseTemplate::new(429).set_body_json(serde_json::json!({
@@ -176,11 +178,11 @@ async fn does_not_retry_429_owned_by_rate_limit_layer() {
         .mount(&server)
         .await;
 
-    let err = client(server.uri(), fast_retry())
-        .health_check()
-        .await
-        .unwrap_err();
-    assert!(matches!(err, Error::Api { status: 429, .. }));
+    let cfg = Config::with_base_url(server.uri())
+        .with_retry(fast_retry())
+        .with_rate_limit(RateLimit::new(10.0).with_max_retries(0));
+    let err = Client::new(cfg).health_check().await.unwrap_err();
+    assert!(matches!(err, Error::RateLimited { .. }));
 }
 
 #[tokio::test]

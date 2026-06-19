@@ -1,5 +1,8 @@
 //! Error types.
 
+use std::time::Duration;
+
+use crate::markets::OrderError;
 use thiserror::Error;
 
 /// Errors returned by the SDK.
@@ -24,6 +27,35 @@ pub enum Error {
         /// Human-readable message.
         message: String,
     },
+
+    /// A WebSocket transport or protocol failure.
+    #[error("websocket error: {0}")]
+    Ws(#[from] tokio_tungstenite::tungstenite::Error),
+
+    /// The streaming client's background task has stopped, so commands such as
+    /// [`subscribe`](crate::ws::Subscription::subscribe) can no longer be sent.
+    #[error("websocket stream is closed")]
+    StreamClosed,
+
+    /// Authentication problem (missing credentials, malformed secret, etc.).
+    #[error("authentication error: {0}")]
+    Auth(String),
+
+    /// An order failed local validation against a market's trading rules
+    /// before submission. See [`OrderError`].
+    #[error("invalid order: {0}")]
+    InvalidOrder(#[from] OrderError),
+
+    /// The API returned `429 Too Many Requests` and automatic retries were
+    /// exhausted. `retry_after` carries the server's `Retry-After` hint, if any.
+    #[error("rate limited (retries exhausted){}", match .retry_after {
+        Some(d) => format!("; retry after {}s", d.as_secs()),
+        None => String::new(),
+    })]
+    RateLimited {
+        /// How long the server asked the caller to wait before retrying.
+        retry_after: Option<Duration>,
+    },
 }
 
 impl Error {
@@ -47,20 +79,23 @@ impl Error {
     /// Everything else — other 4xx, deserialization failures, body-decode
     /// errors — is treated as terminal and is *not* retried.
     ///
-    /// **`429` is deliberately excluded here.** Today a `429` surfaces as a
-    /// terminal `Error::Api { status: 429, .. }`. Rate limiting is intended to be
-    /// owned end-to-end by the dedicated rate-limit layer (tracked separately;
-    /// land after that PR), which will honor `Retry-After`/`X-RateLimit-*`.
-    /// Classifying `429` as transient here too would double-retry it — once with
-    /// backoff that ignores `Retry-After`, once with it — so this generic layer
-    /// stays out of the way and leaves `429` to the single owner.
+    /// **`429` is deliberately excluded here.** Rate limiting is owned
+    /// end-to-end by the dedicated rate-limit layer ([`RateLimit`](crate::RateLimit)),
+    /// which honors `Retry-After` and surfaces exhaustion as
+    /// [`Error::RateLimited`]. Classifying `429` as transient here too would
+    /// double-retry it — once with backoff that ignores `Retry-After`, once with
+    /// it — so this generic layer stays out of the way and leaves `429` to the
+    /// single owner.
     pub fn is_transient(&self) -> bool {
         match self {
             // Only connect/timeout failures are retried; a body-read error that
             // sets neither flag is deterministic and treated as terminal.
             Error::Http(e) => e.is_timeout() || e.is_connect(),
             Error::Api { status, .. } => *status == 408 || (500..600).contains(status),
-            Error::Serde(_) => false,
+            // Everything else — serde/body-decode, auth, invalid order/request,
+            // websocket, and already-exhausted rate limiting — is terminal for
+            // this generic retry layer.
+            _ => false,
         }
     }
 }

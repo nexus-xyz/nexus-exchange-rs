@@ -7,11 +7,17 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use nexus_exchange::ws::{Backoff, Event, Subscription};
-use nexus_exchange::{Client, Config};
+use nexus_exchange::{Client, Config, Network};
 use serde_json::{json, Value};
 use tokio::net::{TcpListener, TcpStream};
+use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// A 32-byte hex secret, valid for HMAC signing of the token-mint request.
+const TEST_SECRET: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
 
 /// A client wired to a local ws:// server with a fast, deterministic backoff so
 /// reconnect tests don't actually wait seconds.
@@ -201,6 +207,106 @@ async fn connect_failure_surfaces_disconnected_and_keeps_retrying() {
     }
 
     sub.close().await;
+}
+
+/// `connect_ws` mints a single-use token over REST, then presents it on the
+/// WebSocket upgrade as a `token=` query parameter — so a caller never has to
+/// know the indexer's WS host *or* wire the mint up by hand.
+// The handshake callback's `Err` variant (tungstenite's `ErrorResponse`) is
+// large, but its shape is fixed by the `Callback` trait and we only ever
+// return `Ok`, so the lint doesn't apply here.
+#[allow(clippy::result_large_err)]
+#[tokio::test]
+async fn connect_ws_mints_token_and_presents_it_on_upgrade() {
+    // REST: the signed token mint (`POST /ws/token`).
+    let rest = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/ws/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "token": "tok-abc" })))
+        .mount(&rest)
+        .await;
+
+    // WS: capture the upgrade request's query string, then behave normally.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (qtx, qrx) = tokio::sync::oneshot::channel::<Option<String>>();
+    let server = tokio::spawn(async move {
+        let (sock, _) = listener.accept().await.unwrap();
+        let capture = move |req: &Request, resp: Response| {
+            let _ = qtx.send(req.uri().query().map(str::to_string));
+            Ok(resp)
+        };
+        let mut ws = tokio_tungstenite::accept_hdr_async(sock, capture)
+            .await
+            .unwrap();
+        send_json(&mut ws, json!({ "hello": true })).await;
+        while let Some(Ok(msg)) = ws.next().await {
+            if msg.is_close() {
+                break;
+            }
+        }
+    });
+
+    let cfg = Config::with_base_url(rest.uri())
+        .with_ws_url(format!("ws://{addr}/ws"))
+        .api_key("nx", TEST_SECRET)
+        .with_reconnect_backoff(
+            Backoff::new()
+                .with_initial(Duration::from_millis(5))
+                .with_max(Duration::from_millis(20)),
+        );
+    let client = Client::new(cfg);
+
+    let mut sub = client.connect_ws(vec![]).await.expect("mint + connect");
+    assert!(matches!(next_event(&mut sub).await, Some(Event::Connected)));
+    assert_eq!(
+        next_event(&mut sub).await.unwrap_message()["hello"],
+        json!(true)
+    );
+
+    let query = tokio::time::timeout(Duration::from_secs(5), qrx)
+        .await
+        .expect("upgrade captured")
+        .unwrap();
+    assert_eq!(query.as_deref(), Some("token=tok-abc"));
+
+    sub.close().await;
+    let _ = server.await;
+}
+
+/// `connect_ws` refuses — fast, before any network round-trip — when the
+/// network has no confirmed WS host (ENG-3398). No server is mocked, so a mint
+/// attempt would hang/fail the test; the check must short-circuit before it.
+#[tokio::test]
+async fn connect_ws_errors_when_endpoint_unconfigured() {
+    let client = Client::new(Config::new(Network::Stable).api_key("nx", TEST_SECRET));
+    let err = client.connect_ws(vec![]).await.unwrap_err();
+    assert!(
+        err.to_string().contains("no WebSocket endpoint configured"),
+        "unexpected error: {err}"
+    );
+}
+
+/// The low-level `connect` on a network with no WS host reports the missing
+/// endpoint once and then ends the stream, instead of spinning a reconnect
+/// loop against a host that can't exist.
+#[tokio::test]
+async fn connect_without_endpoint_reports_once_then_ends() {
+    let client = Client::new(Config::new(Network::Stable));
+    let mut sub = client.connect(vec![]);
+    match next_event(&mut sub).await {
+        Some(Event::Disconnected(reason)) => {
+            assert!(
+                reason.contains("no WebSocket endpoint configured"),
+                "{reason}"
+            )
+        }
+        other => panic!("expected Disconnected, got {other:?}"),
+    }
+    assert!(
+        next_event(&mut sub).await.is_none(),
+        "stream should end after reporting the missing endpoint"
+    );
 }
 
 /// Test-only helper to unwrap a `Message` event.

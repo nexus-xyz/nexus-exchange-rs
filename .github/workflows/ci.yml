@@ -45,3 +45,54 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --no-deps --all-features
+
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check pinned API spec version against latest release
+        env:
+          # The spec lives in a separate repo. GITHUB_TOKEN works when that repo
+          # is public or in the same org with read access; otherwise set a
+          # SPEC_REPO_TOKEN secret (a PAT with read access to the spec repo).
+          GH_TOKEN: ${{ secrets.SPEC_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+          SPEC_REPO: nexus-xyz/nexus-exchange-api
+        run: |
+          set -euo pipefail
+
+          pinned="$(tr -d '[:space:]' < .api-version)"
+          if [ -z "$pinned" ]; then
+            echo "::error file=.api-version::.api-version is empty"
+            exit 1
+          fi
+          echo "Pinned API spec version: $pinned"
+
+          api="https://api.github.com/repos/${SPEC_REPO}"
+
+          # 1. The pinned version must exist as a release in the spec repo.
+          pinned_status="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${api}/releases/tags/${pinned}")"
+          if [ "$pinned_status" != "200" ]; then
+            echo "::error::Pinned spec version ${pinned} not found as a release in ${SPEC_REPO} (HTTP ${pinned_status}). Cannot verify spec; check the pin in .api-version and that CI can read the spec repo."
+            exit 1
+          fi
+
+          # 2. Compare the pin to the latest published release.
+          latest="$(curl -sS \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${api}/releases/latest" | jq -r '.tag_name // empty')"
+          if [ -z "$latest" ]; then
+            echo "::error::Could not determine latest release of ${SPEC_REPO}."
+            exit 1
+          fi
+          echo "Latest API spec release:  $latest"
+
+          if [ "$pinned" != "$latest" ]; then
+            echo "::error::Spec drift: SDK pins ${pinned} but the latest Exchange API spec is ${latest}. Bump .api-version (and the README table) once the SDK is updated for ${latest}."
+            exit 1
+          fi
+
+          echo "No drift: SDK is pinned to the latest API spec (${pinned})."

@@ -18,6 +18,7 @@ import sys
 
 def load_targeted(path="endpoints.txt"):
     out = []
+    seen = {}
     with open(path) as f:
         for lineno, raw in enumerate(f, 1):
             line = raw.strip()
@@ -29,7 +30,14 @@ def load_targeted(path="endpoints.txt"):
                     f"ERROR: {path}:{lineno}: expected 'METHOD /path', got {line!r}"
                 )
             method, p = parts
-            out.append((method.upper(), p))
+            op = (method.upper(), p)
+            if op in seen:
+                sys.exit(
+                    f"ERROR: {path}:{lineno}: duplicate endpoint "
+                    f"{op[0]} {op[1]!r} (first seen on line {seen[op]})"
+                )
+            seen[op] = lineno
+            out.append(op)
     return out
 
 

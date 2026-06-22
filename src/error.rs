@@ -37,6 +37,17 @@ pub enum Error {
     #[error("websocket stream is closed")]
     StreamClosed,
 
+    /// The consumer of a typed [`MessageStream`](crate::ws::MessageStream) fell
+    /// behind and `dropped` message frames were discarded to keep the socket
+    /// drained (so keepalive pongs are never starved). Surfaced in order,
+    /// immediately before the next delivered message; the stream continues —
+    /// this is a gap signal, not a fatal error.
+    #[error("websocket consumer lagged; {dropped} message(s) dropped")]
+    Lagged {
+        /// Number of message frames dropped since the last delivered message.
+        dropped: u64,
+    },
+
     /// Authentication problem (missing credentials, malformed secret, etc.).
     #[error("authentication error: {0}")]
     Auth(String),

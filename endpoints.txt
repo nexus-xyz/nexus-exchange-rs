@@ -1,0 +1,36 @@
+# Endpoints the SDK targets, checked against the pinned spec (.api-version) by
+# scripts/check_spec_drift.py. This file is the hand-maintained SOURCE OF TRUTH
+# for SDK coverage — the check validates this list against the spec, NOT the
+# Rust code against this list. Add a line whenever you add an endpoint, or the
+# drift check won't see it. Format:
+#   METHOD /path   (path placeholders match the spec, e.g. {market_id})
+GET /markets
+GET /markets/summary
+GET /tickers
+GET /markets/{market_id}/ticker
+GET /markets/{market_id}/orderbook
+GET /markets/{market_id}/trades
+GET /markets/{market_id}/candles
+GET /markets/{market_id}/funding
+GET /markets/{market_id}/mark-price
+GET /markets/{market_id}/status
+GET /health
+GET /keys
+GET /account
+GET /positions
+GET /fills
+GET /account/rate-limit
+POST /orders
+POST /orders/batch
+DELETE /orders/{order_id}
+DELETE /orders
+GET /orders
+GET /orders/{order_id}
+POST /account/deposit
+GET /withdrawals
+POST /account/credit
+PUT /admin/tiers
+GET /admin/tiers
+DELETE /admin/tiers/{address}
+POST /ws/token
+GET /ws

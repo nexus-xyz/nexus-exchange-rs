@@ -77,7 +77,14 @@ impl Client {
         self.get("/markets/summary", &[], COST_DEFAULT).await
     }
 
-    /// Tickers for all markets, keyed by symbol.
+    /// Tickers for all markets, keyed by market id (e.g. `BTC-USDX-PERP`).
+    ///
+    /// The envelope is a bare JSON object whose keys are market ids and whose
+    /// values are [`Ticker`]s (spec: `additionalProperties: Ticker`, *"Object
+    /// keyed by market_id"*) — there is no wrapper. The spec ships no `example`
+    /// for this route, but the response *schema* fixes the shape, so the map
+    /// model is authoritative; an empty result is `{}`, which decodes to an
+    /// empty map.
     pub async fn fetch_tickers(&self) -> Result<HashMap<String, Ticker>> {
         self.get("/tickers", &[], COST_DEFAULT).await
     }

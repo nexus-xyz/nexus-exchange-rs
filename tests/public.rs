@@ -255,8 +255,11 @@ async fn fetch_market_summaries_parses_numbers_and_halted_null() {
 }
 
 #[tokio::test]
-async fn fetch_tickers_parses_symbol_keyed_map() {
-    // /tickers -> object keyed by symbol (spec: additionalProperties Ticker).
+async fn fetch_tickers_parses_market_keyed_map() {
+    // /tickers -> bare object keyed by *market id* (spec: additionalProperties
+    // Ticker, "Object keyed by market_id"). The spec carries no example for
+    // this route, so this pins the schema-confirmed shape: a map, not a wrapped
+    // envelope. Two markets verify that lookups key off the JSON object key.
     let server = MockServer::start().await;
     let body = serde_json::json!({
         "BTC-USDX-PERP": {
@@ -266,6 +269,10 @@ async fn fetch_tickers_parses_symbol_keyed_map() {
             "open": 48062.0, "close": 51903.0, "last": 51903.0, "change": 3841.0,
             "percentage": 7.99, "baseVolume": 27.1, "quoteVolume": 1350000.0,
             "markPrice": 50011.6, "indexPrice": 50010.0, "info": {}
+        },
+        "ETH-USDX-PERP": {
+            "symbol": "ETH-USDX-PERP", "timestamp": 1776033900000i64,
+            "datetime": "2026-04-13T00:00:00Z", "last": 3120.5, "markPrice": 3120.0
         }
     });
     Mock::given(method("GET"))
@@ -275,10 +282,35 @@ async fn fetch_tickers_parses_symbol_keyed_map() {
         .await;
 
     let tickers = client(server.uri()).fetch_tickers().await.unwrap();
-    assert_eq!(tickers.len(), 1);
-    let t = tickers.get("BTC-USDX-PERP").expect("symbol key present");
+    assert_eq!(tickers.len(), 2);
+    let t = tickers.get("BTC-USDX-PERP").expect("market id key present");
     assert_eq!(t.last.unwrap().to_string(), "51903");
     assert_eq!(t.mark_price.unwrap().to_string(), "50011.6");
+    assert_eq!(
+        tickers
+            .get("ETH-USDX-PERP")
+            .unwrap()
+            .last
+            .unwrap()
+            .to_string(),
+        "3120.5"
+    );
+}
+
+#[tokio::test]
+async fn fetch_tickers_empty_response_is_empty_map() {
+    // The realistic "no data" shape is an empty object `{}` (the spec's example
+    // is unfilled/null, which carries no shape). It must decode to an empty map
+    // rather than erroring, so a caller can iterate over zero tickers safely.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/tickers"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .mount(&server)
+        .await;
+
+    let tickers = client(server.uri()).fetch_tickers().await.unwrap();
+    assert!(tickers.is_empty());
 }
 
 #[tokio::test]

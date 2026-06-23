@@ -4,6 +4,35 @@
 //! use the `str` serde adapter; fields it sends as JSON *numbers* use the
 //! `float` adapter — so callers get one consistent money type regardless of
 //! the wire encoding.
+//!
+//! # Precision of `float`-adapter fields
+//!
+//! The `str`-adapter fields are **exact**: the wire carries the full decimal
+//! text and it is parsed straight into [`Decimal`] with no intermediate type.
+//!
+//! The `float`-adapter fields are **not guaranteed exact**. That adapter parses
+//! the JSON number through an `f64`, and `f64` is binary floating point: most
+//! finite decimals (e.g. `0.1`, `123.45`) have no exact `f64` representation, so
+//! the resulting [`Decimal`] can carry rounding artifacts — a value sent as
+//! `0.1` may decode as `0.1000000000000000055511151231`-style noise rounded to
+//! the adapter's precision. `f64` also only holds ~15–17 significant decimal
+//! digits, so values with more significant digits than that lose the tail.
+//!
+//! Practically these artifacts are tiny (sub-`1e-15` relative), but they mean
+//! you should **not** treat a `float`-adapter value as an exact ledger figure or
+//! compare two of them for bit-exact equality; round to the market's tick/lot
+//! size (see [`crate::markets`]) before display or equality checks. Anything
+//! authoritative for accounting — balances, fills, order prices, funding — comes
+//! from a `str`-adapter field and is exact.
+//!
+//! The types and fields affected are called out individually below:
+//! [`Ticker`], [`Trade`], [`MarketSummary`] (`mark_price`, `volume_24h`),
+//! [`OrderBook`] / [`PriceLevel`], and [`Ohlcv`].
+//!
+//! The clean fix is on the API side: if these endpoints emitted decimal strings
+//! like the others, the SDK could use the `str` adapter everywhere and every
+//! field would be exact. That change is tracked separately; until then this
+//! module documents the gap rather than papering over it.
 
 use std::fmt;
 
@@ -44,6 +73,10 @@ pub struct Market {
 }
 
 /// Per-market summary with 24h volume and halt state.
+///
+/// `mark_price` and `volume_24h` arrive as JSON numbers via the `float` adapter
+/// and may carry `f64` rounding artifacts — see the [module precision
+/// note](crate::types#precision-of-float-adapter-fields).
 #[derive(Debug, Clone, Deserialize)]
 pub struct MarketSummary {
     /// Market identifier, e.g. `BTC-USDX-PERP`.
@@ -84,6 +117,10 @@ pub struct MarketStatus {
 
 /// CCXT-style ticker. Price fields are optional — the API sends `null` when a
 /// value is unavailable (e.g. no trades yet).
+///
+/// All [`Decimal`] fields here arrive as JSON numbers via the `float` adapter
+/// and may carry `f64` rounding artifacts — see the [module precision
+/// note](crate::types#precision-of-float-adapter-fields).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Ticker {
@@ -165,6 +202,10 @@ pub struct RateLimitStatus {
 }
 
 /// A single order-book level, `[price, amount]` (CCXT format).
+///
+/// Both values arrive as JSON numbers via the `float` adapter and may carry
+/// `f64` rounding artifacts — see the [module precision
+/// note](crate::types#precision-of-float-adapter-fields).
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct PriceLevel(
     /// Price at this level.
@@ -187,6 +228,10 @@ impl PriceLevel {
 }
 
 /// Order book snapshot. Bids descending, asks ascending (CCXT convention).
+///
+/// Level prices and sizes ([`PriceLevel`]) arrive as JSON numbers via the
+/// `float` adapter and may carry `f64` rounding artifacts — see the [module
+/// precision note](crate::types#precision-of-float-adapter-fields).
 #[derive(Debug, Clone, Deserialize)]
 pub struct OrderBook {
     /// Market symbol the book describes.
@@ -239,6 +284,12 @@ pub enum TimeInForce {
 }
 
 /// A public trade print.
+///
+/// `price`, `amount`, and `cost` arrive as JSON numbers via the `float` adapter
+/// and may carry `f64` rounding artifacts — see the [module precision
+/// note](crate::types#precision-of-float-adapter-fields). For the authoritative,
+/// exact record of your own executions use [`Fill`], whose figures are
+/// `str`-adapter exact.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Trade {
     /// Exchange-assigned trade identifier.
@@ -271,6 +322,10 @@ pub struct Trade {
 }
 
 /// An OHLCV candle, `[timestamp_ms, open, high, low, close, volume]` (CCXT format).
+///
+/// Every price/volume field arrives as a JSON number via the `float` adapter and
+/// may carry `f64` rounding artifacts — see the [module precision
+/// note](crate::types#precision-of-float-adapter-fields).
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct Ohlcv(
     /// Open time, Unix ms.

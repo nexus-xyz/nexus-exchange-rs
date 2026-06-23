@@ -42,17 +42,29 @@
 //! # Example
 //!
 //! ```no_run
-//! use nexus_exchange::{Client, Config};
+//! use nexus_exchange::{Client, Config, Network};
 //! use serde_json::json;
 //!
-//! # async fn run() {
-//! let client = Client::new(Config::default());
+//! # async fn run() -> nexus_exchange::Result<()> {
+//! // Public streams. The WS host is a separate origin from the REST base, so
+//! // it must be known for the network (or set with `Config::with_ws_url`).
+//! let client = Client::new(Config::new(Network::Local));
 //! // Subscription frames are re-sent automatically after every reconnect.
 //! let mut sub = client.connect(vec![json!({ "type": "subscribe", "channel": "trades" })]);
 //! while let Some(event) = sub.next().await {
-//!     // handle Connected / Disconnected / Message(..)
+//!     // handle Connected / Disconnected / Message / Lagged
 //!     let _ = event;
 //! }
+//!
+//! // Authenticated streams: mint a single-use token and connect in one step.
+//! let client = Client::new(Config::new(Network::Local).api_key("key-id", "00ff..."));
+//! let mut sub = client
+//!     .connect_ws(vec![json!({ "type": "subscribe", "channel": "fills" })])
+//!     .await?;
+//! while let Some(event) = sub.next().await {
+//!     let _ = event;
+//! }
+//! # Ok(())
 //! # }
 //! ```
 
@@ -161,22 +173,83 @@ impl Subscription {
 }
 
 impl Client {
-    /// Open a streaming connection and subscribe to the given frames.
+    /// Open an **unauthenticated** streaming connection and subscribe to the
+    /// given frames.
     ///
     /// Returns immediately with a [`Subscription`]; connecting happens in a
     /// background task that emits [`Event::Connected`] once the socket is up.
     /// The task reconnects automatically with the configured [`Backoff`] and
     /// re-sends `subscriptions` after each reconnect.
     ///
+    /// The stream targets the configured WebSocket origin (a separate host from
+    /// the REST base — see [`Network::ws_base`](crate::Network::ws_base)). If
+    /// none is configured for the network (production host unconfirmed —
+    /// ENG-3398) the background task immediately emits a single
+    /// [`Event::Disconnected`] explaining that and stops; set one with
+    /// [`Config::with_ws_url`](crate::Config::with_ws_url) or use a network
+    /// whose host is known.
+    ///
     /// Must be called from within a Tokio runtime (it spawns a task).
     pub fn connect(&self, subscriptions: Vec<Value>) -> Subscription {
+        self.spawn_ws(None, subscriptions)
+    }
+
+    /// Mint a single-use WebSocket token and open an **authenticated** stream
+    /// in one step — the convenience the lower-level [`connect`](Self::connect)
+    /// plus [`mint_web_socket_token`](Self::mint_web_socket_token) would
+    /// otherwise require callers to wire up themselves.
+    ///
+    /// Requires credentials (the token mint is signed). Fails fast — before any
+    /// network round-trip — if no WebSocket endpoint is configured for the
+    /// network (production host unconfirmed — ENG-3398); set one with
+    /// [`Config::with_ws_url`](crate::Config::with_ws_url) until it is.
+    ///
+    /// The minted token is short-lived and **single-use**, so it authenticates
+    /// exactly one connection. The background task therefore mints a *fresh*
+    /// token before every reconnect rather than replaying the spent one; a mint
+    /// that fails surfaces as an [`Event::Disconnected`] and is retried under
+    /// the same backoff as a failed connect. The token is presented as a query
+    /// parameter and is never written to an [`Event`] or logged.
+    ///
+    /// Must be called from within a Tokio runtime (it spawns a task).
+    pub async fn connect_ws(&self, subscriptions: Vec<Value>) -> Result<Subscription> {
+        // Resolve the endpoint first: an unconfigured network must fail here,
+        // not after spending a mint round-trip on a stream that can't connect.
+        if self.config.ws_url.is_none() {
+            return Err(Error::InvalidRequest(
+                "no WebSocket endpoint configured for this network (production WS host \
+                 not yet confirmed — ENG-3398); set one with Config::with_ws_url"
+                    .to_string(),
+            ));
+        }
+        // Pre-mint the first token so credential / transport problems surface
+        // here as an error rather than as a background Disconnected event.
+        let token = self.mint_web_socket_token().await?.token;
+        Ok(self.spawn_ws(Some(token), subscriptions))
+    }
+
+    /// Spawn the streaming task. `first_token` is `Some` for an authenticated
+    /// stream — the pre-minted token used for the first connect, after which
+    /// the task re-mints — and `None` for an unauthenticated one.
+    fn spawn_ws(&self, first_token: Option<String>, subscriptions: Vec<Value>) -> Subscription {
         let (event_tx, event_rx) = mpsc::channel(self.config.ws.channel_capacity);
         let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
 
-        let ws_url = self.config.ws_url.clone();
+        let base = self.config.ws_url.clone();
         let backoff = self.config.ws.backoff.clone();
+        // Carry a client clone to re-mint tokens on reconnect, but only for an
+        // authenticated stream — an unauthenticated one never mints.
+        let auth = first_token.as_ref().map(|_| self.clone());
 
-        let handle = tokio::spawn(run(ws_url, backoff, subscriptions, event_tx, cmd_rx));
+        let handle = tokio::spawn(run(
+            base,
+            auth,
+            first_token,
+            backoff,
+            subscriptions,
+            event_tx,
+            cmd_rx,
+        ));
 
         Subscription {
             rx: event_rx,
@@ -199,78 +272,180 @@ fn emit_lifecycle(event_tx: &mpsc::Sender<Event>, event: Event) -> bool {
     !matches!(event_tx.try_send(event), Err(TrySendError::Closed(_)))
 }
 
-/// The background reconnect loop: connect, run until the socket drops or a
-/// command stops it, then back off and try again.
+/// The background reconnect loop: (re-mint a token,) connect, run until the
+/// socket drops or a command stops it, then back off and try again.
+///
+/// `base` is the WebSocket origin; `None` means the network has no known WS
+/// host (production unconfirmed — ENG-3398), reported once before stopping.
+/// When `auth` is `Some`, every connect is authenticated with a single-use
+/// token: `first_token` (pre-minted by [`Client::connect_ws`]) is used for the
+/// first attempt and a fresh one is minted for each reconnect.
 async fn run(
-    ws_url: String,
+    base: Option<String>,
+    auth: Option<Client>,
+    mut first_token: Option<String>,
     backoff: Backoff,
     mut subscriptions: Vec<Value>,
     event_tx: mpsc::Sender<Event>,
     mut cmd_rx: mpsc::Receiver<Command>,
 ) {
+    let Some(base) = base else {
+        // `connect` on a network with no known WS host: report once and stop,
+        // rather than spin a backoff loop against an endpoint that can't exist.
+        let _ = emit_lifecycle(
+            &event_tx,
+            Event::Disconnected(
+                "no WebSocket endpoint configured for this network (production WS host \
+                 not yet confirmed — ENG-3398); set one with Config::with_ws_url"
+                    .to_string(),
+            ),
+        );
+        return;
+    };
+
     let mut delays = backoff.iter();
 
     loop {
-        match tokio_tungstenite::connect_async(ws_url.as_str()).await {
-            Ok((stream, _resp)) => {
-                if !emit_lifecycle(&event_tx, Event::Connected) {
-                    return; // consumer gone
-                }
+        // Resolve this attempt's connect URL. Authenticated streams mint a
+        // fresh single-use token per (re)connect — reusing the spent one would
+        // be rejected — using the pre-minted token only for the first attempt.
+        let url = match &auth {
+            None => Ok(base.clone()),
+            Some(client) => match first_token.take() {
+                Some(token) => Ok(ws_url_with_token(&base, &token)),
+                None => match client.mint_web_socket_token().await {
+                    Ok(minted) => Ok(ws_url_with_token(&base, &minted.token)),
+                    Err(err) => Err(format!("ws token mint failed: {err}")),
+                },
+            },
+        };
 
-                let mut delivered = false;
-                let exit = serve(
-                    stream,
-                    &event_tx,
-                    &mut cmd_rx,
-                    &mut subscriptions,
-                    &mut delivered,
-                )
-                .await;
-
-                // Only treat the connection as healthy — and reset the backoff so
-                // the next outage retries promptly — once it actually carried a
-                // message. A socket that completes the handshake and immediately
-                // drops (auth-reject-after-upgrade, LB flap) must keep backing off
-                // rather than reset every cycle into a tight reconnect loop.
-                if delivered {
-                    delays.reset();
-                }
-
-                match exit {
-                    LoopExit::Closed | LoopExit::ConsumerGone => return,
-                    LoopExit::Reconnect(reason) => {
-                        if !emit_lifecycle(&event_tx, Event::Disconnected(reason)) {
-                            return;
-                        }
-                    }
-                }
-            }
-            Err(err) => {
-                if !emit_lifecycle(
-                    &event_tx,
-                    Event::Disconnected(format!("connect failed: {err}")),
-                ) {
+        match url {
+            Err(reason) => {
+                // Mint failed: report (token redaction is a no-op here, the
+                // mint request carries none) and back off like a failed connect.
+                if !emit_lifecycle(&event_tx, Event::Disconnected(redact_token(reason))) {
                     return;
                 }
             }
+            Ok(url) => match tokio_tungstenite::connect_async(url.as_str()).await {
+                Ok((stream, _resp)) => {
+                    if !emit_lifecycle(&event_tx, Event::Connected) {
+                        return; // consumer gone
+                    }
+
+                    let mut delivered = false;
+                    let exit = serve(
+                        stream,
+                        &event_tx,
+                        &mut cmd_rx,
+                        &mut subscriptions,
+                        &mut delivered,
+                    )
+                    .await;
+
+                    // Only treat the connection as healthy — and reset the backoff
+                    // so the next outage retries promptly — once it actually carried
+                    // a message. A socket that completes the handshake and immediately
+                    // drops (auth-reject-after-upgrade, LB flap) must keep backing off
+                    // rather than reset every cycle into a tight reconnect loop.
+                    if delivered {
+                        delays.reset();
+                    }
+
+                    match exit {
+                        LoopExit::Closed | LoopExit::ConsumerGone => return,
+                        LoopExit::Reconnect(reason) => {
+                            if !emit_lifecycle(&event_tx, Event::Disconnected(redact_token(reason)))
+                            {
+                                return;
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    // Redact defensively: the token rides in `url`'s query, and
+                    // a transport error must never echo it into an event/log.
+                    if !emit_lifecycle(
+                        &event_tx,
+                        Event::Disconnected(redact_token(format!("connect failed: {err}"))),
+                    ) {
+                        return;
+                    }
+                }
+            },
         }
 
         // Back off before retrying. A Close command cuts the wait short; a
         // Subscribe is queued for the next connect but must *not* shorten the
         // backoff — otherwise a client subscribing while the endpoint is down
-        // would defeat the backoff and hammer it. So we hold a fixed deadline
-        // and keep waiting out the remainder after queueing each frame.
-        let deadline = tokio::time::Instant::now() + delays.next_delay();
-        loop {
-            tokio::select! {
-                _ = tokio::time::sleep_until(deadline) => break,
-                cmd = cmd_rx.recv() => match cmd {
-                    Some(Command::Close) | None => return,
-                    Some(Command::Subscribe(req)) => subscriptions.push(req),
-                }
+        // would defeat the backoff and hammer it.
+        if wait_backoff(&mut delays, &mut cmd_rx, &mut subscriptions).await {
+            return;
+        }
+    }
+}
+
+/// Wait out one backoff delay before the next (re)connect, holding a fixed
+/// deadline so queued `Subscribe` frames don't shorten it. Returns `true` when
+/// a `Close` command (or a dropped handle) means the task should stop.
+async fn wait_backoff(
+    delays: &mut BackoffIter,
+    cmd_rx: &mut mpsc::Receiver<Command>,
+    subscriptions: &mut Vec<Value>,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + delays.next_delay();
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => return false,
+            cmd = cmd_rx.recv() => match cmd {
+                Some(Command::Close) | None => return true,
+                Some(Command::Subscribe(req)) => subscriptions.push(req),
             }
         }
     }
+}
+
+/// Append the single-use auth token to the WS URL as a query parameter.
+///
+/// Tokens minted for browser clients are presented this way — the WebSocket
+/// upgrade can't carry custom headers — and the value is percent-encoded via
+/// `serde_urlencoded` so it can't break out of the query.
+fn ws_url_with_token(base: &str, token: &str) -> String {
+    // Encoding a single static-key string pair cannot fail; `expect` documents
+    // that and refuses to connect rather than silently dropping the token (and
+    // connecting unauthenticated) on an empty encode.
+    let pair = serde_urlencoded::to_string([("token", token)])
+        .expect("encoding a single string query pair is infallible");
+    let sep = if base.contains('?') { '&' } else { '?' };
+    format!("{base}{sep}{pair}")
+}
+
+/// Strip every `token=<value>` query fragment from a human-readable reason so a
+/// single-use WS token can never leak into an [`Event`] or a log, even if an
+/// underlying error were to echo the connect URL. Defense in depth: today's
+/// transport errors carry the socket address, not the query.
+fn redact_token(reason: String) -> String {
+    const KEY: &str = "token=";
+    if !reason.contains(KEY) {
+        return reason;
+    }
+    let mut out = String::with_capacity(reason.len());
+    let mut rest = reason.as_str();
+    // Scrub all occurrences, not just the first, in case a reason ever echoes
+    // the URL more than once.
+    while let Some(start) = rest.find(KEY) {
+        let val_start = start + KEY.len();
+        // The value is percent-encoded, so it ends at the first delimiter.
+        let val_len = rest[val_start..]
+            .find(['&', ' ', '"', ')'])
+            .unwrap_or(rest.len() - val_start);
+        out.push_str(&rest[..val_start]);
+        out.push_str("***");
+        rest = &rest[val_start + val_len..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Drive a single live connection until it drops or the task is told to stop.
@@ -424,6 +599,40 @@ fn deliver(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn ws_url_with_token_appends_encoded_query() {
+        // No existing query: starts one.
+        assert_eq!(
+            ws_url_with_token("wss://ws.example/ws", "ab cd/+="),
+            "wss://ws.example/ws?token=ab+cd%2F%2B%3D"
+        );
+        // Existing query: appends with `&`.
+        assert_eq!(
+            ws_url_with_token("wss://ws.example/ws?v=2", "tok"),
+            "wss://ws.example/ws?v=2&token=tok"
+        );
+    }
+
+    #[test]
+    fn redact_token_hides_the_value_only() {
+        assert_eq!(
+            redact_token("connect failed: error connecting to wss://h/ws?token=secret123".into()),
+            "connect failed: error connecting to wss://h/ws?token=***"
+        );
+        // Value ends at a delimiter, leaving the rest intact.
+        assert_eq!(
+            redact_token("url wss://h/ws?token=secret&x=1 refused".into()),
+            "url wss://h/ws?token=***&x=1 refused"
+        );
+        // Every occurrence is scrubbed, not just the first.
+        assert_eq!(
+            redact_token("token=a&x=1 then token=b end".into()),
+            "token=***&x=1 then token=*** end"
+        );
+        // Nothing to redact is returned unchanged.
+        assert_eq!(redact_token("read error: eof".into()), "read error: eof");
+    }
 
     /// Drive `deliver` against a tiny channel, draining at controlled points so
     /// we exercise both the drop path (channel full) and the lag-report path

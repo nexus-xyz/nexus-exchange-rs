@@ -34,12 +34,29 @@ impl Network {
         }
     }
 
-    /// WebSocket URL for this network (the `/ws` endpoint).
-    pub fn ws_url(self) -> &'static str {
+    /// The indexer's WebSocket origin — host-root `/ws`.
+    ///
+    /// This is a **separate host** from [`base_url`](Self::base_url): the
+    /// `/api/exchange` HTTP gateway does not proxy WebSocket upgrades, so the
+    /// stream connects straight to the indexer (the deployment's
+    /// `NEXT_PUBLIC_INDEXER_WS_URL`) rather than to a `/ws` path under the REST
+    /// base. It therefore cannot be derived from `base_url`.
+    ///
+    /// Returns `None` for networks whose production WS host is **not yet
+    /// confirmed** (ENG-3398). While it is `None`, [`Client::connect_ws`] and
+    /// [`Client::connect`] refuse to connect rather than guess a host; supply
+    /// the endpoint explicitly with [`Config::with_ws_url`] in the meantime.
+    ///
+    /// [`Client::connect_ws`]: crate::Client::connect_ws
+    /// [`Client::connect`]: crate::Client::connect
+    pub fn ws_base(self) -> Option<&'static str> {
         match self {
-            Network::Stable => "wss://exchange.nexus.xyz/api/exchange/ws",
-            Network::Beta => "wss://beta.exchange.nexus.xyz/api/exchange/ws",
-            Network::Local => "ws://localhost:9090/ws",
+            // Local dev serves REST and WS from the same indexer process, so
+            // the WS origin is this host's `/ws` and is known.
+            Network::Local => Some("ws://localhost:9090/ws"),
+            // The production / beta indexer WS host is a separate origin that
+            // has not been confirmed yet — see ENG-3398. Don't ship a guess.
+            Network::Stable | Network::Beta => None,
         }
     }
 }
@@ -239,7 +256,10 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Debug, Clone)]
 pub struct Config {
     pub(crate) base_url: String,
-    pub(crate) ws_url: String,
+    /// The WebSocket origin to stream from, or `None` when it is not known for
+    /// the configured network (production host unconfirmed — ENG-3398). A
+    /// separate host from `base_url`; see [`Network::ws_base`].
+    pub(crate) ws_url: Option<String>,
     pub(crate) ws: WsConfig,
     pub(crate) rate_limit: RateLimit,
     pub(crate) credentials: Option<Arc<Credentials>>,
@@ -252,7 +272,7 @@ impl Config {
     pub fn new(network: Network) -> Self {
         Self {
             base_url: network.base_url().to_string(),
-            ws_url: network.ws_url().to_string(),
+            ws_url: network.ws_base().map(str::to_string),
             ws: WsConfig::default(),
             rate_limit: RateLimit::default(),
             credentials: None,
@@ -262,15 +282,22 @@ impl Config {
     }
 
     /// Target a custom REST base URL (e.g. a preview deployment),
-    /// unauthenticated. The WebSocket URL is derived from it (scheme swapped to
-    /// `ws(s)` and `/ws` appended); override it explicitly with
-    /// [`Config::with_ws_url`].
+    /// unauthenticated.
+    ///
+    /// No WebSocket URL is inferred: the stream lives on a separate host that
+    /// cannot be derived from the REST base (see [`Network::ws_base`]). To
+    /// stream against a custom deployment, set it explicitly with
+    /// [`Config::with_ws_url`]; otherwise [`Client::connect`] /
+    /// [`Client::connect_ws`] report that no endpoint is configured rather than
+    /// connect to a guessed host.
+    ///
+    /// [`Client::connect`]: crate::Client::connect
+    /// [`Client::connect_ws`]: crate::Client::connect_ws
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
         let base_url = base_url.into();
-        let ws_url = derive_ws_url(&base_url);
         Self {
             base_url,
-            ws_url,
+            ws_url: None,
             ws: WsConfig::default(),
             rate_limit: RateLimit::default(),
             credentials: None,
@@ -297,9 +324,11 @@ impl Config {
         self
     }
 
-    /// Override the WebSocket URL.
+    /// Set the WebSocket origin to stream from (host-root `/ws` — a separate
+    /// host from the REST base; see [`Network::ws_base`]). Required to stream
+    /// on any network whose WS host is not yet built in.
     pub fn with_ws_url(mut self, ws_url: impl Into<String>) -> Self {
-        self.ws_url = ws_url.into();
+        self.ws_url = Some(ws_url.into());
         self
     }
 
@@ -348,24 +377,11 @@ impl Config {
         &self.base_url
     }
 
-    /// The configured WebSocket URL.
-    pub fn ws_url(&self) -> &str {
-        &self.ws_url
+    /// The configured WebSocket origin, or `None` if none is known for this
+    /// network yet (see [`Network::ws_base`]).
+    pub fn ws_url(&self) -> Option<&str> {
+        self.ws_url.as_deref()
     }
-}
-
-/// Derive a WebSocket URL from a REST base URL: swap the scheme to `ws`/`wss`
-/// and append the `/ws` endpoint. Unknown schemes are left as-is.
-fn derive_ws_url(base_url: &str) -> String {
-    let base = base_url.trim_end_matches('/');
-    let swapped = if let Some(rest) = base.strip_prefix("https://") {
-        format!("wss://{rest}")
-    } else if let Some(rest) = base.strip_prefix("http://") {
-        format!("ws://{rest}")
-    } else {
-        base.to_string()
-    };
-    format!("{swapped}/ws")
 }
 
 impl Default for Config {
@@ -402,19 +418,38 @@ mod tests {
         }
     }
 
+    /// The WS origin is a separate host, never the `/api/exchange` REST
+    /// gateway (which can't proxy WS upgrades). Local is known; the production
+    /// hosts are unconfirmed (ENG-3398) and must surface as `None` rather than
+    /// a guessed URL.
     #[test]
-    fn derives_ws_url_from_https_base() {
-        assert_eq!(
-            derive_ws_url("https://exchange.nexus.xyz/api/exchange"),
-            "wss://exchange.nexus.xyz/api/exchange/ws"
-        );
+    fn ws_base_is_known_only_for_local() {
+        assert_eq!(Network::Local.ws_base(), Some("ws://localhost:9090/ws"));
+        assert_eq!(Network::Stable.ws_base(), None);
+        assert_eq!(Network::Beta.ws_base(), None);
     }
 
+    /// `Config` mirrors `ws_base`: a network with a known WS host carries it,
+    /// and an unconfirmed one leaves `ws_url` unset rather than derived from
+    /// the REST base.
     #[test]
-    fn derives_ws_url_from_http_base_with_trailing_slash() {
+    fn config_ws_url_follows_network_and_is_not_derived_from_rest_base() {
         assert_eq!(
-            derive_ws_url("http://localhost:9090/"),
-            "ws://localhost:9090/ws"
+            Config::new(Network::Local).ws_url(),
+            Some("ws://localhost:9090/ws")
+        );
+        assert_eq!(Config::new(Network::Stable).ws_url(), None);
+        // A custom REST base does not imply a WS host.
+        assert_eq!(
+            Config::with_base_url("https://preview.example/api/exchange").ws_url(),
+            None
+        );
+        // ...until set explicitly.
+        assert_eq!(
+            Config::with_base_url("https://preview.example/api/exchange")
+                .with_ws_url("wss://ws.preview.example/ws")
+                .ws_url(),
+            Some("wss://ws.preview.example/ws")
         );
     }
 

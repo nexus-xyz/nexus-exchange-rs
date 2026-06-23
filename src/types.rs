@@ -26,7 +26,7 @@
 //! from a `str`-adapter field and is exact.
 //!
 //! The types and fields affected are called out individually below:
-//! [`Ticker`], [`Trade`], [`MarketSummary`] (`mark_price`, `volume_24h`),
+//! [`Ticker`], [`Trade`], [`MarketSummary`] (`last_trade_price`, `volume_24h`),
 //! [`OrderBook`] / [`PriceLevel`], and [`Ohlcv`].
 //!
 //! The clean fix is on the API side: if these endpoints emitted decimal strings
@@ -74,17 +74,18 @@ pub struct Market {
 
 /// Per-market summary with 24h volume and halt state.
 ///
-/// `mark_price` and `volume_24h` arrive as JSON numbers via the `float` adapter
-/// and may carry `f64` rounding artifacts — see the [module precision
+/// `last_trade_price` and `volume_24h` arrive as JSON numbers via the `float`
+/// adapter and may carry `f64` rounding artifacts — see the [module precision
 /// note](crate::types#precision-of-float-adapter-fields).
 #[derive(Debug, Clone, Deserialize)]
 pub struct MarketSummary {
     /// Market identifier, e.g. `BTC-USDX-PERP`.
     pub market_id: String,
-    /// Mark price as a JSON number; `null` for a halted market with no recent
-    /// mark (the spec types this `["number","null"]`).
+    /// Last trade price as a JSON number — what the market last traded at, not
+    /// the engine-derived mark price. `null` for a halted market with no recent
+    /// trade (the spec types this `["number","null"]`).
     #[serde(with = "rust_decimal::serde::float_option")]
-    pub mark_price: Option<Decimal>,
+    pub last_trade_price: Option<Decimal>,
     /// Rolling 24-hour traded volume.
     #[serde(with = "rust_decimal::serde::float")]
     pub volume_24h: Decimal,

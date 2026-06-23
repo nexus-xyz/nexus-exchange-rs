@@ -12,12 +12,13 @@ pub use pagination::{Cursor, Page, PageRequest, Paginator};
 
 use std::collections::HashMap;
 
+use crate::auth::{AgentRegistration, EthSigner};
 use crate::types::{
-    AccountSummary, AdlEvent, AgentInfo, AmendOrder, ApiKeyInfo, CreatedApiKey, CreditResult,
-    Decimal, DepositResult, Fill, FundingPayment, FundingSample, HealthStatus, LeverageUpdate,
-    LoginResponse, MarginMode, MarginModeUpdate, MarkPrice, Market, MarketStatus, MarketSummary,
-    Ohlcv, Order, OrderBook, OrderRequest, OrderResponse, Position, RateLimitStatus, SubAccount,
-    Ticker, TierOverride, Trade, Transfer, TransferRequest, Withdrawal, WsToken,
+    AccountSummary, AdlEvent, AgentInfo, AgentRegistered, AmendOrder, ApiKeyInfo, CreatedApiKey,
+    CreditResult, Decimal, DepositResult, Fill, FundingPayment, FundingSample, HealthStatus,
+    LeverageUpdate, LoginResponse, MarginMode, MarginModeUpdate, MarkPrice, Market, MarketStatus,
+    MarketSummary, Ohlcv, Order, OrderBook, OrderRequest, OrderResponse, Position, RateLimitStatus,
+    SubAccount, Ticker, TierOverride, Trade, Transfer, TransferRequest, Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
 
@@ -253,7 +254,7 @@ impl Client {
     /// the `/keys` endpoints.
     pub async fn login(&self, signature: &str) -> Result<LoginResponse> {
         require_non_empty(signature, "signature")?;
-        self.post_public(
+        self.post_unsigned(
             "/auth/login",
             &serde_json::json!({ "message": LOGIN_MESSAGE, "signature": signature }),
         )
@@ -537,6 +538,33 @@ impl Client {
     pub async fn create_sub_account(&self, label: &str) -> Result<SubAccount> {
         self.signed_post("/sub-accounts", &serde_json::json!({ "label": label }))
             .await
+    }
+
+    // --- Wallet-signed auth flows (EIP-191 / EIP-712) ---
+
+    /// EIP-191 session login (`POST /auth/login`). Signs the fixed login
+    /// message with `signer` and exchanges it for a 24-hour session token.
+    ///
+    /// Unauthenticated — the signature *is* the authorization. This is a thin
+    /// signer: it returns the [`LoginResponse`] and does not store or refresh
+    /// the token. To use it for `/keys` management, pass
+    /// [`LoginResponse::token`] to [`Config::session_token`](crate::Config::session_token).
+    pub async fn sign_in(&self, signer: &EthSigner) -> Result<LoginResponse> {
+        let body = signer.sign_in()?;
+        self.post_unsigned("/auth/login", &body).await
+    }
+
+    /// EIP-712 agent-key registration (`POST /agents/register`). Authorizes an
+    /// agent keypair to sign trading requests on the wallet's behalf.
+    ///
+    /// Build the signed [`AgentRegistration`] with
+    /// [`EthSigner::register_agent`]. Unauthenticated — the EIP-712 signature
+    /// from the owning wallet is the authorization; no session token is needed.
+    pub async fn register_agent(
+        &self,
+        registration: &AgentRegistration,
+    ) -> Result<AgentRegistered> {
+        self.post_unsigned("/agents/register", registration).await
     }
 }
 

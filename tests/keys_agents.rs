@@ -46,7 +46,7 @@ async fn login_sends_canonical_message_and_redacts_token() {
         .await;
 
     let resp = anon(server.uri()).login("0xdeadbeef").await.unwrap();
-    assert_eq!(resp.token, "sometoken");
+    assert_eq!(resp.token.expose_secret(), "sometoken");
     assert_eq!(resp.address, "0xabc");
     // The session token must not leak through Debug.
     assert!(!format!("{resp:?}").contains("sometoken"));

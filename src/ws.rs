@@ -69,8 +69,12 @@
 //! ```
 
 mod backoff;
+pub mod protocol;
+mod typed;
 
 pub use backoff::{Backoff, BackoffIter};
+pub use protocol::{Channel, EngineEnvelope, ServerMessage};
+pub use typed::MessageStream;
 
 use crate::{Client, Error, Result};
 use futures_util::{SinkExt, StreamExt};
@@ -78,6 +82,9 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::task::JoinHandle;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::handshake::client::Request as HandshakeRequest;
+use tokio_tungstenite::tungstenite::http::header::{HeaderValue, USER_AGENT};
 use tokio_tungstenite::tungstenite::Message;
 
 /// Capacity of the (rarely-used) command channel from a [`Subscription`] to
@@ -237,15 +244,19 @@ impl Client {
 
         let base = self.config.ws_url.clone();
         let backoff = self.config.ws.backoff.clone();
+        let user_agent = self.config.user_agent.clone();
         // Carry a client clone to re-mint tokens on reconnect, but only for an
         // authenticated stream — an unauthenticated one never mints.
         let auth = first_token.as_ref().map(|_| self.clone());
 
         let handle = tokio::spawn(run(
-            base,
-            auth,
-            first_token,
-            backoff,
+            RunConfig {
+                base,
+                auth,
+                first_token,
+                backoff,
+                user_agent,
+            },
             subscriptions,
             event_tx,
             cmd_rx,
@@ -272,23 +283,38 @@ fn emit_lifecycle(event_tx: &mpsc::Sender<Event>, event: Event) -> bool {
     !matches!(event_tx.try_send(event), Err(TrySendError::Closed(_)))
 }
 
+/// Inputs to the background reconnect loop, grouped to keep [`run`]'s signature
+/// within reason.
+struct RunConfig {
+    /// WebSocket origin; `None` means the network has no known WS host
+    /// (production unconfirmed — ENG-3398), reported once before stopping.
+    base: Option<String>,
+    /// `Some` for an authenticated stream — a client clone used to re-mint a
+    /// single-use token before every (re)connect.
+    auth: Option<Client>,
+    /// Pre-minted token (by [`Client::connect_ws`]) used for the first connect
+    /// of an authenticated stream; reconnects mint their own.
+    first_token: Option<String>,
+    backoff: Backoff,
+    /// `User-Agent` to send on the upgrade request, for traffic attribution.
+    user_agent: String,
+}
+
 /// The background reconnect loop: (re-mint a token,) connect, run until the
 /// socket drops or a command stops it, then back off and try again.
-///
-/// `base` is the WebSocket origin; `None` means the network has no known WS
-/// host (production unconfirmed — ENG-3398), reported once before stopping.
-/// When `auth` is `Some`, every connect is authenticated with a single-use
-/// token: `first_token` (pre-minted by [`Client::connect_ws`]) is used for the
-/// first attempt and a fresh one is minted for each reconnect.
 async fn run(
-    base: Option<String>,
-    auth: Option<Client>,
-    mut first_token: Option<String>,
-    backoff: Backoff,
+    config: RunConfig,
     mut subscriptions: Vec<Value>,
     event_tx: mpsc::Sender<Event>,
     mut cmd_rx: mpsc::Receiver<Command>,
 ) {
+    let RunConfig {
+        base,
+        auth,
+        mut first_token,
+        backoff,
+        user_agent,
+    } = config;
     let Some(base) = base else {
         // `connect` on a network with no known WS host: report once and stop,
         // rather than spin a backoff loop against an endpoint that can't exist.
@@ -328,52 +354,63 @@ async fn run(
                     return;
                 }
             }
-            Ok(url) => match tokio_tungstenite::connect_async(url.as_str()).await {
-                Ok((stream, _resp)) => {
-                    if !emit_lifecycle(&event_tx, Event::Connected) {
-                        return; // consumer gone
-                    }
+            // Build the upgrade request carrying the configured `User-Agent`,
+            // then connect. A request-build failure (e.g. a malformed URL) folds
+            // into the same error path as a failed connect.
+            Ok(url) => {
+                let connect = match handshake_request(&url, &user_agent) {
+                    Ok(request) => tokio_tungstenite::connect_async(request).await,
+                    Err(err) => Err(err),
+                };
+                match connect {
+                    Ok((stream, _resp)) => {
+                        if !emit_lifecycle(&event_tx, Event::Connected) {
+                            return; // consumer gone
+                        }
 
-                    let mut delivered = false;
-                    let exit = serve(
-                        stream,
-                        &event_tx,
-                        &mut cmd_rx,
-                        &mut subscriptions,
-                        &mut delivered,
-                    )
-                    .await;
+                        let mut delivered = false;
+                        let exit = serve(
+                            stream,
+                            &event_tx,
+                            &mut cmd_rx,
+                            &mut subscriptions,
+                            &mut delivered,
+                        )
+                        .await;
 
-                    // Only treat the connection as healthy — and reset the backoff
-                    // so the next outage retries promptly — once it actually carried
-                    // a message. A socket that completes the handshake and immediately
-                    // drops (auth-reject-after-upgrade, LB flap) must keep backing off
-                    // rather than reset every cycle into a tight reconnect loop.
-                    if delivered {
-                        delays.reset();
-                    }
+                        // Only treat the connection as healthy — and reset the backoff
+                        // so the next outage retries promptly — once it actually carried
+                        // a message. A socket that completes the handshake and immediately
+                        // drops (auth-reject-after-upgrade, LB flap) must keep backing off
+                        // rather than reset every cycle into a tight reconnect loop.
+                        if delivered {
+                            delays.reset();
+                        }
 
-                    match exit {
-                        LoopExit::Closed | LoopExit::ConsumerGone => return,
-                        LoopExit::Reconnect(reason) => {
-                            if !emit_lifecycle(&event_tx, Event::Disconnected(redact_token(reason)))
-                            {
-                                return;
+                        match exit {
+                            LoopExit::Closed | LoopExit::ConsumerGone => return,
+                            LoopExit::Reconnect(reason) => {
+                                if !emit_lifecycle(
+                                    &event_tx,
+                                    Event::Disconnected(redact_token(reason)),
+                                ) {
+                                    return;
+                                }
                             }
                         }
                     }
-                }
-                Err(err) => {
-                    // Redact defensively: the token rides in `url`'s query, and
-                    // a transport error must never echo it into an event/log.
-                    if !emit_lifecycle(
-                        &event_tx,
-                        Event::Disconnected(redact_token(format!("connect failed: {err}"))),
-                    ) {
-                        return;
+                    Err(err) => {
+                        // Redact defensively: the token rides in `url`'s query, and
+                        // a transport error must never echo it into an event/log.
+                        if !emit_lifecycle(
+                            &event_tx,
+                            Event::Disconnected(redact_token(format!("connect failed: {err}"))),
+                        ) {
+                            return;
+                        }
                     }
                 }
-            },
+            }
         }
 
         // Back off before retrying. A Close command cuts the wait short; a
@@ -404,6 +441,26 @@ async fn wait_backoff(
             }
         }
     }
+}
+
+/// Build the WebSocket upgrade request for `url`, carrying the configured
+/// `User-Agent`.
+///
+/// `tokio_tungstenite` sends no `User-Agent` of its own, so without this the WS
+/// half of a consumer's traffic shows up unattributed to the server-side
+/// request indexer (REST already sends the header via the `reqwest` client).
+/// The UA is normalized to a valid header value at [`Config`](crate::Config)
+/// construction, so the insert can't realistically fail; if it somehow did we
+/// connect without the header rather than refuse to stream.
+fn handshake_request(
+    url: &str,
+    user_agent: &str,
+) -> tokio_tungstenite::tungstenite::Result<HandshakeRequest> {
+    let mut request = url.into_client_request()?;
+    if let Ok(value) = HeaderValue::from_str(user_agent) {
+        request.headers_mut().insert(USER_AGENT, value);
+    }
+    Ok(request)
 }
 
 /// Append the single-use auth token to the WS URL as a query parameter.
@@ -598,6 +655,7 @@ fn deliver(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Config;
     use serde_json::json;
 
     #[test]
@@ -698,5 +756,62 @@ mod tests {
         );
         assert!(lagged_total > 0, "a Lagged marker should have been flushed");
         assert!(received < TOTAL, "capacity 2 vs 7 frames must drop some");
+    }
+
+    #[test]
+    fn handshake_request_sets_user_agent() {
+        let request = handshake_request("ws://ws.example/ws", "nexus-cli/1.0").unwrap();
+        assert_eq!(request.headers().get(USER_AGENT).unwrap(), "nexus-cli/1.0");
+    }
+
+    /// End-to-end: a loopback server reads the raw HTTP upgrade request the
+    /// client sends and extracts its `User-Agent`, proving the configured UA
+    /// actually rides the WS handshake (not just REST).
+    #[tokio::test]
+    async fn connect_handshake_carries_configured_user_agent() {
+        use tokio::io::AsyncReadExt;
+        use tokio::net::TcpListener;
+        use tokio::sync::oneshot;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = oneshot::channel();
+
+        // Read the upgrade request's header block and pull out the UA; we never
+        // complete the handshake — capturing the request is enough.
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 1024];
+            loop {
+                let n = stream.read(&mut chunk).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let request = String::from_utf8_lossy(&buf);
+            let ua = request.lines().find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.trim()
+                    .eq_ignore_ascii_case("user-agent")
+                    .then(|| value.trim().to_string())
+            });
+            let _ = tx.send(ua);
+        });
+
+        let config = Config::with_base_url("http://unused.invalid")
+            .with_ws_url(format!("ws://{addr}"))
+            .with_user_agent("nexus-cli/9.9.9");
+        let _sub = Client::new(config).connect(Vec::new());
+
+        let captured = tokio::time::timeout(std::time::Duration::from_secs(5), rx)
+            .await
+            .expect("server should receive a handshake")
+            .expect("server task should report the UA");
+        assert_eq!(captured.as_deref(), Some("nexus-cli/9.9.9"));
     }
 }

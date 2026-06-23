@@ -26,7 +26,7 @@
 //! from a `str`-adapter field and is exact.
 //!
 //! The types and fields affected are called out individually below:
-//! [`Ticker`], [`Trade`], [`MarketSummary`] (`mark_price`, `volume_24h`),
+//! [`Ticker`], [`Trade`], [`MarketSummary`] (`last_trade_price`, `volume_24h`),
 //! [`OrderBook`] / [`PriceLevel`], and [`Ohlcv`].
 //!
 //! The clean fix is on the API side: if these endpoints emitted decimal strings
@@ -74,17 +74,18 @@ pub struct Market {
 
 /// Per-market summary with 24h volume and halt state.
 ///
-/// `mark_price` and `volume_24h` arrive as JSON numbers via the `float` adapter
-/// and may carry `f64` rounding artifacts — see the [module precision
+/// `last_trade_price` and `volume_24h` arrive as JSON numbers via the `float`
+/// adapter and may carry `f64` rounding artifacts — see the [module precision
 /// note](crate::types#precision-of-float-adapter-fields).
 #[derive(Debug, Clone, Deserialize)]
 pub struct MarketSummary {
     /// Market identifier, e.g. `BTC-USDX-PERP`.
     pub market_id: String,
-    /// Mark price as a JSON number; `null` for a halted market with no recent
-    /// mark (the spec types this `["number","null"]`).
+    /// Last trade price as a JSON number — what the market last traded at, not
+    /// the engine-derived mark price. `null` for a halted market with no recent
+    /// trade (the spec types this `["number","null"]`).
     #[serde(with = "rust_decimal::serde::float_option")]
-    pub mark_price: Option<Decimal>,
+    pub last_trade_price: Option<Decimal>,
     /// Rolling 24-hour traded volume.
     #[serde(with = "rust_decimal::serde::float")]
     pub volume_24h: Decimal,
@@ -494,29 +495,6 @@ pub struct AgentInfo {
     /// Optional human-readable label.
     #[serde(default)]
     pub label: Option<String>,
-}
-
-/// The result of an EIP-191 wallet login (`POST /auth/login`).
-///
-/// [`token`](Self::token) is a session bearer secret; hand it to
-/// [`Config::session_token`](crate::Config::session_token) to authenticate the
-/// `/keys` endpoints. The [`Debug`] impl redacts it so it cannot leak through
-/// `{:?}`; `address` (the recovered public address) is shown.
-#[derive(Clone, Deserialize)]
-pub struct LoginResponse {
-    /// Session token (hex). Treat as a secret — it grants `/keys` access.
-    pub token: String,
-    /// The Ethereum address recovered from the signature (0x-prefixed).
-    pub address: String,
-}
-
-impl fmt::Debug for LoginResponse {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LoginResponse")
-            .field("token", &"<redacted>")
-            .field("address", &self.address)
-            .finish()
-    }
 }
 
 /// Account balance and collateral summary (`GET /account`).
@@ -990,6 +968,41 @@ pub struct AdlEvent {
     pub timestamp: i64,
 }
 
+/// Response to EIP-191 session login (`POST /auth/login`).
+///
+/// The session token authenticates `/keys` management only; for trading, mint
+/// an HMAC API key and use [`Config::api_key`](crate::Config::api_key). Tokens
+/// expire after 24 hours — this SDK does not refresh them. The token is held in
+/// a [`SecretString`] (zeroized on drop) and the [`Debug`] impl redacts it so it
+/// cannot leak through `{:?}`; `address` (the recovered public address) is shown.
+#[derive(Deserialize)]
+pub struct LoginResponse {
+    /// Session bearer token (64-char hex). Kept secret; expose with
+    /// [`secrecy::ExposeSecret`] to pass to
+    /// [`Config::session_token`](crate::Config::session_token).
+    pub token: SecretString,
+    /// Ethereum address recovered from the login signature (`0x`-prefixed).
+    pub address: String,
+}
+
+impl fmt::Debug for LoginResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LoginResponse")
+            .field("token", &"<redacted>")
+            .field("address", &self.address)
+            .finish()
+    }
+}
+
+/// Response to EIP-712 agent registration (`POST /agents/register`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentRegistered {
+    /// The registered agent's address (`0x`-prefixed).
+    pub agent_address: String,
+    /// Expiry as Unix milliseconds.
+    pub expires_at: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use secrecy::ExposeSecret;
@@ -1032,7 +1045,7 @@ mod tests {
             "token": "deadbeefsessiontoken", "address": "0xabc",
         }))
         .unwrap();
-        assert_eq!(resp.token, "deadbeefsessiontoken");
+        assert_eq!(resp.token.expose_secret(), "deadbeefsessiontoken");
         let rendered = format!("{resp:?}");
         assert!(
             !rendered.contains("deadbeefsessiontoken"),

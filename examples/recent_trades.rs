@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // `None` lets the server pick its default page size; pass `Some(n)` to cap it.
     let trades = client.fetch_trades(MARKET, Some(20)).await?;
-    println!("{} recent trades for {MARKET} (newest first)", trades.len());
+    println!("{} recent trades for {MARKET}", trades.len());
 
     for t in &trades {
         // `side` is the taker's direction; `is_liquidation` flags forced trades.

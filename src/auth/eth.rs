@@ -18,7 +18,7 @@ use zeroize::Zeroizing;
 pub const SIGN_IN_MESSAGE: &str = "Sign in to Nexus Exchange";
 
 /// EIP-712 domain `name`, per the `/agents/register` spec.
-const EIP712_DOMAIN_NAME: &str = "NexusExchange";
+const EIP712_DOMAIN_NAME: &str = "Nexus Exchange";
 /// EIP-712 domain `version`, per the `/agents/register` spec.
 const EIP712_DOMAIN_VERSION: &str = "1";
 
@@ -176,7 +176,7 @@ fn eip191_digest(message: &[u8]) -> [u8; 32] {
 }
 
 /// EIP-712 digest for `RegisterAgent{agent, expiresAt, nonce}` under the
-/// `NexusExchange` domain (no `verifyingContract`):
+/// `Nexus Exchange` domain (no `verifyingContract`):
 /// `keccak256(0x1901 || domainSeparator || hashStruct(message))`.
 fn register_agent_digest(agent: &[u8; 20], expires_at: u64, nonce: u64, chain_id: u64) -> [u8; 32] {
     let domain_type_hash =
@@ -189,7 +189,7 @@ fn register_agent_digest(agent: &[u8; 20], expires_at: u64, nonce: u64, chain_id
     let domain_separator = dh.finalize();
 
     let struct_type_hash =
-        Keccak256::digest(b"RegisterAgent(address agent,uint256 expiresAt,uint256 nonce)");
+        Keccak256::digest(b"RegisterAgent(address agent,uint64 expiresAt,uint64 nonce)");
     let mut sh = Keccak256::new();
     sh.update(struct_type_hash);
     sh.update(address_word(agent));
@@ -311,6 +311,50 @@ mod tests {
         assert_eq!(
             address_from_signature(&req.signature, &digest),
             parse_address(TEST_ADDR).unwrap()
+        );
+    }
+
+    // Known-answer vectors produced by an independent EIP-712/EIP-191
+    // implementation (ethers v6) over `TEST_KEY`. These pin the exact digests
+    // and 65-byte signatures, so a wrong-but-self-consistent domain separator,
+    // type string, or field order is caught here — unlike the recover→address
+    // round-trips, which only prove internal consistency. Regenerating them
+    // requires matching the server's typed data verbatim
+    // (`name: "Nexus Exchange"`, `RegisterAgent(address agent,uint64 expiresAt,uint64 nonce)`).
+    const KAT_AGENT: &str = "0x1234567890abcdef1234567890abcdef12345678";
+    const KAT_EXPIRES_MS: u64 = 1_782_000_000_000;
+    const KAT_NONCE: u64 = 1;
+    const KAT_CHAIN_ID: u64 = 393;
+
+    #[test]
+    fn sign_in_matches_known_answer() {
+        let signer = EthSigner::from_hex(TEST_KEY).unwrap();
+        let digest = eip191_digest(SIGN_IN_MESSAGE.as_bytes());
+        assert_eq!(
+            format!("0x{}", hex::encode(digest)),
+            "0x99efa412eaa32f8d4ad2be2cad8835efc063776eff7834ddd3a8e34da9cd6268"
+        );
+        assert_eq!(
+            signer.sign_in().unwrap().signature,
+            "0xff4ddf3b1af438fe00d02368ad8fa5fc5e57667e6826dbda3ddddc395a5287bb6eab0bc97652f6e7e1f08f665b868ca143da79e18dae8021799cdafc4af670ea1b"
+        );
+    }
+
+    #[test]
+    fn register_agent_matches_known_answer() {
+        let signer = EthSigner::from_hex(TEST_KEY).unwrap();
+        let agent_addr = parse_address(KAT_AGENT).unwrap();
+        let digest = register_agent_digest(&agent_addr, KAT_EXPIRES_MS, KAT_NONCE, KAT_CHAIN_ID);
+        assert_eq!(
+            format!("0x{}", hex::encode(digest)),
+            "0x356e6f3d741f48279c78b228d4ed9217eb49ad9179d549c618215be57817bfd6"
+        );
+        let req = signer
+            .register_agent(KAT_AGENT, KAT_EXPIRES_MS, KAT_NONCE, KAT_CHAIN_ID, None)
+            .unwrap();
+        assert_eq!(
+            req.signature,
+            "0x5df263ed6d1b619a72d436a01104f9036af6258cacf56dea973321cbe722a99550644eea6bf75656d48e982d2ce5db9ef13c4aced4539cf3c2ff87802b0197cc1b"
         );
     }
 

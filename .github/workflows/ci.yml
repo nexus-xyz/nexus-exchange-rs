@@ -96,3 +96,15 @@ jobs:
           fi
 
           echo "No drift: SDK is pinned to the latest API spec (${pinned})."
+
+  semver:
+    name: semver-breaking API changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Flags public-API breaking changes vs the latest published release so
+      # they're visible at review time. Intentionally NOT a required check: a
+      # planned, batched break is allowed to merge — but for renames prefer a
+      # #[deprecated] alias over removal. See CONTRIBUTING.md
+      # ("Compatibility & deprecations").
+      - uses: obi1kenobi/cargo-semver-checks-action@v2

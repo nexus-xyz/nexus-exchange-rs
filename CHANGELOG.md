@@ -29,9 +29,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - add cargo-deny supply-chain checks ([#4](https://github.com/nexus-xyz/nexus-exchange-rs/pull/4))
 - Bootstrap nexus-exchange crate skeleton + CI ([#1](https://github.com/nexus-xyz/nexus-exchange-rs/pull/1))
 - Initial commit: README and licenses
-
-### Added
-
-- Initial crate skeleton: REST client, WebSocket support, auth/signing,
-  typed request/response models, and error handling.
-- Targets Exchange API spec `v0.3.3`.

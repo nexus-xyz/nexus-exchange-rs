@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use backon::ExponentialBuilder;
+use reqwest::header::HeaderValue;
 
 /// Default bound on the WebSocket event channel. Once this many events are
 /// buffered ahead of a slow consumer, the read loop stops pulling frames off
@@ -251,6 +252,15 @@ impl Default for RetryConfig {
 /// enough to surface a stalled request rather than hang indefinitely.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Default `User-Agent` the SDK sends on every request, e.g.
+/// `nexus-exchange-rs/0.1.0`. The version is taken from the crate version at
+/// build time so it never drifts. A descriptive UA lets the server-side request
+/// indexer attribute traffic to the Rust SDK (vs CLI, web frontend, or raw
+/// callers); applications embedding the SDK can override it via
+/// [`Config::with_user_agent`]. Always valid ASCII, so it is a safe fallback.
+pub(crate) const DEFAULT_USER_AGENT: &str =
+    concat!("nexus-exchange-rs/", env!("CARGO_PKG_VERSION"));
+
 /// Client configuration. Credentials are optional — public market-data
 /// endpoints need none.
 #[derive(Debug, Clone)]
@@ -265,6 +275,7 @@ pub struct Config {
     pub(crate) credentials: Option<Arc<Credentials>>,
     pub(crate) timeout: Duration,
     pub(crate) retry: RetryConfig,
+    pub(crate) user_agent: String,
 }
 
 impl Config {
@@ -278,6 +289,7 @@ impl Config {
             credentials: None,
             timeout: DEFAULT_TIMEOUT,
             retry: RetryConfig::default(),
+            user_agent: DEFAULT_USER_AGENT.to_string(),
         }
     }
 
@@ -303,6 +315,7 @@ impl Config {
             credentials: None,
             timeout: DEFAULT_TIMEOUT,
             retry: RetryConfig::default(),
+            user_agent: DEFAULT_USER_AGENT.to_string(),
         }
     }
 
@@ -321,6 +334,28 @@ impl Config {
     /// rate-limit handling is independent — see [`Config::with_rate_limit`]).
     pub fn with_retry(mut self, retry: RetryConfig) -> Self {
         self.retry = retry;
+        self
+    }
+
+    /// Override the `User-Agent` sent on every request (REST and the WebSocket
+    /// handshake).
+    ///
+    /// Applications built on top of the SDK should set this to identify
+    /// themselves to the server-side request indexer (e.g. `nexus-cli/1.2.0` or
+    /// `nexus-web/2026.06`), which is what lets traffic be broken down by
+    /// client. Defaults to `nexus-exchange-rs/<version>`.
+    ///
+    /// The value is normalized here: one that is not a valid HTTP header value
+    /// (visible ASCII, no control characters) is replaced with the default UA
+    /// at construction, so [`user_agent`](Self::user_agent) and the bytes put
+    /// on the wire can never disagree, and this can never fail the build.
+    pub fn with_user_agent(mut self, user_agent: impl Into<String>) -> Self {
+        let user_agent = user_agent.into();
+        self.user_agent = if HeaderValue::from_str(&user_agent).is_ok() {
+            user_agent
+        } else {
+            DEFAULT_USER_AGENT.to_string()
+        };
         self
     }
 
@@ -381,6 +416,11 @@ impl Config {
     /// network yet (see [`Network::ws_base`]).
     pub fn ws_url(&self) -> Option<&str> {
         self.ws_url.as_deref()
+    }
+
+    /// The configured `User-Agent`.
+    pub fn user_agent(&self) -> &str {
+        &self.user_agent
     }
 }
 

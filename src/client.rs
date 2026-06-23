@@ -6,6 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use backon::BackoffBuilder;
 use serde::{de::DeserializeOwned, Serialize};
 
+use crate::config::DEFAULT_USER_AGENT;
 use crate::ratelimit::{RateLimiter, ThrottleInfo};
 use crate::types::RateLimitStatus;
 use crate::{Config, Error, Result};
@@ -22,6 +23,28 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+/// Build the underlying HTTP client with the configured `User-Agent`.
+///
+/// The UA is already normalized to a valid header value in
+/// [`Config::with_user_agent`](crate::Config::with_user_agent), so the first
+/// build should succeed; the fall back to the always-valid
+/// [`DEFAULT_USER_AGENT`] is defense-in-depth against a malformed UA reaching
+/// here some other way, so we never panic or drop attribution silently. The
+/// final `expect` only fires on a genuine TLS/resolver init failure — the same
+/// condition under which [`reqwest::Client::new`] itself panics — so this keeps
+/// [`Client::new`] infallible without hiding that class of error.
+fn build_http(user_agent: &str) -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent(user_agent)
+        .build()
+        .or_else(|_| {
+            reqwest::Client::builder()
+                .user_agent(DEFAULT_USER_AGENT)
+                .build()
+        })
+        .expect("failed to initialize HTTP client (TLS/resolver init)")
 }
 
 /// Entry point for the Nexus Exchange API.
@@ -46,7 +69,7 @@ impl Client {
     pub fn new(config: Config) -> Self {
         let limiter = Arc::new(RateLimiter::new(&config.rate_limit));
         Self {
-            http: reqwest::Client::new(),
+            http: build_http(&config.user_agent),
             config,
             limiter,
         }
@@ -280,8 +303,61 @@ impl Client {
 mod tests {
     use super::*;
     use crate::Config;
-    use wiremock::matchers::{header_exists, method, path, query_param};
+    use wiremock::matchers::{header, header_exists, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// The SDK sends its descriptive default `User-Agent` so the server can
+    /// attribute traffic to the Rust SDK rather than reqwest's generic default.
+    #[tokio::test]
+    async fn sends_default_user_agent() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/x"))
+            .and(header("user-agent", DEFAULT_USER_AGENT))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = Client::new(Config::with_base_url(server.uri()));
+        let _: serde_json::Value = client.get("/x", &[], 0.0).await.unwrap();
+    }
+
+    /// An embedding application (CLI, web frontend) can override the UA to
+    /// identify itself — this is what unlocks the per-client breakdown.
+    #[tokio::test]
+    async fn sends_overridden_user_agent() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/x"))
+            .and(header("user-agent", "nexus-cli/1.2.3"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client =
+            Client::new(Config::with_base_url(server.uri()).with_user_agent("nexus-cli/1.2.3"));
+        let _: serde_json::Value = client.get("/x", &[], 0.0).await.unwrap();
+    }
+
+    /// A UA with bytes illegal in an HTTP header must not panic construction;
+    /// the client falls back to the always-valid default UA instead.
+    #[tokio::test]
+    async fn invalid_user_agent_falls_back_to_default() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/x"))
+            .and(header("user-agent", DEFAULT_USER_AGENT))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // A newline is not a legal header-value byte.
+        let client = Client::new(Config::with_base_url(server.uri()).with_user_agent("bad\nua"));
+        let _: serde_json::Value = client.get("/x", &[], 0.0).await.unwrap();
+    }
 
     #[tokio::test]
     async fn signed_get_signs_and_sends_query() {

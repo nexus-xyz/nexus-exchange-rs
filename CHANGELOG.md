@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Typed, protocol-aware streaming client: `Client::subscribe` returns a
+  `MessageStream` (a `Stream` of decoded `ServerMessage`s) for the op-envelope
+  protocol, covering public per-market channels (trades/book/candles) and
+  per-account channels (orders/fills/positions/balances). Mints a single-use
+  `/ws/token` per connection to upgrade private streams and resumes each channel
+  from its `since`/`seq_at_join` cursor on reconnect.
+
 ## [0.2.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.1.0...v0.2.0) - 2026-06-23
 
 ### Added

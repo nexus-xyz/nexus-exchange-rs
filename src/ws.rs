@@ -69,8 +69,12 @@
 //! ```
 
 mod backoff;
+pub mod protocol;
+mod typed;
 
 pub use backoff::{Backoff, BackoffIter};
+pub use protocol::{Channel, EngineEnvelope, ServerMessage};
+pub use typed::MessageStream;
 
 use crate::{Client, Error, Result};
 use futures_util::{SinkExt, StreamExt};

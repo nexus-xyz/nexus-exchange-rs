@@ -1,5 +1,7 @@
 # nexus-exchange
 
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](#license)
+
 Official Rust SDK for the [Nexus Exchange](https://exchange.nexus.xyz) API — a
 thin, idiomatic wrapper over the public REST + WebSocket API.
 

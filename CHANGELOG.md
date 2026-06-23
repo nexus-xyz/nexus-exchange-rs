@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Client::connect_ws` convenience that mints a single-use token and opens the
+  per-account WebSocket stream, re-minting on each reconnect.
+
+### Changed
+
+- **Breaking:** the WebSocket origin is no longer derived from the REST base.
+  `Network::ws_url()` is now `Network::ws_base()` and `Config::ws_url()` returns
+  `Option<&str>` (`None` for networks whose WS host is unconfirmed, currently
+  `Stable`/`Beta`). `Config::with_base_url` no longer infers a WS URL.
+
 ## [0.1.0](https://github.com/nexus-xyz/nexus-exchange-rs/releases/tag/v0.1.0) - 2026-06-22
 
 ### Added

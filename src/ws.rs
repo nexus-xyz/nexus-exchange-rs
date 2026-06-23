@@ -412,29 +412,39 @@ async fn wait_backoff(
 /// upgrade can't carry custom headers — and the value is percent-encoded via
 /// `serde_urlencoded` so it can't break out of the query.
 fn ws_url_with_token(base: &str, token: &str) -> String {
-    let pair = serde_urlencoded::to_string([("token", token)]).unwrap_or_default();
+    // Encoding a single static-key string pair cannot fail; `expect` documents
+    // that and refuses to connect rather than silently dropping the token (and
+    // connecting unauthenticated) on an empty encode.
+    let pair = serde_urlencoded::to_string([("token", token)])
+        .expect("encoding a single string query pair is infallible");
     let sep = if base.contains('?') { '&' } else { '?' };
     format!("{base}{sep}{pair}")
 }
 
-/// Strip any `token=<value>` query fragment from a human-readable reason so a
+/// Strip every `token=<value>` query fragment from a human-readable reason so a
 /// single-use WS token can never leak into an [`Event`] or a log, even if an
 /// underlying error were to echo the connect URL. Defense in depth: today's
 /// transport errors carry the socket address, not the query.
 fn redact_token(reason: String) -> String {
     const KEY: &str = "token=";
-    let Some(start) = reason.find(KEY) else {
+    if !reason.contains(KEY) {
         return reason;
-    };
-    let val_start = start + KEY.len();
-    // The value is percent-encoded, so it ends at the first delimiter.
-    let val_len = reason[val_start..]
-        .find(['&', ' ', '"', ')'])
-        .unwrap_or(reason.len() - val_start);
-    let mut out = String::with_capacity(start + KEY.len() + 3);
-    out.push_str(&reason[..val_start]);
-    out.push_str("***");
-    out.push_str(&reason[val_start + val_len..]);
+    }
+    let mut out = String::with_capacity(reason.len());
+    let mut rest = reason.as_str();
+    // Scrub all occurrences, not just the first, in case a reason ever echoes
+    // the URL more than once.
+    while let Some(start) = rest.find(KEY) {
+        let val_start = start + KEY.len();
+        // The value is percent-encoded, so it ends at the first delimiter.
+        let val_len = rest[val_start..]
+            .find(['&', ' ', '"', ')'])
+            .unwrap_or(rest.len() - val_start);
+        out.push_str(&rest[..val_start]);
+        out.push_str("***");
+        rest = &rest[val_start + val_len..];
+    }
+    out.push_str(rest);
     out
 }
 
@@ -614,6 +624,11 @@ mod tests {
         assert_eq!(
             redact_token("url wss://h/ws?token=secret&x=1 refused".into()),
             "url wss://h/ws?token=***&x=1 refused"
+        );
+        // Every occurrence is scrubbed, not just the first.
+        assert_eq!(
+            redact_token("token=a&x=1 then token=b end".into()),
+            "token=***&x=1 then token=*** end"
         );
         // Nothing to redact is returned unchanged.
         assert_eq!(redact_token("read error: eof".into()), "read error: eof");

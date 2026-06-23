@@ -64,7 +64,7 @@ async fn exhausting_retries_yields_rate_limited_error() {
 
     let err = client(server.uri(), 2).fetch_markets().await.unwrap_err();
     match err {
-        Error::RateLimited { retry_after } => {
+        Error::Transient(nexus_exchange::TransientError::RateLimited { retry_after }) => {
             assert_eq!(retry_after, Some(std::time::Duration::from_secs(0)));
         }
         other => panic!("expected RateLimited, got {other:?}"),

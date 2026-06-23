@@ -52,7 +52,10 @@ async fn set_leverage_zero_is_rejected_without_request() {
         .set_leverage("BTC-USDX-PERP", 0)
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::InvalidRequest(_)));
+    assert!(matches!(
+        err,
+        Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+    ));
 }
 
 #[tokio::test]
@@ -140,7 +143,10 @@ async fn amend_order_with_no_changes_is_rejected() {
         .amend_order("o1", &AmendOrder::new())
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::InvalidRequest(_)));
+    assert!(matches!(
+        err,
+        Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+    ));
 }
 
 #[tokio::test]
@@ -169,7 +175,10 @@ async fn cancel_orders_empty_is_rejected() {
         .cancel_orders(&[])
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::InvalidRequest(_)));
+    assert!(matches!(
+        err,
+        Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+    ));
 }
 
 #[tokio::test]
@@ -241,7 +250,10 @@ async fn empty_client_order_id_is_rejected_without_request() {
         .fetch_order_by_client_id("")
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::InvalidRequest(_)));
+    assert!(matches!(
+        err,
+        Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+    ));
 }
 
 #[tokio::test]
@@ -295,7 +307,10 @@ async fn create_transfer_sends_body_and_rejects_non_positive() {
         .create_transfer(&bad)
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::InvalidRequest(_)));
+    assert!(matches!(
+        err,
+        Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+    ));
 }
 
 #[tokio::test]
@@ -329,12 +344,18 @@ async fn leverage_and_margin_mode_reject_empty_market_id() {
     // mounted: a request escaping the client would surface as a transport error.
     let client = authed("http://127.0.0.1:1".to_string());
     let lev = client.set_leverage("", 10).await.unwrap_err();
-    assert!(matches!(lev, Error::InvalidRequest(_)));
+    assert!(matches!(
+        lev,
+        Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+    ));
     let margin = client
         .set_margin_mode("", MarginMode::Cross)
         .await
         .unwrap_err();
-    assert!(matches!(margin, Error::InvalidRequest(_)));
+    assert!(matches!(
+        margin,
+        Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+    ));
 }
 
 #[tokio::test]

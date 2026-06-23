@@ -168,7 +168,7 @@ impl Subscription {
         self.cmd_tx
             .send(Command::Subscribe(request))
             .await
-            .map_err(|_| Error::StreamClosed)
+            .map_err(|_| Error::stream_closed())
     }
 
     /// Gracefully close the connection and wait for the background task to end.
@@ -223,10 +223,9 @@ impl Client {
         // Resolve the endpoint first: an unconfigured network must fail here,
         // not after spending a mint round-trip on a stream that can't connect.
         if self.config.ws_url.is_none() {
-            return Err(Error::InvalidRequest(
+            return Err(Error::invalid_request(
                 "no WebSocket endpoint configured for this network (production WS host \
-                 not yet confirmed — ENG-3398); set one with Config::with_ws_url"
-                    .to_string(),
+                 not yet confirmed — ENG-3398); set one with Config::with_ws_url",
             ));
         }
         // Pre-mint the first token so credential / transport problems surface

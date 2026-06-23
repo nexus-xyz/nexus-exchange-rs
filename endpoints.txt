@@ -1,8 +1,16 @@
 # Endpoints the SDK targets, checked against the pinned spec (.api-version) by
-# scripts/check_spec_drift.py. This file is the hand-maintained SOURCE OF TRUTH
-# for SDK coverage — the check validates this list against the spec, NOT the
-# Rust code against this list. Add a line whenever you add an endpoint, or the
-# drift check won't see it. Format:
+# scripts/check_spec_drift.py. This file lists the spec operations the SDK
+# targets; the check validates it BOTH ways:
+#   * every line must exist in the pinned spec (no removed/renamed/typo'd op);
+#   * the set must equal the REST operations implemented in src/rest.rs, modulo
+#     the two documented allowlists in check_spec_drift.py:
+#       - CODE_ONLY_OPS    — implemented but ahead of the pinned spec, so kept
+#         OUT of this file (adding them here would fail the spec check); e.g.
+#         /account/leverage, /orders/by-client-id/*, /transfers, /sub-accounts.
+#       - NON_REST_TARGETS — targeted but reached without a REST helper call;
+#         e.g. GET /ws (the WebSocket upgrade, opened by the ws client).
+# So: add a line here whenever you add a REST wrapper for a spec operation, or
+# the drift check fails. Format:
 #   METHOD /path   (path placeholders match the spec, e.g. {market_id})
 GET /markets
 GET /markets/summary
@@ -14,8 +22,16 @@ GET /markets/{market_id}/candles
 GET /markets/{market_id}/funding
 GET /markets/{market_id}/mark-price
 GET /markets/{market_id}/status
+GET /markets/{market_id}/adl-events
+GET /account/{address}/adl-history
 GET /health
 GET /keys
+POST /keys
+DELETE /keys/{key_id}
+GET /agents
+POST /agents/register
+DELETE /agents/{address}
+POST /auth/login
 GET /account
 GET /positions
 GET /fills

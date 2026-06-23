@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.1.0...v0.2.0) - 2026-06-23
+
+### Added
+
+- *(ws)* connect_ws convenience + correct WS origin on Network (ENG-3398) ([#39](https://github.com/nexus-xyz/nexus-exchange-rs/pull/39))
+- *(keys/agents)* add API-key create/delete and agent list/revoke ([#32](https://github.com/nexus-xyz/nexus-exchange-rs/pull/32))
+
+### Fixed
+
+- *(tickers)* confirm /tickers map envelope, key by market_id ([#42](https://github.com/nexus-xyz/nexus-exchange-rs/pull/42))
+
 ### Added
 
 - `Client::connect_ws` convenience that mints a single-use token and opens the

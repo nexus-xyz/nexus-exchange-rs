@@ -5,7 +5,10 @@
 //! `float` adapter — so callers get one consistent money type regardless of
 //! the wire encoding.
 
+use std::fmt;
+
 pub use rust_decimal::Decimal;
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -373,6 +376,69 @@ pub struct ApiKeyInfo {
     pub key_id: String,
     /// Rate-limit tier this key resolves to.
     pub tier: String,
+}
+
+/// A newly created API key (`POST /keys`).
+///
+/// The `secret` is returned **once** at creation and never again — persist it
+/// immediately. The spec (v0.3.3) does not pin this response body; the field
+/// names are inferred from the `GET /keys` shape, and `tier` defaults to absent
+/// so an unexpectedly slim payload still decodes. The secret is held in a
+/// [`SecretString`] (zeroized on drop, redacted in `Debug`); call
+/// [`expose_secret`](secrecy::ExposeSecret::expose_secret) to read it once for
+/// persistence.
+#[derive(Deserialize)]
+pub struct CreatedApiKey {
+    /// Public key identifier (the `x-api-key` value for future requests).
+    pub key_id: String,
+    /// The HMAC secret, shown only on creation. Store it now; it is
+    /// unrecoverable afterwards.
+    #[serde(deserialize_with = "deserialize_secret")]
+    pub secret: SecretString,
+    /// Rate-limit tier the key resolves to, when the server reports it.
+    #[serde(default)]
+    pub tier: Option<String>,
+}
+
+/// Deserialize a JSON string into a [`SecretString`] so the value lands in
+/// zeroizing storage rather than a plain heap `String`.
+fn deserialize_secret<'de, D>(deserializer: D) -> Result<SecretString, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(SecretString::from(String::deserialize(deserializer)?))
+}
+
+impl fmt::Debug for CreatedApiKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreatedApiKey")
+            .field("key_id", &self.key_id)
+            // Never render the secret — it would otherwise leak into any log
+            // line or panic message that formats this value.
+            .field("secret", &"<redacted>")
+            .field("tier", &self.tier)
+            .finish()
+    }
+}
+
+/// A registered agent key for the authenticated wallet (`GET /agents`).
+///
+/// The spec sends this object in camelCase and marks every field optional, so
+/// the timestamps and label default rather than fail the decode when omitted.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentInfo {
+    /// Agent address (0x-prefixed).
+    pub address: String,
+    /// Expiry, Unix ms.
+    #[serde(default)]
+    pub expires_at: i64,
+    /// Registration time, Unix ms.
+    #[serde(default)]
+    pub registered_at: i64,
+    /// Optional human-readable label.
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
 /// Account balance and collateral summary (`GET /account`).
@@ -806,4 +872,61 @@ pub struct SubAccount {
     /// Sub-account equity, when reported.
     #[serde(default, with = "rust_decimal::serde::str_option")]
     pub equity: Option<Decimal>,
+}
+
+#[cfg(test)]
+mod tests {
+    use secrecy::ExposeSecret;
+
+    use super::*;
+
+    #[test]
+    fn created_api_key_debug_redacts_secret() {
+        let key: CreatedApiKey = serde_json::from_value(serde_json::json!({
+            "key_id": "nx_abc",
+            "secret": "supersecrethexvalue",
+            "tier": "Pro",
+        }))
+        .unwrap();
+        // The secret round-trips into the field for the caller to persist,
+        // but must never appear in the Debug rendering.
+        assert_eq!(key.secret.expose_secret(), "supersecrethexvalue");
+        let rendered = format!("{key:?}");
+        assert!(
+            !rendered.contains("supersecrethexvalue"),
+            "secret leaked: {rendered}"
+        );
+        assert!(rendered.contains("nx_abc"));
+        assert!(rendered.contains("<redacted>"));
+    }
+
+    #[test]
+    fn created_api_key_tier_is_optional() {
+        let key: CreatedApiKey = serde_json::from_value(serde_json::json!({
+            "key_id": "nx_abc",
+            "secret": "s",
+        }))
+        .unwrap();
+        assert!(key.tier.is_none());
+    }
+
+    #[test]
+    fn agent_info_parses_camel_case_and_defaults() {
+        let agent: AgentInfo = serde_json::from_value(serde_json::json!({
+            "address": "0xagent",
+            "expiresAt": 1_776_033_900_000i64,
+            "registeredAt": 1_776_000_000_000i64,
+            "label": "my-bot",
+        }))
+        .unwrap();
+        assert_eq!(agent.address, "0xagent");
+        assert_eq!(agent.expires_at, 1_776_033_900_000);
+        assert_eq!(agent.label.as_deref(), Some("my-bot"));
+
+        // Optional fields default when the server omits them.
+        let slim: AgentInfo =
+            serde_json::from_value(serde_json::json!({ "address": "0xagent" })).unwrap();
+        assert_eq!(slim.registered_at, 0);
+        assert!(slim.label.is_none());
+    }
 }

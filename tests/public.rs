@@ -222,17 +222,17 @@ async fn fetch_ticker_float_decimal_is_not_lossy_for_nice_values() {
 }
 #[tokio::test]
 async fn fetch_market_summaries_parses_numbers_and_halted_null() {
-    // /markets/summary -> [MarketSummary]. mark_price is `["number","null"]`:
+    // /markets/summary -> [MarketSummary]. last_trade_price is `["number","null"]`:
     // a halted market sends null, so this exercises the Option<Decimal> path.
     let server = MockServer::start().await;
     let body = serde_json::json!([
         {
-            "market_id": "BTC-USDX-PERP", "mark_price": 50011.6, "volume_24h": 1350000.0,
+            "market_id": "BTC-USDX-PERP", "last_trade_price": 50011.6, "volume_24h": 1350000.0,
             "trade_count": 982, "status": "active", "halt_reason": null,
             "halted_at": null, "adl_event_count": 0
         },
         {
-            "market_id": "DOGE-USDX-PERP", "mark_price": null, "volume_24h": 0.0,
+            "market_id": "DOGE-USDX-PERP", "last_trade_price": null, "volume_24h": 0.0,
             "trade_count": 0, "status": "halted", "halt_reason": "adl_pool_exhausted",
             "halted_at": 1776033900000i64, "adl_event_count": 3
         }
@@ -245,10 +245,10 @@ async fn fetch_market_summaries_parses_numbers_and_halted_null() {
 
     let s = client(server.uri()).fetch_market_summaries().await.unwrap();
     assert_eq!(s.len(), 2);
-    assert_eq!(s[0].mark_price.unwrap().to_string(), "50011.6");
+    assert_eq!(s[0].last_trade_price.unwrap().to_string(), "50011.6");
     assert_eq!(s[0].volume_24h.to_string(), "1350000");
-    // halted market: null mark_price must not fail the whole decode.
-    assert!(s[1].mark_price.is_none());
+    // halted market: null last_trade_price must not fail the whole decode.
+    assert!(s[1].last_trade_price.is_none());
     assert_eq!(s[1].status, "halted");
     assert_eq!(s[1].halt_reason.as_deref(), Some("adl_pool_exhausted"));
     assert_eq!(s[1].halted_at, Some(1776033900000));

@@ -16,6 +16,28 @@ thin, idiomatic wrapper over the public REST + WebSocket API.
   real tier via `429` headers and `Client::fetch_rate_limit_status`. Configure or
   disable it through `Config::with_rate_limit` / `Config::without_rate_limiter`.
 
+## Examples
+
+Runnable, copy-pasteable programs live under [`examples/`](./examples) and
+double as the primary docs. Run one with `cargo run --example <name>`:
+
+| Example | Auth | What it shows |
+|---|---|---|
+| `public_endpoints` | no | Markets, tickers, top of book |
+| `orderbook_snapshot` | no | Full order-book snapshot + spread |
+| `recent_trades` | no | Recent public trade prints |
+| `place_order` | yes | Normalize to tick/lot, then place a limit order |
+| `cancel_order` | yes | Cancel one order by id, or cancel all |
+| `account_balances` | yes | Balance, collateral, equity, margin |
+| `positions` | yes | Open positions with PnL and liquidation price |
+
+The two WebSocket streaming examples (`ws_orderbook`, `ws_user_events`) land
+separately via [#37](https://github.com/nexus-xyz/nexus-exchange-rs/pull/37),
+which merges after this PR.
+
+Authenticated examples read `NEXUS_API_KEY` / `NEXUS_API_SECRET` from the
+environment and default to a non-production network where they mutate state.
+
 ## API version
 
 This SDK targets a specific released version of the Exchange API spec, pinned in

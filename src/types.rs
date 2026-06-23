@@ -929,6 +929,44 @@ pub struct SubAccount {
     pub equity: Option<Decimal>,
 }
 
+/// One counterparty's forced closure within an ADL settlement. All numeric
+/// fields are sent as decimal strings.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AdlClosure {
+    /// 0x-prefixed address of the counterparty whose position was closed.
+    pub account_id: String,
+    /// Size of the position that was forcibly closed.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub position_closed: Decimal,
+    /// Collateral settled to this counterparty for the forced closure.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub settlement_amount: Decimal,
+}
+
+/// A single auto-deleveraging settlement event (v0.21). Emitted when the
+/// insurance fund is depleted and opposite-side positions are closed to absorb
+/// bad debt. Returned by the market and account ADL history endpoints.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AdlEvent {
+    /// Market identifier, e.g. `BTC-USDX-PERP`.
+    pub market_id: String,
+    /// 0x-prefixed bankrupt account.
+    pub target_account: String,
+    /// Bankruptcy price at which the target's position was settled.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub bankruptcy_price: Decimal,
+    /// Bad debt absorbed by the insurance fund before counterparties were closed.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub bad_debt_absorbed_by_fund: Decimal,
+    /// Opposite-side positions closed to absorb the bankrupt account's debt.
+    #[serde(default)]
+    pub counterparty_closures: Vec<AdlClosure>,
+    /// Engine event sequence number.
+    pub sequence: u64,
+    /// Unix timestamp in milliseconds.
+    pub timestamp: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use secrecy::ExposeSecret;

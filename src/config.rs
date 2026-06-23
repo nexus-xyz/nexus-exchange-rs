@@ -1,6 +1,6 @@
 //! Client configuration.
 
-use crate::auth::Credentials;
+use crate::auth::{Credential, Credentials, Nonce, SystemTimeNonce};
 use crate::ws::Backoff;
 use std::sync::Arc;
 use std::time::Duration;
@@ -272,7 +272,8 @@ pub struct Config {
     pub(crate) ws_url: Option<String>,
     pub(crate) ws: WsConfig,
     pub(crate) rate_limit: RateLimit,
-    pub(crate) credentials: Option<Arc<Credentials>>,
+    pub(crate) credentials: Option<Arc<dyn Credential>>,
+    pub(crate) nonce: Arc<dyn Nonce>,
     pub(crate) timeout: Duration,
     pub(crate) retry: RetryConfig,
     pub(crate) user_agent: String,
@@ -287,6 +288,7 @@ impl Config {
             ws: WsConfig::default(),
             rate_limit: RateLimit::default(),
             credentials: None,
+            nonce: Arc::new(SystemTimeNonce),
             timeout: DEFAULT_TIMEOUT,
             retry: RetryConfig::default(),
             user_agent: DEFAULT_USER_AGENT.to_string(),
@@ -313,6 +315,7 @@ impl Config {
             ws: WsConfig::default(),
             rate_limit: RateLimit::default(),
             credentials: None,
+            nonce: Arc::new(SystemTimeNonce),
             timeout: DEFAULT_TIMEOUT,
             retry: RetryConfig::default(),
             user_agent: DEFAULT_USER_AGENT.to_string(),
@@ -397,13 +400,26 @@ impl Config {
     /// Authenticate with an HMAC API key — `key_id` and the 64-char hex
     /// `secret` from `POST /keys`.
     pub fn api_key(mut self, key_id: impl Into<String>, secret: impl Into<String>) -> Self {
-        self.credentials = Some(Arc::new(Credentials::api_key(key_id, secret)));
+        self.credentials = Some(Credentials::api_key(key_id, secret).into_arc());
         self
     }
 
     /// Authenticate with a session bearer token from `POST /auth/login`.
     pub fn session_token(mut self, token: impl Into<String>) -> Self {
-        self.credentials = Some(Arc::new(Credentials::session(token)));
+        self.credentials = Some(Credentials::session(token).into_arc());
+        self
+    }
+
+    /// Authenticate with a custom [`Credential`] implementation.
+    pub fn with_credential(mut self, credential: Arc<dyn Credential>) -> Self {
+        self.credentials = Some(credential);
+        self
+    }
+
+    /// Override the [`Nonce`] source used to timestamp signed requests. Defaults
+    /// to [`SystemTimeNonce`].
+    pub fn with_nonce(mut self, nonce: Arc<dyn Nonce>) -> Self {
+        self.nonce = nonce;
         self
     }
 

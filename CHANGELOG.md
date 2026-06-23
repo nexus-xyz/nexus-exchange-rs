@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-account channels (orders/fills/positions/balances). Mints a single-use
   `/ws/token` per connection to upgrade private streams and resumes each channel
   from its `since`/`seq_at_join` cursor on reconnect.
+- Wallet-signed auth, mirroring the API: EIP-191 session login (`Client::sign_in`)
+  and EIP-712 agent-key registration (`Client::register_agent`), via a thin
+  `EthSigner` (secp256k1 key held in `SecretString`). Credentials now sit behind
+  a `Credential` trait with a pluggable `Nonce` source (`Config::with_credential`
+  / `Config::with_nonce`).
 
 ## [0.2.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.1.0...v0.2.0) - 2026-06-23
 

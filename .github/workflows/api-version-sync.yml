@@ -32,7 +32,7 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           token: ${{ secrets.API_VERSION_SYNC_TOKEN || github.token }}
 
@@ -58,6 +58,14 @@ jobs:
           # leave it for the human rather than churning a duplicate every day.
           if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
             echo "Branch $branch already exists upstream; nothing to do."
+            exit 0
+          fi
+
+          # Also check for an already-open PR on this head: the branch can be
+          # deleted while its PR stays open, and `gh pr create` hard-fails on a
+          # head that already has an open PR. Skip rather than error out.
+          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            echo "An open PR for $branch already exists; nothing to do."
             exit 0
           fi
 

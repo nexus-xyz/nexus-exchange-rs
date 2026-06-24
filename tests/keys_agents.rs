@@ -59,7 +59,10 @@ async fn login_rejects_empty_signature_without_io() {
         .login("")
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::InvalidRequest(_)));
+    assert!(matches!(
+        err,
+        Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+    ));
 }
 
 #[tokio::test]
@@ -194,5 +197,8 @@ async fn empty_path_id_is_rejected_locally() {
         .delete_api_key("")
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::InvalidRequest(_)));
+    assert!(matches!(
+        err,
+        Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+    ));
 }

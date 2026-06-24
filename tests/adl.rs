@@ -101,14 +101,14 @@ async fn adl_reads_require_credentials() {
             .fetch_market_adl_events("BTC-USDX-PERP", None)
             .await
             .unwrap_err(),
-        Error::Auth(_)
+        Error::Terminal(nexus_exchange::TerminalError::Credentials(_))
     ));
     assert!(matches!(
         client
             .fetch_account_adl_history("0xtrader", None)
             .await
             .unwrap_err(),
-        Error::Auth(_)
+        Error::Terminal(nexus_exchange::TerminalError::Credentials(_))
     ));
 }
 
@@ -118,5 +118,8 @@ async fn fetch_account_adl_history_rejects_empty_address_locally() {
         .fetch_account_adl_history("", None)
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::InvalidRequest(_)));
+    assert!(matches!(
+        err,
+        Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+    ));
 }

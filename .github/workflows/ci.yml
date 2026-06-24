@@ -57,6 +57,35 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked --all-features
 
+  # Emit a machine-readable line-coverage % for the dashboard. Additive and
+  # non-gating: there is no --fail-under threshold, so coverage never blocks a
+  # merge. Uses cargo-llvm-cov (LLVM source-based coverage).
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # stable
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Run coverage
+        run: |
+          cargo llvm-cov --locked --all-features --summary-only --json --output-path coverage.json
+          cargo llvm-cov --locked --all-features --summary-only
+      - name: Write coverage summary
+        run: |
+          PCT=$(jq -r '.data[0].totals.lines.percent' coverage.json)
+          printf '### Line coverage: %.2f%%\n' "$PCT" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.json
+
   docs:
     runs-on: ubuntu-latest
     timeout-minutes: 15

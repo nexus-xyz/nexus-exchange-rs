@@ -135,7 +135,8 @@ jobs:
           fi
           # A break was detected — require it to be declared so release-plz bumps.
           # Conventional-commit `!` before the colon: feat!:, fix(scope)!:, …
-          if printf '%s' "$PR_TITLE" | grep -qE '^[a-z]+(\([^)]*\))?!:' \
+          # Match the type prefix case-insensitively so 'Feat!:'/'Fix!:' count too.
+          if printf '%s' "$PR_TITLE" | grep -iqE '^[a-z]+(\([^)]*\))?!:' \
             || printf '%s\n' "$PR_BODY" | grep -q 'BREAKING CHANGE:'; then
             echo "✅ Breaking API change detected AND declared (\`!\` / BREAKING CHANGE)."
             echo "   release-plz will bump the version accordingly."

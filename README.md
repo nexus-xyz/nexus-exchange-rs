@@ -41,7 +41,9 @@ environment and default to a non-production network where they mutate state.
 ## API version
 
 <!-- api-version-sync:start -->
-This SDK currently targets Exchange API spec **`v0.4.0`**.
+
+Currently targets Exchange API spec **`v0.4.0`**.
+
 <!-- api-version-sync:end -->
 
 The pinned version lives in [`.api-version`](./.api-version); the spec itself is

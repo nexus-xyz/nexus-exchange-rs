@@ -28,7 +28,7 @@ pub enum Rounding {
 
 /// Why an order would be rejected by the exchange's trading rules.
 ///
-/// Surfaced through [`crate::Error::InvalidOrder`] when it crosses an SDK
+/// Surfaced through [`crate::TerminalError::OrderValidation`] when it crosses an SDK
 /// boundary, so callers can use the crate `Result` throughout.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]

@@ -106,19 +106,19 @@ async fn key_and_agent_endpoints_require_credentials() {
     let client = Client::new(Config::with_base_url("http://localhost:1"));
     assert!(matches!(
         client.create_api_key().await.unwrap_err(),
-        Error::Auth(_)
+        Error::Terminal(nexus_exchange::TerminalError::Credentials(_))
     ));
     assert!(matches!(
         client.delete_api_key("nx_old").await.unwrap_err(),
-        Error::Auth(_)
+        Error::Terminal(nexus_exchange::TerminalError::Credentials(_))
     ));
     assert!(matches!(
         client.fetch_agents().await.unwrap_err(),
-        Error::Auth(_)
+        Error::Terminal(nexus_exchange::TerminalError::Credentials(_))
     ));
     assert!(matches!(
         client.revoke_agent("0xagent").await.unwrap_err(),
-        Error::Auth(_)
+        Error::Terminal(nexus_exchange::TerminalError::Credentials(_))
     ));
 }
 
@@ -142,7 +142,7 @@ async fn path_parameters_cannot_traverse_to_another_route() {
     match result {
         // Unmatched request → wiremock's default 404; the point is we did NOT
         // reach `/account`.
-        Err(Error::Api { .. }) => {}
+        Err(Error::Terminal(nexus_exchange::TerminalError::BadRequest { .. })) => {}
         Err(other) => panic!("expected Api error, got {other:?}"),
         Ok(v) => panic!("traversal reached another route: {v:?}"),
     }

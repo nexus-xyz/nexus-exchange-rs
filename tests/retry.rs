@@ -132,11 +132,13 @@ async fn retries_exhaust_then_surface_last_error() {
         .await
         .unwrap_err();
     match err {
-        Error::Api { status, code, .. } => {
+        // A 5xx surfaces as a transient `Unavailable` carrying the HTTP status.
+        // (The taxonomy classifies 5xx by status; the body `code` isn't
+        // retained for the unavailable case.)
+        Error::Transient(nexus_exchange::TransientError::Unavailable { status, .. }) => {
             assert_eq!(status, 503);
-            assert_eq!(code, "unavailable");
         }
-        other => panic!("expected Api error, got {other:?}"),
+        other => panic!("expected transient Unavailable error, got {other:?}"),
     }
     // `expect(4)` is asserted on drop.
 }
@@ -158,7 +160,11 @@ async fn does_not_retry_non_transient_4xx() {
         .health_check()
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::Api { status: 400, .. }));
+    // A 400 with an unmodeled code is a terminal BadRequest — never retried.
+    assert!(matches!(
+        err,
+        Error::Terminal(nexus_exchange::TerminalError::BadRequest { .. })
+    ));
 }
 
 #[tokio::test]
@@ -166,9 +172,9 @@ async fn does_not_retry_429_owned_by_rate_limit_layer() {
     let server = MockServer::start().await;
     // 429 is owned end-to-end by the rate-limit layer, not this generic retry
     // layer. With the rate limiter's own 429 retries turned off, a 429 is tried
-    // exactly once and surfaces as `Error::RateLimited` — proving the generic
-    // transient-retry layer does not *also* back off on it (otherwise we'd see
-    // extra attempts and an `Error::Api`).
+    // exactly once and surfaces as a transient `RateLimited` — proving the
+    // generic transient-retry layer does not *also* back off on it (otherwise
+    // we'd see extra attempts).
     Mock::given(method("GET"))
         .and(path("/health"))
         .respond_with(ResponseTemplate::new(429).set_body_json(serde_json::json!({
@@ -182,7 +188,10 @@ async fn does_not_retry_429_owned_by_rate_limit_layer() {
         .with_retry(fast_retry())
         .with_rate_limit(RateLimit::new(10.0).with_max_retries(0));
     let err = Client::new(cfg).health_check().await.unwrap_err();
-    assert!(matches!(err, Error::RateLimited { .. }));
+    assert!(matches!(
+        err,
+        Error::Transient(nexus_exchange::TransientError::RateLimited { .. })
+    ));
 }
 
 #[tokio::test]
@@ -199,5 +208,8 @@ async fn disabled_retry_makes_a_single_attempt() {
         .health_check()
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::Api { status: 503, .. }));
+    assert!(matches!(
+        err,
+        Error::Transient(nexus_exchange::TransientError::Unavailable { status: 503, .. })
+    ));
 }

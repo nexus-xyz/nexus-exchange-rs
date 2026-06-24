@@ -217,7 +217,13 @@ async fn out_of_sync_is_surfaced_and_clears_the_resume_cursor() {
 async fn private_channel_without_credentials_fails_fast() {
     let client = Client::new(Config::with_base_url("http://unused"));
     let err = client.subscribe(vec![Channel::Orders]).unwrap_err();
-    assert!(matches!(err, Error::Auth(_)), "got {err:?}");
+    assert!(
+        matches!(
+            err,
+            Error::Terminal(nexus_exchange::TerminalError::Credentials(_))
+        ),
+        "got {err:?}"
+    );
 }
 
 #[tokio::test]
@@ -267,7 +273,7 @@ async fn backpressure_surfaces_lagged_and_preserves_order() {
                 expected += 1;
                 delivered += 1;
             }
-            Some(Err(Error::Lagged { dropped })) => {
+            Some(Err(Error::Transient(nexus_exchange::TransientError::Lagged { dropped }))) => {
                 assert!(dropped > 0);
                 expected += dropped;
                 lagged += dropped;

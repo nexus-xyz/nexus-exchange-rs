@@ -122,11 +122,12 @@ impl Client {
             {
                 Ok(resp) => resp,
                 Err(e) => {
-                    // Only connect/timeout transport errors are transient; a
-                    // mid-body-read failure is not, and exhausted backoff
-                    // surfaces the error.
-                    let err = Error::Http(e);
-                    if err.is_transient() {
+                    // A transport failure at the send site (connect/DNS/TLS or
+                    // a per-attempt timeout) is transient; classify it through
+                    // the taxonomy and retry until backoff is exhausted, then
+                    // surface the error.
+                    let err = Error::from(e);
+                    if err.is_retryable() {
                         if let Some(delay) = transient.next() {
                             tokio::time::sleep(delay).await;
                             continue;
@@ -148,15 +149,19 @@ impl Client {
                     tokio::time::sleep(info.wait(backoff)).await;
                     continue;
                 }
-                return Err(Error::RateLimited {
+                return Err(crate::error::TransientError::RateLimited {
                     retry_after: info.retry_after,
-                });
+                }
+                .into());
             }
 
             // A 5xx / 408 response is transient: retry per the backoff before
-            // giving up. Success and terminal errors return unchanged.
+            // giving up. Success and terminal errors return unchanged. The 429
+            // path above already returned, so `handle` never yields a
+            // `RateLimited` here — the rate-limit layer stays the sole owner of
+            // 429 and the two layers never double-retry it.
             match self.handle(resp).await {
-                Err(err) if err.is_transient() => {
+                Err(err) if err.is_retryable() => {
                     if let Some(delay) = transient.next() {
                         tokio::time::sleep(delay).await;
                         continue;
@@ -246,7 +251,7 @@ impl Client {
         self.config
             .credentials
             .as_deref()
-            .ok_or_else(|| Error::Auth("this endpoint requires credentials".into()))
+            .ok_or_else(|| Error::credentials("this endpoint requires credentials"))
     }
 
     /// Next millisecond timestamp/nonce from the configured [`Nonce`] source.
@@ -305,22 +310,23 @@ impl Client {
     /// Decode a response, mapping the `{ code, message }` envelope on non-2xx.
     async fn handle<T: DeserializeOwned>(&self, resp: reqwest::Response) -> Result<T> {
         let status = resp.status();
+        // Read the Retry-After hint before the response is consumed by `bytes()`.
+        let retry_after = parse_retry_after(resp.headers());
         let bytes = resp.bytes().await?;
         if status.is_success() {
-            Ok(serde_json::from_slice(&bytes)?)
-        } else if let Ok(env) = serde_json::from_slice::<ApiErrorBody>(&bytes) {
-            Err(Error::Api {
-                status: status.as_u16(),
-                code: env.code,
-                message: env.message.unwrap_or_default(),
-            })
-        } else {
-            Err(Error::Api {
-                status: status.as_u16(),
-                code: status.as_str().to_string(),
-                message: String::from_utf8_lossy(&bytes).into_owned(),
-            })
+            return Ok(serde_json::from_slice(&bytes)?);
         }
+        // Decode the `{ code, message }` envelope; fall back to the status when
+        // the body isn't the expected shape. `Error::from_api` classifies into
+        // the terminal/transient trees.
+        let (code, message) = match serde_json::from_slice::<ApiErrorBody>(&bytes) {
+            Ok(env) => (env.code, env.message.unwrap_or_default()),
+            Err(_) => (
+                status.as_str().to_string(),
+                String::from_utf8_lossy(&bytes).into_owned(),
+            ),
+        };
+        Err(Error::from_api(status, retry_after, code, message))
     }
 
     /// Sync the client-side limiter to a server-reported rate-limit snapshot.
@@ -329,12 +335,59 @@ impl Client {
     }
 }
 
+/// Upper bound on a server-advised `Retry-After`. A buggy or hostile gateway
+/// could send an absurd value (`Retry-After: 99999999999`); without a cap a
+/// retry layer honoring [`crate::Error::retry_after`] would sleep effectively
+/// forever. Five minutes is well beyond any legitimate rate-limit window.
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(300);
+
+/// Parse a `Retry-After` header expressed in seconds (the form the gateway
+/// emits), clamped to [`MAX_RETRY_AFTER`]. HTTP-date forms are ignored (treated
+/// as absent).
+fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let secs = headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()?;
+    Some(Duration::from_secs(secs).min(MAX_RETRY_AFTER))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Config;
+    use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
     use wiremock::matchers::{header, header_exists, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn retry_after(value: &str) -> Option<Duration> {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_str(value).unwrap());
+        parse_retry_after(&headers)
+    }
+
+    #[test]
+    fn retry_after_parses_seconds() {
+        assert_eq!(retry_after("3"), Some(Duration::from_secs(3)));
+        assert_eq!(retry_after(" 12 "), Some(Duration::from_secs(12)));
+    }
+
+    #[test]
+    fn retry_after_clamps_unbounded_values() {
+        // A hostile/buggy gateway can't make a retry layer sleep forever.
+        assert_eq!(retry_after("99999999999"), Some(MAX_RETRY_AFTER));
+        assert_eq!(retry_after("301"), Some(MAX_RETRY_AFTER));
+        assert_eq!(retry_after("300"), Some(MAX_RETRY_AFTER));
+    }
+
+    #[test]
+    fn retry_after_ignores_non_numeric_and_dates() {
+        assert_eq!(retry_after("Wed, 21 Oct 2015 07:28:00 GMT"), None);
+        assert_eq!(retry_after("garbage"), None);
+    }
 
     /// The SDK sends its descriptive default `User-Agent` so the server can
     /// attribute traffic to the Rust SDK rather than reqwest's generic default.

@@ -213,5 +213,8 @@ fn order_error_converts_into_crate_error() {
         .validate_order(dec!(50000.3), dec!(1.0))
         .unwrap_err()
         .into();
-    assert!(matches!(err, nexus_exchange::Error::InvalidOrder(_)));
+    assert!(matches!(
+        err,
+        nexus_exchange::Error::Terminal(nexus_exchange::TerminalError::OrderValidation(_))
+    ));
 }

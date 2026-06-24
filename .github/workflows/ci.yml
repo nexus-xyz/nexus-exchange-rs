@@ -158,9 +158,48 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Flags public-API breaking changes vs the latest published release so
-      # they're visible at review time. Intentionally NOT a required check: a
-      # planned, batched break is allowed to merge — but for renames prefer a
+        with:
+          # `baseline-rev` below diffs against the PR's merge base, so that
+          # commit must be in history.
+          fetch-depth: 0
+      # Detect public-API breaking changes vs the PR's base (main), so each PR is
+      # judged only on the delta IT introduces — not on breaks already merged but
+      # not yet released (which is why this check used to be red on every PR).
+      #
+      # Policy: an intentional break is fine AS LONG AS it is DECLARED — a
+      # conventional-commit `!` (e.g. `feat!:`) in the PR title, or a
+      # `BREAKING CHANGE:` footer in the body — so release-plz computes the right
+      # version bump. We fail ONLY on an *undeclared* break. For renames prefer a
       # #[deprecated] alias over removal. See CONTRIBUTING.md
       # ("Compatibility & deprecations").
-      - uses: obi1kenobi/cargo-semver-checks-action@v2
+      - id: semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        continue-on-error: true
+        with:
+          baseline-rev: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
+      - name: Require breaking changes to be declared
+        if: github.event_name == 'pull_request'
+        env:
+          OUTCOME: ${{ steps.semver.outcome }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "✅ No breaking public-API change vs base."
+            exit 0
+          fi
+          # A break was detected — require it to be declared so release-plz bumps.
+          # Conventional-commit `!` before the colon: feat!:, fix(scope)!:, …
+          # Match the type prefix case-insensitively so 'Feat!:'/'Fix!:' count too.
+          if printf '%s' "$PR_TITLE" | grep -iqE '^[a-z]+(\([^)]*\))?!:' \
+            || printf '%s\n' "$PR_BODY" | grep -q 'BREAKING CHANGE:'; then
+            echo "✅ Breaking API change detected AND declared (\`!\` / BREAKING CHANGE)."
+            echo "   release-plz will bump the version accordingly."
+            exit 0
+          fi
+          echo "::error::Breaking public-API change detected but NOT declared."
+          echo "Mark the PR title as a breaking change (e.g. 'feat!: …') or add a"
+          echo "'BREAKING CHANGE:' footer so release-plz bumps the version — or keep"
+          echo "compatibility with a #[deprecated] alias instead of removing/renaming."
+          exit 1

@@ -175,7 +175,13 @@ impl Client {
 
     /// Unauthenticated `POST` with a JSON body — used by the wallet-signed auth
     /// flows (`/auth/login`, `/agents/register`), where authorization travels
-    /// in the request body rather than HMAC headers. Not proactively metered.
+    /// in the request body rather than HMAC headers.
+    ///
+    /// Not auto-retried: a `POST` is non-idempotent, so replaying it after a
+    /// lost response could double-submit. Each attempt is still bounded by
+    /// [`Config::with_timeout`]. No credentials are attached and the rate-limit
+    /// bucket is not charged — these are bootstrap calls made before the caller
+    /// holds a key.
     pub(crate) async fn post_unsigned<B: Serialize, T: DeserializeOwned>(
         &self,
         path: &str,
@@ -185,6 +191,7 @@ impl Client {
         let req = self
             .http
             .post(format!("{}{}", self.config.base_url, path))
+            .timeout(self.config.timeout)
             .header("content-type", "application/json")
             .body(body_bytes);
         self.handle(req.send().await?).await

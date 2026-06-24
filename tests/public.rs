@@ -65,17 +65,18 @@ async fn error_envelope_is_decoded() {
         .await;
 
     let err = client(server.uri()).fetch_ticker("NOPE").await.unwrap_err();
+    // A 404 with an unmodeled code classifies as a terminal BadRequest that
+    // still carries the server's machine-readable code + message.
+    assert!(!err.is_retryable());
     match err {
-        nexus_exchange::Error::Api {
-            status,
+        nexus_exchange::Error::Terminal(nexus_exchange::TerminalError::BadRequest {
             code,
             message,
-        } => {
-            assert_eq!(status, 404);
+        }) => {
             assert_eq!(code, "market_not_found");
             assert_eq!(message, "no such market");
         }
-        other => panic!("expected Api error, got {other:?}"),
+        other => panic!("expected Terminal(BadRequest), got {other:?}"),
     }
 }
 

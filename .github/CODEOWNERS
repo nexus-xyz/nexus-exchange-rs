@@ -1,10 +1,5 @@
-# Code owners for nexus-exchange-rs.
-#
-# Order matters: the last matching pattern takes precedence. The catch-all
-# below routes every PR to the default reviewers; add more specific rules above
-# it as the team and codebase grow.
-#
+# Default reviewers. Any member of @nexus-xyz/eng can review and unblock — no
+# single-person bottleneck. @Luc-Campos (SDK lead) and @collinjackson are listed
+# explicitly so both are auto-requested on every PR.
 # Docs: https://docs.github.com/articles/about-code-owners
-
-# Default reviewers for the whole repository.
-*       @Luc-Campos @collinjackson
+* @nexus-xyz/eng @Luc-Campos @collinjackson

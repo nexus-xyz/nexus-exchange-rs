@@ -1,5 +1,7 @@
 # nexus-exchange
 
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](#license)
+
 Official Rust SDK for the [Nexus Exchange](https://exchange.nexus.xyz) API — a
 thin, idiomatic wrapper over the public REST + WebSocket API.
 
@@ -40,11 +42,19 @@ environment and default to a non-production network where they mutate state.
 
 ## API version
 
-This SDK targets a specific released version of the Exchange API spec, pinned in
-[`.api-version`](./.api-version). The spec itself lives in
-[`nexus-xyz/nexus-exchange-api`](https://github.com/nexus-xyz/nexus-exchange-api);
-this repo does not vendor a copy — CI fetches the pinned release to check for
-drift.
+<!-- api-version-sync:start -->
+
+Currently targets Exchange API spec **`v0.4.0`**.
+
+<!-- api-version-sync:end -->
+
+The pinned version lives in [`.api-version`](./.api-version); the spec itself is
+published by
+[`nexus-xyz/nexus-exchange-api`](https://github.com/nexus-xyz/nexus-exchange-api).
+This repo does not vendor a copy — `spec-drift` CI fetches the pinned release to
+check for drift, and the scheduled `api-version-sync` workflow opens a PR when a
+newer spec releases. The line above is bot-managed; the table below is
+maintained by hand when an SDK release ships a new pin.
 
 | SDK version | API spec |
 |---|---|

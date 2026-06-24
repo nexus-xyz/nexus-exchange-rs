@@ -29,7 +29,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{Error, Result};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use secrecy::{ExposeSecret, SecretString};
 use sha2::{Digest, Sha256};
 
@@ -145,7 +145,7 @@ impl Credential for Credentials {
         match self {
             Credentials::ApiKey { key_id, secret } => {
                 let secret_bytes = hex::decode(secret.expose_secret().trim_start_matches("0x"))
-                    .map_err(|_| Error::Auth("API key secret must be hex".into()))?;
+                    .map_err(|_| Error::credentials("API key secret must be hex"))?;
                 let body_hash = hex::encode(Sha256::digest(ctx.body));
                 let ts = ctx.timestamp_ms.to_string();
                 let canonical = format!(
@@ -155,7 +155,7 @@ impl Credential for Credentials {
                     ctx.query,
                 );
                 let mut mac = Hmac::<Sha256>::new_from_slice(&secret_bytes)
-                    .map_err(|_| Error::Auth("invalid HMAC key".into()))?;
+                    .map_err(|_| Error::credentials("invalid HMAC key"))?;
                 mac.update(canonical.as_bytes());
                 let signature = hex::encode(mac.finalize().into_bytes());
                 Ok(vec![
@@ -249,7 +249,7 @@ mod tests {
         let creds = Credentials::api_key("nx_test", "not-hex");
         assert!(matches!(
             creds.auth_headers(&ctx("GET", "/keys", "", b"")),
-            Err(Error::Auth(_))
+            Err(Error::Terminal(crate::TerminalError::Credentials(_)))
         ));
     }
 

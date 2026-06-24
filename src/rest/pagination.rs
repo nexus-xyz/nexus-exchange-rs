@@ -412,15 +412,11 @@ mod tests {
     #[tokio::test]
     async fn errors_propagate_and_halt_paging() {
         let pager = Paginator::<u64>::new(move |_req| async move {
-            Err(Error::Api {
-                status: 429,
-                code: "rate_limited".into(),
-                message: "slow down".into(),
-            })
+            Err(crate::TransientError::RateLimited { retry_after: None }.into())
         });
         let mut stream = Box::pin(pager.into_stream());
         let first = stream.next().await.unwrap();
-        assert!(matches!(first, Err(Error::Api { .. })));
+        assert!(matches!(first, Err(Error::Transient(_))));
     }
 
     /// Build a paginator whose closure errors after `ok_pages` successful pages.
@@ -437,11 +433,11 @@ mod tests {
                         Some(Cursor::new((n + 1).to_string())),
                     ))
                 } else {
-                    Err(Error::Api {
+                    Err(crate::TransientError::Unavailable {
                         status: 500,
-                        code: "boom".into(),
                         message: "kaboom".into(),
-                    })
+                    }
+                    .into())
                 }
             }
         })
@@ -456,14 +452,14 @@ mod tests {
         let p1 = pager.next_page().await.unwrap().unwrap();
         assert_eq!(p1.items, vec![0]);
         // Second fetch errors and surfaces through next_page.
-        assert!(matches!(pager.next_page().await, Err(Error::Api { .. })));
+        assert!(matches!(pager.next_page().await, Err(Error::Transient(_))));
     }
 
     #[tokio::test]
     async fn errors_propagate_through_all() {
         let calls = Arc::new(AtomicUsize::new(0));
         let pager = errors_after(2, calls);
-        assert!(matches!(pager.all().await, Err(Error::Api { .. })));
+        assert!(matches!(pager.all().await, Err(Error::Transient(_))));
     }
 
     #[tokio::test]
@@ -568,7 +564,10 @@ mod tests {
         let pager = errors_after(0, Arc::clone(&calls));
         let mut stream = Box::pin(pager.into_stream());
 
-        assert!(matches!(stream.next().await, Some(Err(Error::Api { .. }))));
+        assert!(matches!(
+            stream.next().await,
+            Some(Err(Error::Transient(_)))
+        ));
         // After the error the fused stream yields `None`, not another fetch.
         assert!(stream.next().await.is_none());
         assert_eq!(calls.load(Ordering::SeqCst), 1);

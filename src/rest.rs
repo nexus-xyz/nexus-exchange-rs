@@ -57,7 +57,7 @@ fn encode_path_segment(value: &str) -> String {
 /// into the parent collection route.
 fn encoded_segment(value: &str, name: &str) -> Result<String> {
     if value.is_empty() {
-        return Err(Error::InvalidRequest(format!("{name} must not be empty")));
+        return Err(Error::invalid_request(format!("{name} must not be empty")));
     }
     Ok(encode_path_segment(value))
 }
@@ -67,7 +67,7 @@ fn encoded_segment(value: &str, name: &str) -> Result<String> {
 /// consistently as path-borne ones, just without the percent-encoding.
 fn require_non_empty(value: &str, name: &str) -> Result<()> {
     if value.is_empty() {
-        return Err(Error::InvalidRequest(format!("{name} must not be empty")));
+        return Err(Error::invalid_request(format!("{name} must not be empty")));
     }
     Ok(())
 }
@@ -419,7 +419,7 @@ impl Client {
     pub async fn set_leverage(&self, market_id: &str, leverage: u32) -> Result<LeverageUpdate> {
         require_non_empty(market_id, "market_id")?;
         if leverage == 0 {
-            return Err(Error::InvalidRequest("leverage must be at least 1".into()));
+            return Err(Error::invalid_request("leverage must be at least 1"));
         }
         self.signed_post(
             "/account/leverage",
@@ -451,8 +451,8 @@ impl Client {
     /// sent) so a stray no-op can't silently churn the order's queue priority.
     pub async fn amend_order(&self, order_id: &str, amend: &AmendOrder) -> Result<OrderResponse> {
         if !amend.has_changes() {
-            return Err(Error::InvalidRequest(
-                "amend_order requires at least one field to change".into(),
+            return Err(Error::invalid_request(
+                "amend_order requires at least one field to change",
             ));
         }
         let id = encoded_segment(order_id, "order_id")?;
@@ -465,8 +465,8 @@ impl Client {
     /// currently untyped in the spec. An empty batch is rejected locally.
     pub async fn cancel_orders(&self, order_ids: &[&str]) -> Result<serde_json::Value> {
         if order_ids.is_empty() {
-            return Err(Error::InvalidRequest(
-                "cancel_orders requires at least one order id".into(),
+            return Err(Error::invalid_request(
+                "cancel_orders requires at least one order id",
             ));
         }
         self.signed_post(
@@ -514,9 +514,7 @@ impl Client {
     /// locally before sending.
     pub async fn create_transfer(&self, transfer: &TransferRequest) -> Result<Transfer> {
         if transfer.amount <= Decimal::ZERO {
-            return Err(Error::InvalidRequest(
-                "transfer amount must be positive".into(),
-            ));
+            return Err(Error::invalid_request("transfer amount must be positive"));
         }
         self.signed_post("/transfers", transfer).await
     }

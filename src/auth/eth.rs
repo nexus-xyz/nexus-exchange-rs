@@ -73,7 +73,7 @@ pub struct EthSigner {
 impl EthSigner {
     /// Build a signer from a 32-byte hex private key (`0x`-prefix optional).
     ///
-    /// Returns [`Error::Auth`] if the key is not 32 bytes of valid hex or is not
+    /// Returns [`crate::TerminalError::Credentials`] if the key is not 32 bytes of valid hex or is not
     /// a valid secp256k1 scalar.
     pub fn from_hex(private_key: impl Into<String>) -> Result<Self> {
         let key = SecretString::from(private_key.into());
@@ -134,7 +134,7 @@ impl EthSigner {
         let key = signing_key(&self.key)?;
         let (sig, recid): (Signature, RecoveryId) = key
             .sign_prehash_recoverable(digest)
-            .map_err(|_| Error::Auth("failed to sign digest".into()))?;
+            .map_err(|_| Error::credentials("failed to sign digest"))?;
         let mut out = [0u8; 65];
         out[..64].copy_from_slice(&sig.to_bytes());
         out[64] = 27 + recid.to_byte();
@@ -147,12 +147,12 @@ impl EthSigner {
 fn signing_key(key: &SecretString) -> Result<SigningKey> {
     let stripped = strip_0x(key.expose_secret());
     let bytes = Zeroizing::new(
-        hex::decode(stripped).map_err(|_| Error::Auth("private key must be hex".into()))?,
+        hex::decode(stripped).map_err(|_| Error::credentials("private key must be hex"))?,
     );
     if bytes.len() != 32 {
-        return Err(Error::Auth("private key must be 32 bytes".into()));
+        return Err(Error::credentials("private key must be 32 bytes"));
     }
-    SigningKey::from_slice(&bytes).map_err(|_| Error::Auth("invalid secp256k1 private key".into()))
+    SigningKey::from_slice(&bytes).map_err(|_| Error::credentials("invalid secp256k1 private key"))
 }
 
 /// Derive the 20-byte Ethereum address: `keccak256(uncompressed_pubkey[1..])[12..]`.
@@ -236,11 +236,9 @@ fn strip_0x(s: &str) -> &str {
 /// Parse a `0x`-prefixed 20-byte hex address.
 fn parse_address(s: &str) -> Result<[u8; 20]> {
     let bytes = hex::decode(strip_0x(s))
-        .map_err(|_| Error::InvalidRequest("agent address must be hex".into()))?;
+        .map_err(|_| Error::invalid_request("agent address must be hex"))?;
     if bytes.len() != 20 {
-        return Err(Error::InvalidRequest(
-            "agent address must be 20 bytes".into(),
-        ));
+        return Err(Error::invalid_request("agent address must be 20 bytes"));
     }
     let mut a = [0u8; 20];
     a.copy_from_slice(&bytes);
@@ -277,8 +275,14 @@ mod tests {
 
     #[test]
     fn rejects_bad_key() {
-        assert!(matches!(EthSigner::from_hex("zz"), Err(Error::Auth(_))));
-        assert!(matches!(EthSigner::from_hex("00"), Err(Error::Auth(_))));
+        assert!(matches!(
+            EthSigner::from_hex("zz"),
+            Err(Error::Terminal(crate::TerminalError::Credentials(_)))
+        ));
+        assert!(matches!(
+            EthSigner::from_hex("00"),
+            Err(Error::Terminal(crate::TerminalError::Credentials(_)))
+        ));
     }
 
     #[test]
@@ -363,7 +367,7 @@ mod tests {
         let signer = EthSigner::from_hex(TEST_KEY).unwrap();
         assert!(matches!(
             signer.register_agent("0x1234", 1, 1, 1, None),
-            Err(Error::InvalidRequest(_))
+            Err(Error::Terminal(crate::TerminalError::InvalidRequest(_)))
         ));
     }
 

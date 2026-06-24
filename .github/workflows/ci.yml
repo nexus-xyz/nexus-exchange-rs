@@ -201,24 +201,63 @@ jobs:
       # version bump. We fail ONLY on an *undeclared* break. For renames prefer a
       # #[deprecated] alias over removal. See CONTRIBUTING.md
       # ("Compatibility & deprecations").
-      - id: semver
-        uses: obi1kenobi/cargo-semver-checks-action@v2
-        continue-on-error: true
+      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # stable
         with:
-          baseline-rev: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
-      - name: Require breaking changes to be declared
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      # Install the CLI directly instead of the wrapper action so this job — not
+      # the action — owns interpreting the result. The wrapper exposes no output
+      # that separates "ran and found a break" from "the tool itself errored",
+      # and its step `outcome` is `failure` in BOTH cases. cargo-semver-checks
+      # also exits 1 for both, so the exit code alone can't tell them apart
+      # either — we disambiguate on the tool's own structured report below.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
+      # Run the check, capturing combined output and exit code without aborting
+      # the step (we classify the result ourselves in the next step).
+      - id: semver
+        run: |
+          set +e
+          cargo semver-checks \
+            --baseline-rev "${{ github.event.pull_request.base.sha || 'HEAD~1' }}" \
+            2>&1 | tee semver-output.txt
+          # Capture the CLI's exit code, not tee's.
+          code="${PIPESTATUS[0]}"
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          echo "cargo-semver-checks exited with $code"
+      - name: Classify result and require breaking changes to be declared
         if: github.event_name == 'pull_request'
         env:
-          OUTCOME: ${{ steps.semver.outcome }}
+          EXIT_CODE: ${{ steps.semver.outputs.exit_code }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           set -euo pipefail
-          if [ "$OUTCOME" != "failure" ]; then
+
+          # Exit 0: the tool ran and found no breaking change. Done.
+          if [ "$EXIT_CODE" = "0" ]; then
             echo "✅ No breaking public-API change vs base."
             exit 0
           fi
-          # A break was detected — require it to be declared so release-plz bumps.
+
+          # cargo-semver-checks exits 1 for BOTH a detected break AND its own
+          # internal errors (bad baseline rev, build failure, panic, network).
+          # Distinguish them on the tool's structured report: a genuine break
+          # prints the summary
+          #   "semver requires new {major|minor} version: N major and M minor checks failed"
+          # whereas an infra/tool error aborts with an `error: …` line and never
+          # emits that summary. Anything other than exit 0/1, or exit 1 without
+          # the summary, is a tool/infra failure — fail loudly and distinctly so
+          # it is NOT misread as an undeclared break (and vice versa).
+          if [ "$EXIT_CODE" != "1" ] \
+            || ! grep -Eq 'semver requires new (major|minor) version' semver-output.txt; then
+            echo "::error::cargo-semver-checks did not run successfully (exit ${EXIT_CODE}); this is a tooling/infra failure, not a detected breaking change. Re-run; if it persists, investigate the baseline fetch / build."
+            exit 1
+          fi
+
+          # A real break was detected — require it to be declared so release-plz
+          # computes the right version bump.
           # Conventional-commit `!` before the colon: feat!:, fix(scope)!:, …
           # Match the type prefix case-insensitively so 'Feat!:'/'Fix!:' count too.
           if printf '%s' "$PR_TITLE" | grep -iqE '^[a-z]+(\([^)]*\))?!:' \

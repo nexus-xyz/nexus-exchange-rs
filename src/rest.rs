@@ -203,12 +203,13 @@ impl Client {
         address: &str,
         limit: Option<u32>,
     ) -> Result<Vec<AdlEvent>> {
+        let addr = encoded_segment(address, "address")?;
         let mut query = Vec::new();
         if let Some(limit) = limit {
             query.push(("limit", limit.to_string()));
         }
         self.get(
-            &format!("/account/{address}/adl-history"),
+            &format!("/account/{addr}/adl-history"),
             &query,
             COST_DEFAULT,
         )

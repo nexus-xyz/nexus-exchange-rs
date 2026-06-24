@@ -405,3 +405,17 @@ async fn fetch_account_adl_history_sends_limit() {
         .unwrap();
     assert!(ev.is_empty());
 }
+
+#[tokio::test]
+async fn fetch_account_adl_history_rejects_empty_address() {
+    // An empty address must be rejected client-side rather than collapsing
+    // `/account//adl-history` into a different route. No request is made.
+    let err = client("http://127.0.0.1:1".to_string())
+        .fetch_account_adl_history("", None)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        nexus_exchange::Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+    ));
+}

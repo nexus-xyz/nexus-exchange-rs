@@ -725,7 +725,14 @@ pub enum OrderResult {
     Placed {
         /// The created or updated order.
         order: Order,
-        /// Immediate fills (untyped, mirroring [`OrderResponse::fills`]).
+        /// Immediate fills, left untyped (mirroring [`OrderResponse::fills`]).
+        ///
+        /// These ride through verbatim from the engine's internal fill record,
+        /// whose shape (`quantity`, `maker_order_id`/`taker_order_id`, no `fee`)
+        /// differs from the trade-history [`Fill`] returned by
+        /// [`fetch_my_trades`](crate::Client::fetch_my_trades) (`size`,
+        /// `order_id`, `fee`). Decoding these as [`Fill`] would fail, so they
+        /// stay [`serde_json::Value`] pending a verified typed-fills pass.
         #[serde(default)]
         fills: Vec<serde_json::Value>,
     },

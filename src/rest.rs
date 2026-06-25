@@ -17,8 +17,9 @@ use crate::types::{
     AccountSummary, AdlEvent, AgentInfo, AgentRegistered, AmendOrder, ApiKeyInfo, CreatedApiKey,
     CreditResult, Decimal, DepositResult, Fill, FundingPayment, FundingSample, HealthStatus,
     LeverageUpdate, LoginResponse, MarginMode, MarginModeUpdate, MarkPrice, Market, MarketStatus,
-    MarketSummary, Ohlcv, Order, OrderBook, OrderRequest, OrderResponse, Position, RateLimitStatus,
-    SubAccount, Ticker, TierOverride, Trade, Transfer, TransferRequest, Withdrawal, WsToken,
+    MarketSummary, Ohlcv, Order, OrderBook, OrderRequest, OrderResponse, OrderResult, Position,
+    RateLimitStatus, SubAccount, Ticker, TierOverride, Trade, Transfer, TransferRequest,
+    Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
 
@@ -335,9 +336,16 @@ impl Client {
         self.signed_post("/orders", order).await
     }
 
-    /// Submit a batch of orders (sequential, non-atomic). Requires credentials.
-    /// The per-order result array is currently untyped in the spec.
-    pub async fn create_orders(&self, orders: &[OrderRequest]) -> Result<serde_json::Value> {
+    /// Submit a batch of orders (`POST /orders/batch`). Requires credentials.
+    ///
+    /// Orders are processed sequentially and non-atomically: an early order
+    /// consuming margin can reject a later one, and a per-order rejection does
+    /// not abort the batch. The returned [`OrderResult`] array preserves request
+    /// order, with each entry independently reporting a placed order or a
+    /// per-order rejection — match the variant (or use
+    /// [`OrderResult::succeeded`]) per entry rather than assuming the whole
+    /// batch succeeded.
+    pub async fn create_orders(&self, orders: &[OrderRequest]) -> Result<Vec<OrderResult>> {
         self.signed_post("/orders/batch", &orders).await
     }
 
@@ -488,9 +496,12 @@ impl Client {
     }
 
     /// Cancel a batch of orders by id (`POST /orders/batch-cancel`). Requires
-    /// credentials. Sequential and non-atomic, mirroring
-    /// [`create_orders`](Self::create_orders); the per-order result array is
-    /// currently untyped in the spec. An empty batch is rejected locally.
+    /// credentials. Sequential and non-atomic, like
+    /// [`create_orders`](Self::create_orders). The response is left untyped: this
+    /// endpoint is ahead of the pinned spec and returns a different shape from
+    /// the create batch (a cancellation summary, not a per-order result array),
+    /// so it is not modeled by [`OrderResult`]. An empty batch is rejected
+    /// locally.
     pub async fn cancel_orders(&self, order_ids: &[&str]) -> Result<serde_json::Value> {
         if order_ids.is_empty() {
             return Err(Error::invalid_request(

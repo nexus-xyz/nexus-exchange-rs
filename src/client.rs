@@ -244,14 +244,26 @@ impl Client {
             .await
     }
 
-    /// Signed `DELETE` (no body).
+    /// Signed `DELETE` (no body, no query).
     pub(crate) async fn signed_delete<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-        self.signed_no_body(reqwest::Method::DELETE, path).await
+        self.signed_no_body(reqwest::Method::DELETE, path, &[])
+            .await
+    }
+
+    /// Signed `DELETE` carrying a query string (e.g. a market-scoped cancel).
+    /// Signs the exact path + query that is sent, exactly like [`signed_get`].
+    pub(crate) async fn signed_delete_with_query<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<T> {
+        self.signed_no_body(reqwest::Method::DELETE, path, query)
+            .await
     }
 
     /// Signed `POST` with no body (e.g. token mint).
     pub(crate) async fn signed_post_empty<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-        self.signed_no_body(reqwest::Method::POST, path).await
+        self.signed_no_body(reqwest::Method::POST, path, &[]).await
     }
 
     fn creds(&self) -> Result<&dyn crate::auth::Credential> {
@@ -296,18 +308,27 @@ impl Client {
         &self,
         method: reqwest::Method,
         path: &str,
+        query: &[(&str, String)],
     ) -> Result<T> {
+        // Propagate an encode failure rather than collapsing to an empty query:
+        // for a scoped DELETE (e.g. `cancel_orders_for_market`) a silently empty
+        // query would widen `DELETE /orders?market_id=…` into the account-wide
+        // `DELETE /orders`, defeating the very guard the scoped call exists for.
+        let qs = serde_urlencoded::to_string(query)
+            .map_err(|e| Error::invalid_request(format!("could not encode query string: {e}")))?;
         let headers = self.creds()?.auth_headers(&SigningContext {
             method: method.as_str(),
             path,
-            query: "",
+            query: &qs,
             body: b"",
             timestamp_ms: self.nonce(),
         })?;
-        let mut req = self
-            .http
-            .request(method, format!("{}{}", self.config.base_url, path))
-            .timeout(self.config.timeout);
+        let url = if qs.is_empty() {
+            format!("{}{}", self.config.base_url, path)
+        } else {
+            format!("{}{}?{}", self.config.base_url, path, qs)
+        };
+        let mut req = self.http.request(method, url).timeout(self.config.timeout);
         for (name, value) in &headers {
             req = req.header(*name, value);
         }

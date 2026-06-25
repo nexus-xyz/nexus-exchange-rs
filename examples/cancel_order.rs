@@ -1,10 +1,13 @@
-//! Cancel a resting order by id, or cancel every open order at once.
+//! Cancel a resting order by id, cancel one market, or cancel every open order.
 //!
 //! ```text
 //! # cancel one order (id from the place_order example):
 //! NEXUS_API_KEY=nx_… NEXUS_API_SECRET=<hex> cargo run --example cancel_order <ORDER_ID>
 //!
-//! # cancel ALL open orders (omit the id):
+//! # cancel every open order on ONE market (the market-maker reprice path):
+//! NEXUS_API_KEY=nx_… NEXUS_API_SECRET=<hex> cargo run --example cancel_order --market BTC-USDX-PERP
+//!
+//! # cancel ALL open orders, account-wide (omit every argument):
 //! NEXUS_API_KEY=nx_… NEXUS_API_SECRET=<hex> cargo run --example cancel_order
 //! ```
 //!
@@ -18,12 +21,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::var("NEXUS_API_SECRET")?,
     ));
 
-    // The order id is an optional positional argument. With it, cancel that one
-    // order; without it, cancel everything — so the destructive "cancel all"
-    // path is opt-in by omission rather than the default for a stray run.
-    match std::env::args().nth(1) {
+    // Argument shapes, narrowest scope first so the broadest, most destructive
+    // "cancel all" path is opt-in by omission rather than the default for a
+    // stray run:
+    //   <ORDER_ID>           cancel one order
+    //   --market <MARKET_ID> cancel every open order on that one market
+    //   (no args)            cancel everything, account-wide
+    let mut args = std::env::args().skip(1);
+    match args.next().as_deref() {
+        Some("--market") => {
+            let market_id = args
+                .next()
+                .ok_or("--market requires a market id, e.g. BTC-USDX-PERP")?;
+            let ack = client.cancel_orders_for_market(&market_id).await?;
+            println!("cancelled all open orders on {market_id}: {ack}");
+        }
         Some(order_id) => {
-            let ack = client.cancel_order(&order_id).await?;
+            let ack = client.cancel_order(order_id).await?;
             println!("cancelled {order_id}: {ack}");
         }
         None => {

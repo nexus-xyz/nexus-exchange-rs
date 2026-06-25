@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URL (unknown network) it asks the caller to pick a primitive explicitly. Adds
   `Network::is_production()` and `Config::network()`. `deposit` now also rejects
   a non-positive amount locally (ENG-4200).
+- Market-scoped cancel: `Client::cancel_orders_for_market(market_id)` flattens a
+  single market in one round-trip (`DELETE /orders?market_id=`), instead of
+  `fetch_open_orders` → filter client-side → `cancel_orders`. `cancel_all_orders`
+  is unchanged and still cancels account-wide. An empty `market_id` is rejected
+  locally so a per-market cancel can never silently widen into a full account
+  flatten (ENG-4198).
 - Typed, protocol-aware streaming client: `Client::subscribe` returns a
   `MessageStream` (a `Stream` of decoded `ServerMessage`s) for the op-envelope
   protocol, covering public per-market channels (trades/book/candles) and

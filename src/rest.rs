@@ -62,12 +62,17 @@ fn encoded_segment(value: &str, name: &str) -> Result<String> {
     Ok(encode_path_segment(value))
 }
 
-/// Reject an empty identifier carried in a request *body* (not the path).
-/// Mirrors the [`encoded_segment`] guard so body-borne ids are validated as
-/// consistently as path-borne ones, just without the percent-encoding.
+/// Reject a blank identifier carried in a request *body* or query (not the
+/// path). Mirrors the [`encoded_segment`] guard so body-borne ids are validated
+/// as consistently as path-borne ones, just without the percent-encoding.
+///
+/// Rejects whitespace-only as well as empty: a blank identifier is never a
+/// legitimate market/order id, and for a scoped cancel a `" "` market would
+/// otherwise be sent (server-rejected as unknown) — tightening it here keeps
+/// the rejection local and the "no silent account-wide flatten" guard airtight.
 fn require_non_empty(value: &str, name: &str) -> Result<()> {
-    if value.is_empty() {
-        return Err(Error::invalid_request(format!("{name} must not be empty")));
+    if value.trim().is_empty() {
+        return Err(Error::invalid_request(format!("{name} must not be blank")));
     }
     Ok(())
 }
@@ -342,8 +347,31 @@ impl Client {
     }
 
     /// Cancel all open orders for the account. Requires credentials.
+    ///
+    /// To flatten a single market instead, use
+    /// [`cancel_orders_for_market`](Self::cancel_orders_for_market) — it saves
+    /// the `fetch_open_orders` → filter → `cancel_orders` round-trip on the
+    /// hot reprice path.
     pub async fn cancel_all_orders(&self) -> Result<serde_json::Value> {
         self.signed_delete("/orders").await
+    }
+
+    /// Cancel all open orders for a single market (`DELETE /orders?market_id=`).
+    /// Requires credentials.
+    ///
+    /// Maps to the per-market reprice loop of a market maker quoting many
+    /// markets: flatten one market in a single round-trip rather than fetching
+    /// open orders, filtering client-side, and cancelling by id.
+    ///
+    /// An empty `market_id` is rejected locally and never sent: omitting the
+    /// filter on `DELETE /orders` cancels account-wide, so a blank market must
+    /// not be allowed to silently widen a per-market cancel into a full
+    /// account flatten. Use [`cancel_all_orders`](Self::cancel_all_orders)
+    /// when that account-wide cancel is what you actually want.
+    pub async fn cancel_orders_for_market(&self, market_id: &str) -> Result<serde_json::Value> {
+        require_non_empty(market_id, "market_id")?;
+        self.signed_delete_with_query("/orders", &[("market_id", market_id.to_string())])
+            .await
     }
 
     /// List open orders for the authenticated account. Requires credentials.

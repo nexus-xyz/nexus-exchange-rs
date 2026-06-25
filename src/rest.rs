@@ -356,8 +356,18 @@ impl Client {
         self.signed_get(&format!("/orders/{order_id}"), &[]).await
     }
 
-    /// Deposit USDX collateral. Requires credentials.
+    /// Deposit **real** USDX collateral (`POST /account/deposit`). Requires
+    /// credentials.
+    ///
+    /// This moves real funds and is the production funding path. To fund a
+    /// non-production (testnet) account, use the faucet
+    /// ([`claim_credit`](Self::claim_credit)) — or the network-aware
+    /// [`fund`](Self::fund) convenience, which routes to the right primitive.
+    /// A non-positive amount is rejected locally before sending.
     pub async fn deposit(&self, amount: Decimal) -> Result<DepositResult> {
+        if amount <= Decimal::ZERO {
+            return Err(Error::invalid_request("deposit amount must be positive"));
+        }
         self.signed_post(
             "/account/deposit",
             &serde_json::json!({ "amount": amount.to_string() }),
@@ -371,14 +381,58 @@ impl Client {
     }
 
     /// Claim synthetic (testnet) USDX from the faucet, up to the per-key daily
-    /// allowance. Omit `amount` to claim the full remaining allowance. Requires
-    /// credentials.
+    /// allowance (`POST /account/credit`). Omit `amount` to claim the full
+    /// remaining allowance. Requires credentials.
+    ///
+    /// This is the non-production funding path; the production counterpart that
+    /// moves real collateral is [`deposit`](Self::deposit). To pick between the
+    /// two by network automatically, see [`fund`](Self::fund).
     pub async fn claim_credit(&self, amount: Option<Decimal>) -> Result<CreditResult> {
         let body = match amount {
             Some(a) => serde_json::json!({ "amount": a.to_string() }),
             None => serde_json::json!({}),
         };
         self.signed_post("/account/credit", &body).await
+    }
+
+    /// Network-aware funding convenience: fund the account with `amount` USDX
+    /// using the primitive that fits the configured [`Network`](crate::Network), so callers
+    /// don't have to remember which of [`deposit`](Self::deposit) (real
+    /// collateral) vs [`claim_credit`](Self::claim_credit) (testnet faucet)
+    /// applies. Requires credentials.
+    ///
+    /// Routing:
+    /// - **Non-production** network ([`Network::is_production`](crate::Network::is_production) is `false`,
+    ///   i.e. [`Beta`](crate::Network::Beta) / [`Local`](crate::Network::Local)):
+    ///   claims `amount` from the testnet faucet ([`claim_credit`](Self::claim_credit)).
+    /// - **Production** ([`Network::Stable`](crate::Network::Stable)): rejected
+    ///   locally. `fund` will **never silently move real collateral** — depositing
+    ///   real funds must be an explicit, deliberate [`deposit`](Self::deposit)
+    ///   call, not a side effect of a convenience helper.
+    /// - **Unknown** network (client built with [`Config::with_base_url`](crate::Config::with_base_url),
+    ///   so the host's real-money character is unknown): rejected locally; call
+    ///   [`deposit`](Self::deposit) or [`claim_credit`](Self::claim_credit)
+    ///   explicitly.
+    ///
+    /// A non-positive `amount` is rejected locally. All rejections happen before
+    /// any request is sent.
+    pub async fn fund(&self, amount: Decimal) -> Result<CreditResult> {
+        if amount <= Decimal::ZERO {
+            return Err(Error::invalid_request("fund amount must be positive"));
+        }
+        match self.config.network {
+            Some(network) if !network.is_production() => self.claim_credit(Some(amount)).await,
+            Some(_) => Err(Error::invalid_request(
+                "fund() claims synthetic testnet credit and refuses to move real \
+                 collateral on a production network; call deposit() explicitly to \
+                 deposit real USDX",
+            )),
+            None => Err(Error::invalid_request(
+                "fund() needs a known Network to choose a funding primitive, but this \
+                 client was built with a custom base URL; call claim_credit() (testnet \
+                 faucet) or deposit() (real collateral) explicitly",
+            )),
+        }
     }
 
     /// Set an account's rate-limit tier (admin). Requires admin credentials.
@@ -587,5 +641,39 @@ mod tests {
         // Query and fragment delimiters are escaped, not honored.
         assert_eq!(encode_path_segment("k?a=1"), "k%3Fa%3D1");
         assert_eq!(encode_path_segment("k#frag"), "k%23frag");
+    }
+
+    // Routing a non-production `fund()` to the faucet needs both a declared
+    // `Network` and a mock-server base URL — a combination the public builders
+    // can't express (`with_base_url` carries no network). This in-crate test
+    // sets the `pub(crate)` base URL directly to assert the wiring: a
+    // non-production fund() POSTs the amount to the credit/faucet endpoint.
+    #[tokio::test]
+    async fn fund_on_non_production_claims_faucet_credit() {
+        use crate::{Client, Config, Network};
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/account/credit"))
+            .and(body_json(serde_json::json!({ "amount": "250" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "amount": "250", "credited_today": "250", "daily_limit": "500"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut config = Config::new(Network::Local).api_key(
+            "nx_test",
+            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+        );
+        config.base_url = server.uri();
+        let r = Client::new(config)
+            .fund("250".parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(r.amount.to_string(), "250");
     }
 }

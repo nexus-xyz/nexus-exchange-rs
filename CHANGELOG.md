@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Network-aware funding convenience `Client::fund(amount)`: routes to the
+  testnet faucet (`claim_credit`) on non-production networks so callers don't
+  have to remember which of `deposit` (real collateral) vs `claim_credit`
+  applies per network. On a production network (`Network::Stable`) it refuses
+  rather than silently moving real funds, and on a client built from a raw base
+  URL (unknown network) it asks the caller to pick a primitive explicitly. Adds
+  `Network::is_production()` and `Config::network()`. `deposit` now also rejects
+  a non-positive amount locally (ENG-4200).
 - Typed, protocol-aware streaming client: `Client::subscribe` returns a
   `MessageStream` (a `Stream` of decoded `ServerMessage`s) for the op-envelope
   protocol, covering public per-market channels (trades/book/candles) and

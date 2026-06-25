@@ -305,8 +305,31 @@ impl Client {
     }
 
     /// Cancel all open orders for the account. Requires credentials.
+    ///
+    /// To flatten a single market instead, use
+    /// [`cancel_orders_for_market`](Self::cancel_orders_for_market) — it saves
+    /// the `fetch_open_orders` → filter → `cancel_orders` round-trip on the
+    /// hot reprice path.
     pub async fn cancel_all_orders(&self) -> Result<serde_json::Value> {
         self.signed_delete("/orders").await
+    }
+
+    /// Cancel all open orders for a single market (`DELETE /orders?market_id=`).
+    /// Requires credentials.
+    ///
+    /// Maps to the per-market reprice loop of a market maker quoting many
+    /// markets: flatten one market in a single round-trip rather than fetching
+    /// open orders, filtering client-side, and cancelling by id.
+    ///
+    /// An empty `market_id` is rejected locally and never sent: omitting the
+    /// filter on `DELETE /orders` cancels account-wide, so a blank market must
+    /// not be allowed to silently widen a per-market cancel into a full
+    /// account flatten. Use [`cancel_all_orders`](Self::cancel_all_orders)
+    /// when that account-wide cancel is what you actually want.
+    pub async fn cancel_orders_for_market(&self, market_id: &str) -> Result<serde_json::Value> {
+        require_non_empty(market_id, "market_id")?;
+        self.signed_delete_with_query("/orders", &[("market_id", market_id.to_string())])
+            .await
     }
 
     /// List open orders for the authenticated account. Requires credentials.

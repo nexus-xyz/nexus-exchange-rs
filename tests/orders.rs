@@ -1,6 +1,9 @@
 use nexus_exchange::types::{Decimal, OrderRequest, Side, TimeInForce};
-use nexus_exchange::{Client, Config};
-use wiremock::matchers::{body_json, header, method, path};
+use nexus_exchange::{Client, Config, Error};
+use wiremock::matchers::{
+    body_json, body_string, header, header_exists, method, path, query_param,
+    query_param_is_missing,
+};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn authed(uri: String) -> Client {
@@ -74,4 +77,57 @@ async fn cancel_order_returns_ack() {
         .await;
     let ack = authed(server.uri()).cancel_order("o1").await.unwrap();
     assert_eq!(ack["status"], "Cancelled");
+}
+
+#[tokio::test]
+async fn cancel_all_orders_sends_no_market_filter() {
+    // Account-wide cancel must hit DELETE /orders with no body and, crucially,
+    // no `market_id` query param — otherwise it would scope to a market.
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/orders"))
+        .and(query_param_is_missing("market_id"))
+        .and(body_string(""))
+        .and(header_exists("x-signature"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "cancelled": 7 })),
+        )
+        .mount(&server)
+        .await;
+    let ack = authed(server.uri()).cancel_all_orders().await.unwrap();
+    assert_eq!(ack["cancelled"], 7);
+}
+
+#[tokio::test]
+async fn cancel_orders_for_market_scopes_to_market() {
+    // Market-scoped cancel hits the same DELETE /orders route but carries the
+    // `market_id` query param, and the request stays signed (x-signature) over
+    // the path+query that is actually sent.
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/orders"))
+        .and(query_param("market_id", "BTC-USDX-PERP"))
+        .and(body_string(""))
+        .and(header_exists("x-signature"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "cancelled": 3 })),
+        )
+        .mount(&server)
+        .await;
+    let ack = authed(server.uri())
+        .cancel_orders_for_market("BTC-USDX-PERP")
+        .await
+        .unwrap();
+    assert_eq!(ack["cancelled"], 3);
+}
+
+#[tokio::test]
+async fn cancel_orders_for_market_rejects_empty_market() {
+    // A blank market must be rejected locally (no request sent) so it can never
+    // silently widen into an account-wide flatten via the bare DELETE /orders.
+    let err = authed("http://127.0.0.1:1".to_string())
+        .cancel_orders_for_market("")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::InvalidRequest(_)));
 }

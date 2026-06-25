@@ -27,7 +27,7 @@ double as the primary docs. Run one with `cargo run --example <name>`:
 | `orderbook_snapshot` | no | Full order-book snapshot + spread |
 | `recent_trades` | no | Recent public trade prints |
 | `place_order` | yes | Normalize to tick/lot, then place a limit order |
-| `cancel_order` | yes | Cancel one order by id, or cancel all |
+| `cancel_order` | yes | Cancel one order by id, one market, or cancel all |
 | `account_balances` | yes | Balance, collateral, equity, margin |
 | `positions` | yes | Open positions with PnL and liquidation price |
 

@@ -62,12 +62,17 @@ fn encoded_segment(value: &str, name: &str) -> Result<String> {
     Ok(encode_path_segment(value))
 }
 
-/// Reject an empty identifier carried in a request *body* (not the path).
-/// Mirrors the [`encoded_segment`] guard so body-borne ids are validated as
-/// consistently as path-borne ones, just without the percent-encoding.
+/// Reject a blank identifier carried in a request *body* or query (not the
+/// path). Mirrors the [`encoded_segment`] guard so body-borne ids are validated
+/// as consistently as path-borne ones, just without the percent-encoding.
+///
+/// Rejects whitespace-only as well as empty: a blank identifier is never a
+/// legitimate market/order id, and for a scoped cancel a `" "` market would
+/// otherwise be sent (server-rejected as unknown) — tightening it here keeps
+/// the rejection local and the "no silent account-wide flatten" guard airtight.
 fn require_non_empty(value: &str, name: &str) -> Result<()> {
-    if value.is_empty() {
-        return Err(Error::invalid_request(format!("{name} must not be empty")));
+    if value.trim().is_empty() {
+        return Err(Error::invalid_request(format!("{name} must not be blank")));
     }
     Ok(())
 }

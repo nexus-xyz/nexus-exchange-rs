@@ -310,7 +310,12 @@ impl Client {
         path: &str,
         query: &[(&str, String)],
     ) -> Result<T> {
-        let qs = serde_urlencoded::to_string(query).unwrap_or_default();
+        // Propagate an encode failure rather than collapsing to an empty query:
+        // for a scoped DELETE (e.g. `cancel_orders_for_market`) a silently empty
+        // query would widen `DELETE /orders?market_id=…` into the account-wide
+        // `DELETE /orders`, defeating the very guard the scoped call exists for.
+        let qs = serde_urlencoded::to_string(query)
+            .map_err(|e| Error::invalid_request(format!("could not encode query string: {e}")))?;
         let headers = self.creds()?.auth_headers(&SigningContext {
             method: method.as_str(),
             path,

@@ -122,15 +122,18 @@ async fn cancel_orders_for_market_scopes_to_market() {
 }
 
 #[tokio::test]
-async fn cancel_orders_for_market_rejects_empty_market() {
-    // A blank market must be rejected locally (no request sent) so it can never
-    // silently widen into an account-wide flatten via the bare DELETE /orders.
-    let err = authed("http://127.0.0.1:1".to_string())
-        .cancel_orders_for_market("")
-        .await
-        .unwrap_err();
-    assert!(matches!(
-        err,
-        Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
-    ));
+async fn cancel_orders_for_market_rejects_blank_market() {
+    // A blank market — empty or whitespace-only — must be rejected locally (no
+    // request sent) so it can never silently widen into an account-wide flatten
+    // via the bare DELETE /orders. The unroutable host proves rejection is local.
+    for blank in ["", "   "] {
+        let err = authed("http://127.0.0.1:1".to_string())
+            .cancel_orders_for_market(blank)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+        ));
+    }
 }

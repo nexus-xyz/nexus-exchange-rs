@@ -21,7 +21,7 @@
 //! The stream yields `Result<ServerMessage, Error>`:
 //!
 //! * `Ok(msg)` — a decoded protocol frame, in server order within a connection.
-//! * `Err(`[`Error::Lagged`]`)` — the consumer fell behind and `dropped` frames
+//! * `Err(`[`crate::TransientError::Lagged`]`)` — the consumer fell behind and `dropped` frames
 //!   were discarded to keep the socket drained (so keepalive pongs are never
 //!   starved). Emitted in order, immediately before the next `Ok`. The stream
 //!   continues; this is a gap signal, not a fatal error.
@@ -116,7 +116,7 @@ impl MessageStream {
         self.cmd_tx
             .send(Command::Subscribe(channel))
             .await
-            .map_err(|_| Error::StreamClosed)
+            .map_err(|_| Error::stream_closed())
     }
 
     /// Remove a channel from the subscription: unsubscribe on the wire and stop
@@ -125,7 +125,7 @@ impl MessageStream {
         self.cmd_tx
             .send(Command::Unsubscribe(channel))
             .await
-            .map_err(|_| Error::StreamClosed)
+            .map_err(|_| Error::stream_closed())
     }
 
     /// Gracefully close the connection and wait for the background task to end.
@@ -156,7 +156,7 @@ impl Client {
     /// background task. If any channel [`is_private`](Channel::is_private), the
     /// client mints a single-use `/ws/token` before each connection and presents
     /// it on the upgrade URL — so this requires credentials, and a request for a
-    /// private channel without them fails fast here with [`Error::Auth`].
+    /// private channel without them fails fast here with [`crate::TerminalError::Credentials`].
     ///
     /// Must be called from within a Tokio runtime (it spawns a task).
     ///
@@ -180,8 +180,8 @@ impl Client {
     pub fn subscribe(&self, channels: Vec<Channel>) -> Result<MessageStream> {
         // Fail fast: a private channel without credentials can never authenticate.
         if channels.iter().any(Channel::is_private) && self.config.credentials.is_none() {
-            return Err(Error::Auth(
-                "private channels require credentials to mint a /ws/token".into(),
+            return Err(Error::credentials(
+                "private channels require credentials to mint a /ws/token",
             ));
         }
 
@@ -189,10 +189,9 @@ impl Client {
         // for every network (production host unconfirmed — ENG-3398); fail fast
         // rather than spawn a task that can't connect.
         let ws_url = self.config.ws_url.clone().ok_or_else(|| {
-            Error::InvalidRequest(
+            Error::invalid_request(
                 "no WebSocket endpoint configured for this network (production WS host \
-                 not yet confirmed — ENG-3398); set one with Config::with_ws_url"
-                    .to_string(),
+                 not yet confirmed — ENG-3398); set one with Config::with_ws_url",
             )
         })?;
 
@@ -338,8 +337,8 @@ where
         }
     }
 
-    // Frames dropped while the consumer was behind; reported as `Error::Lagged`
-    // before the next delivered frame.
+    // Frames dropped while the consumer was behind; reported as
+    // `TransientError::Lagged` before the next delivered frame.
     let mut dropped: u64 = 0;
 
     loop {
@@ -469,7 +468,7 @@ fn decode(
 /// Forward a decoded message without blocking the read loop.
 ///
 /// On a full channel the frame is dropped and counted; the count is flushed as
-/// an [`Error::Lagged`] immediately before the next successfully delivered
+/// an [`crate::TransientError::Lagged`] immediately before the next successfully delivered
 /// message, so the consumer sees gaps in order. Returns
 /// [`LoopExit::ConsumerGone`] once the receiver is gone. Sets `delivered` on the
 /// first hand-off, marking the connection healthy enough to reset the backoff.
@@ -482,7 +481,7 @@ fn deliver(
     // Flush a pending lag marker first so the gap is reported in order, ahead of
     // the message that follows it.
     if *dropped > 0 {
-        match event_tx.try_send(Err(Error::Lagged { dropped: *dropped })) {
+        match event_tx.try_send(Err(Error::lagged(*dropped))) {
             Ok(()) => *dropped = 0,
             Err(TrySendError::Full(_)) => {} // still no room; keep accumulating
             Err(TrySendError::Closed(_)) => return Some(LoopExit::ConsumerGone),
@@ -505,7 +504,7 @@ fn deliver(
 /// Try to deliver a one-off item (e.g. a surfaced error) without blocking.
 /// Returns `false` only once the consumer is gone, so the caller can stop. A
 /// full channel drops the item — the consumer is already behind and will see an
-/// [`Error::Lagged`].
+/// [`crate::TransientError::Lagged`].
 fn emit(event_tx: &mpsc::Sender<Item>, item: Item) -> bool {
     !matches!(event_tx.try_send(item), Err(TrySendError::Closed(_)))
 }
@@ -601,7 +600,7 @@ mod tests {
         let mut lagged_total = 0u64;
         for item in items {
             match item {
-                Err(Error::Lagged { dropped }) => {
+                Err(Error::Transient(crate::TransientError::Lagged { dropped })) => {
                     assert!(dropped > 0, "Lagged must report a positive gap");
                     expected += dropped;
                     lagged_total += dropped;

@@ -35,7 +35,7 @@ async fn signed_request_sends_hmac_headers_and_parses() {
 async fn signed_request_without_credentials_errors() {
     let client = Client::new(Config::with_base_url("http://localhost:1"));
     match client.fetch_api_keys().await.unwrap_err() {
-        Error::Auth(_) => {}
+        Error::Terminal(nexus_exchange::TerminalError::Credentials(_)) => {}
         other => panic!("expected Auth error, got {other:?}"),
     }
 }

@@ -129,5 +129,8 @@ async fn cancel_orders_for_market_rejects_empty_market() {
         .cancel_orders_for_market("")
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::InvalidRequest(_)));
+    assert!(matches!(
+        err,
+        Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+    ));
 }

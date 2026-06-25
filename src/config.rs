@@ -97,7 +97,7 @@ pub struct RateLimit {
     /// [`Client::fetch_rate_limit_status`](crate::Client::fetch_rate_limit_status).
     pub requests_per_second: f64,
     /// Maximum automatic retries on a `429` before returning
-    /// [`Error::RateLimited`](crate::Error::RateLimited).
+    /// [`TransientError::RateLimited`](crate::TransientError::RateLimited).
     pub max_retries: u32,
 }
 
@@ -147,7 +147,7 @@ impl RateLimit {
     }
 }
 
-/// How the client retries [transient](crate::Error::is_transient) failures on
+/// How the client retries [transient](crate::Error::is_retryable) failures on
 /// idempotent (`GET`) requests.
 ///
 /// This layer is distinct from the rate limiter: it covers connect/timeout
@@ -323,7 +323,7 @@ impl Config {
     }
 
     /// Set the per-request timeout. This bounds each individual attempt; a
-    /// timed-out attempt is [transient](crate::Error::is_transient) and so is
+    /// timed-out attempt is [transient](crate::Error::is_retryable) and so is
     /// subject to retry on idempotent (`GET`) requests. Because it is
     /// per-attempt, a retried call can take a multiple of this value — see
     /// [`RetryConfig`] for the total-time bound.

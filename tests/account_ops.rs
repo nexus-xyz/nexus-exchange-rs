@@ -1,13 +1,16 @@
 use nexus_exchange::types::Decimal;
-use nexus_exchange::{Client, Config};
+use nexus_exchange::{Client, Config, Error, Network, TerminalError};
 use wiremock::matchers::{body_json, body_string, header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+const SECRET: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+
 fn authed(uri: String) -> Client {
-    Client::new(Config::with_base_url(uri).api_key(
-        "nx_test",
-        "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
-    ))
+    Client::new(Config::with_base_url(uri).api_key("nx_test", SECRET))
+}
+
+fn dec(s: &str) -> Decimal {
+    s.parse::<Decimal>().unwrap()
 }
 
 #[tokio::test]
@@ -41,6 +44,59 @@ async fn claim_credit_without_amount_sends_empty_object() {
         .await;
     let r = authed(server.uri()).claim_credit(None).await.unwrap();
     assert_eq!(r.daily_limit.to_string(), "500");
+}
+
+#[tokio::test]
+async fn deposit_rejects_non_positive_amount() {
+    // A zero/negative deposit is rejected locally — no request is sent (the URL
+    // is unroutable, so reaching the network would itself fail the test).
+    let err = authed("http://127.0.0.1:1".to_string())
+        .deposit(dec("0"))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        Error::Terminal(TerminalError::InvalidRequest(_))
+    ));
+}
+
+#[tokio::test]
+async fn fund_on_production_refuses_to_move_real_collateral() {
+    // The critical safety property: on a real-money network, fund() must NOT
+    // silently deposit. It rejects locally and points the caller at deposit().
+    // No mock server: the guard fires before any request would be sent.
+    let client = Client::new(Config::new(Network::Stable).api_key("nx_test", SECRET));
+    let err = client.fund(dec("1000")).await.unwrap_err();
+    assert!(matches!(
+        err,
+        Error::Terminal(TerminalError::InvalidRequest(_))
+    ));
+}
+
+#[tokio::test]
+async fn fund_with_unknown_network_refuses() {
+    // Built from a raw base URL, so the SDK can't tell real-money from testnet:
+    // fund() refuses rather than guess. (authed() uses Config::with_base_url.)
+    let err = authed("http://127.0.0.1:1".to_string())
+        .fund(dec("1000"))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        Error::Terminal(TerminalError::InvalidRequest(_))
+    ));
+}
+
+#[tokio::test]
+async fn fund_rejects_non_positive_amount() {
+    let err = Client::new(Config::new(Network::Beta).api_key("nx_test", SECRET))
+        .fund(dec("0"))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        Error::Terminal(TerminalError::InvalidRequest(_))
+    ));
 }
 
 #[tokio::test]

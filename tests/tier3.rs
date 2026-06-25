@@ -4,7 +4,7 @@
 //! path-segment encoding, and the client-side validation guards.
 
 use nexus_exchange::types::{
-    AmendOrder, Decimal, MarginMode, OrderRequest, Side, TimeInForce, TransferRequest,
+    AmendOrder, Decimal, MarginMode, OrderRequest, OrderResult, Side, TimeInForce, TransferRequest,
 };
 use nexus_exchange::{Client, Config, Error};
 use wiremock::matchers::{body_json, header_exists, method, path};
@@ -179,6 +179,76 @@ async fn cancel_orders_empty_is_rejected() {
         err,
         Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
     ));
+}
+
+#[tokio::test]
+async fn create_orders_posts_batch_and_parses_typed_results() {
+    let server = MockServer::start().await;
+    // The batch returns 201 with a per-order result array even when an entry was
+    // rejected (sequential, non-atomic): one placed order plus one rejection, in
+    // request order. Each entry is internally tagged by `outcome` (`ok`/`err`),
+    // matching the engine's `BatchOrderResult`.
+    Mock::given(method("POST"))
+        .and(path("/orders/batch"))
+        .and(header_exists("x-signature"))
+        .and(body_json(serde_json::json!([
+            {
+                "market_id": "BTC-USDX-PERP", "side": "Buy", "order_type": "Limit",
+                "price": "50000", "quantity": "0.1", "time_in_force": "GTC"
+            },
+            {
+                "market_id": "ETH-USDX-PERP", "side": "Sell", "order_type": "Market",
+                "quantity": "999", "time_in_force": "IOC"
+            }
+        ])))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!([
+            {
+                "outcome": "ok",
+                "order": {
+                    "id": "o1", "market_id": "BTC-USDX-PERP", "side": "Buy",
+                    "order_type": "Limit", "price": "50000", "quantity": "0.1",
+                    "time_in_force": "GTC", "status": "Open"
+                },
+                "fills": []
+            },
+            {
+                "outcome": "err",
+                "error": "INSUFFICIENT_MARGIN",
+                "message": "insufficient margin to place order"
+            }
+        ])))
+        .mount(&server)
+        .await;
+
+    let orders = [
+        OrderRequest::limit(
+            "BTC-USDX-PERP",
+            Side::Buy,
+            dec("50000"),
+            dec("0.1"),
+            TimeInForce::Gtc,
+        ),
+        OrderRequest::market("ETH-USDX-PERP", Side::Sell, dec("999")),
+    ];
+    let results: Vec<OrderResult> = authed(server.uri()).create_orders(&orders).await.unwrap();
+
+    assert_eq!(results.len(), 2);
+
+    // Entry 0: placed — typed order record, no error.
+    assert!(results[0].succeeded());
+    assert!(results[0].error().is_none());
+    let order = results[0].order().expect("placed entry exposes its order");
+    assert_eq!(order.id, "o1");
+    assert_eq!(order.price, Some(dec("50000")));
+    assert!(matches!(&results[0], OrderResult::Placed { fills, .. } if fills.is_empty()));
+
+    // Entry 1: rejected — typed (error, message), no order record.
+    assert!(!results[1].succeeded());
+    assert!(results[1].order().is_none());
+    assert_eq!(
+        results[1].error(),
+        Some(("INSUFFICIENT_MARGIN", "insufficient margin to place order"))
+    );
 }
 
 #[tokio::test]

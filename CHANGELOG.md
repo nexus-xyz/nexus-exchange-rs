@@ -21,7 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `Credential` trait with a pluggable `Nonce` source (`Config::with_credential`
   / `Config::with_nonce`).
 
-## [0.2.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.1.0...v0.2.0) - 2026-06-23
+### Changed
+
+- **Breaking:** `Client::create_orders` now returns `Vec<OrderResult>` instead of
+  the untyped `serde_json::Value`, so callers no longer re-serialize and
+  string-parse the batch result (ENG-4199). `OrderResult` is a typed enum
+  mirroring the engine's per-order outcome — `OrderResult::Placed { order, fills }`
+  (same shape as the single-order `OrderResponse`) or `OrderResult::Rejected
+  { error, message }` — internally tagged on the wire by `outcome` (`ok`/`err`),
+  with `succeeded()` / `order()` / `error()` accessors. The batch-cancel
+  `cancel_orders` is unchanged (it returns a different, cancellation-summary
+  shape).
 
 ### Added
 

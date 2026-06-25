@@ -700,6 +700,70 @@ pub struct OrderResponse {
     pub fills: Vec<serde_json::Value>,
 }
 
+/// One entry in the array returned by
+/// [`Client::create_orders`](crate::Client::create_orders) (`POST
+/// /orders/batch`).
+///
+/// The batch is processed sequentially and non-atomically, so the array
+/// preserves request order and each entry independently reports either a placed
+/// order or a per-order rejection. The HTTP status is `201` for the batch as a
+/// whole even when individual entries failed — an early order consuming margin
+/// can reject a later one without aborting the batch — so per-order outcomes
+/// live *inside* each entry rather than in the response status.
+///
+/// On the wire each entry is internally tagged by an `outcome` field
+/// (`"ok"`/`"err"`): a placed entry carries the same `{ order, fills }` shape as
+/// the single-order [`OrderResponse`], and a rejected entry carries the same
+/// `{ error, message }` shape as the global error envelope. Match on the variant
+/// (or use [`succeeded`](Self::succeeded) / [`order`](Self::order) /
+/// [`error`](Self::error)).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "outcome")]
+pub enum OrderResult {
+    /// The order was placed. Mirrors the single-order [`OrderResponse`].
+    #[serde(rename = "ok")]
+    Placed {
+        /// The created or updated order.
+        order: Order,
+        /// Immediate fills (untyped, mirroring [`OrderResponse::fills`]).
+        #[serde(default)]
+        fills: Vec<serde_json::Value>,
+    },
+    /// The order was rejected; the rest of the batch was unaffected.
+    #[serde(rename = "err")]
+    Rejected {
+        /// Machine-readable error code (e.g. `INSUFFICIENT_MARGIN`).
+        error: String,
+        /// Human-readable error message.
+        message: String,
+    },
+}
+
+impl OrderResult {
+    /// Whether this entry is the [`Placed`](Self::Placed) (order-accepted)
+    /// variant.
+    pub fn succeeded(&self) -> bool {
+        matches!(self, OrderResult::Placed { .. })
+    }
+
+    /// The placed [`Order`], or `None` if this entry was rejected.
+    pub fn order(&self) -> Option<&Order> {
+        match self {
+            OrderResult::Placed { order, .. } => Some(order),
+            OrderResult::Rejected { .. } => None,
+        }
+    }
+
+    /// The `(error, message)` pair for a rejected entry, or `None` if it was
+    /// placed.
+    pub fn error(&self) -> Option<(&str, &str)> {
+        match self {
+            OrderResult::Rejected { error, message } => Some((error, message)),
+            OrderResult::Placed { .. } => None,
+        }
+    }
+}
+
 /// Result of a deposit (`POST /account/deposit`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct DepositResult {

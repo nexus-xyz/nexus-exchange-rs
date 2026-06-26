@@ -44,7 +44,7 @@ environment and default to a non-production network where they mutate state.
 
 <!-- api-version-sync:start -->
 
-Currently targets Exchange API spec **`v0.4.0`**.
+Currently targets Exchange API spec **`v0.5.0`**.
 
 <!-- api-version-sync:end -->
 

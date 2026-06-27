@@ -1,0 +1,44 @@
+[package]
+name = "nexus-exchange"
+version = "0.3.0"
+edition = "2021"
+rust-version = "1.86"
+description = "Official Rust SDK for the Nexus Exchange API (REST + WebSocket)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/nexus-xyz/nexus-exchange-rs"
+keywords = ["nexus", "exchange", "trading", "crypto"]
+categories = ["api-bindings", "asynchronous"]
+publish = true
+
+# docs.rs builds with all features so the full API surface is documented, and
+# sets `--cfg docsrs` to enable feature annotations on items behind cfgs.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+backon = "1"
+futures-core = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["alloc", "sink", "std"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
+httpdate = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_urlencoded = "0.7"
+rust_decimal = { version = "1", features = ["serde-with-str", "serde-with-float"] }
+hmac = "0.13"
+sha2 = "0.11"
+sha3 = "0.10"
+k256 = { version = "0.13", features = ["ecdsa"] }
+hex = "0.4"
+secrecy = { version = "0.10", features = ["serde"] }
+zeroize = "1"
+thiserror = "2"
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"] }
+wiremock = "0.6"
+rust_decimal_macros = "1"
+secrecy = "0.10"

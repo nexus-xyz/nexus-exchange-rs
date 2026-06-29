@@ -44,7 +44,7 @@ environment and default to a non-production network where they mutate state.
 
 <!-- api-version-sync:start -->
 
-Currently targets Exchange API spec **`v0.4.0`**.
+Currently targets Exchange API spec **`v0.5.0`**.
 
 <!-- api-version-sync:end -->
 
@@ -52,13 +52,15 @@ The pinned version lives in [`.api-version`](./.api-version); the spec itself is
 published by
 [`nexus-xyz/nexus-exchange-api`](https://github.com/nexus-xyz/nexus-exchange-api).
 This repo does not vendor a copy — `spec-drift` CI fetches the pinned release to
-check for drift, and the scheduled `api-version-sync` workflow opens a PR when a
-newer spec releases. The line above is bot-managed; the table below is
-maintained by hand when an SDK release ships a new pin.
+check for drift, and `spec-autobump` opens a PR when a newer spec releases
+(dispatched on api-repo release, with a daily poll fallback). It classifies the
+change with oasdiff: non-breaking bumps arm auto-merge, breaking ones route to a
+human (ENG-3563). The line above and the top row of the table below (the
+in-development SDK series) are bot-managed; the historical rows are left as-is.
 
 | SDK version | API spec |
 |---|---|
-| `0.3.x` | `v0.4.0` |
+| `0.3.x` | `v0.5.0` |
 | `0.1.x`–`0.2.x` | `v0.3.5` |
 
 ## License

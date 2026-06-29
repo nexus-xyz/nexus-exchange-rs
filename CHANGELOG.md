@@ -7,58 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- Market-scoped cancel: `Client::cancel_orders_for_market(market_id)` flattens a
-  single market in one round-trip (`DELETE /orders?market_id=`), instead of
-  `fetch_open_orders` → filter client-side → `cancel_orders`. `cancel_all_orders`
-  is unchanged and still cancels account-wide. An empty `market_id` is rejected
-  locally so a per-market cancel can never silently widen into a full account
-  flatten (ENG-4198).
-- Typed, protocol-aware streaming client: `Client::subscribe` returns a
-  `MessageStream` (a `Stream` of decoded `ServerMessage`s) for the op-envelope
-  protocol, covering public per-market channels (trades/book/candles) and
-  per-account channels (orders/fills/positions/balances). Mints a single-use
-  `/ws/token` per connection to upgrade private streams and resumes each channel
-  from its `since`/`seq_at_join` cursor on reconnect.
-- Wallet-signed auth, mirroring the API: EIP-191 session login (`Client::sign_in`)
-  and EIP-712 agent-key registration (`Client::register_agent`), via a thin
-  `EthSigner` (secp256k1 key held in `SecretString`). Credentials now sit behind
-  a `Credential` trait with a pluggable `Nonce` source (`Config::with_credential`
-  / `Config::with_nonce`).
-
-### Changed
-
-- **Breaking:** `Client::create_orders` now returns `Vec<OrderResult>` instead of
-  the untyped `serde_json::Value`, so callers no longer re-serialize and
-  string-parse the batch result (ENG-4199). `OrderResult` is a typed enum
-  mirroring the engine's per-order outcome — `OrderResult::Placed { order, fills }`
-  (same shape as the single-order `OrderResponse`) or `OrderResult::Rejected
-  { error, message }` — internally tagged on the wire by `outcome` (`ok`/`err`),
-  with `succeeded()` / `order()` / `error()` accessors. The batch-cancel
-  `cancel_orders` is unchanged (it returns a different, cancellation-summary
-  shape).
+## [0.3.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.2.0...v0.3.0) - 2026-06-26
 
 ### Added
 
-- *(ws)* connect_ws convenience + correct WS origin on Network (ENG-3398) ([#39](https://github.com/nexus-xyz/nexus-exchange-rs/pull/39))
-- *(keys/agents)* add API-key create/delete and agent list/revoke ([#32](https://github.com/nexus-xyz/nexus-exchange-rs/pull/32))
+- *(ci)* oasdiff-gated spec auto-bump pipeline (ENG-3563) ([#59](https://github.com/nexus-xyz/nexus-exchange-rs/pull/59))
+- *(account)* add network-aware fund() funding convenience (ENG-4200) ([#63](https://github.com/nexus-xyz/nexus-exchange-rs/pull/63))
+- *(rest)* typed Vec<OrderResult> for batch create_orders (ENG-4199) ([#62](https://github.com/nexus-xyz/nexus-exchange-rs/pull/62))
+- *(orders)* add market-scoped cancel (ENG-4198) ([#61](https://github.com/nexus-xyz/nexus-exchange-rs/pull/61))
+- *(rest)* login + key create/revoke + agent mgmt + HMAC ADL reads ([#38](https://github.com/nexus-xyz/nexus-exchange-rs/pull/38))
+- split Error into terminal vs transient trees (ENG-3424) ([#14](https://github.com/nexus-xyz/nexus-exchange-rs/pull/14))
+- auto-sync pinned API spec version with exchange-api releases ([#54](https://github.com/nexus-xyz/nexus-exchange-rs/pull/54))
+- *(markets)* [**breaking**] rename MarketSummary.mark_price to last_trade_price; pin spec v0.4.0 ([#48](https://github.com/nexus-xyz/nexus-exchange-rs/pull/48))
+- wallet-signed auth — EIP-191 signIn + EIP-712 registerAgent ([#36](https://github.com/nexus-xyz/nexus-exchange-rs/pull/36))
+- *(ws)* typed op-envelope streaming client with cursor resume ([#44](https://github.com/nexus-xyz/nexus-exchange-rs/pull/44))
+- send descriptive User-Agent for per-client traffic attribution ([#43](https://github.com/nexus-xyz/nexus-exchange-rs/pull/43))
+- *(rest)* typed public market-data endpoints (ENG-3380) ([#23](https://github.com/nexus-xyz/nexus-exchange-rs/pull/23))
 
 ### Fixed
 
-- *(tickers)* confirm /tickers map envelope, key by market_id ([#42](https://github.com/nexus-xyz/nexus-exchange-rs/pull/42))
+- encode address path segment in fetch_account_adl_history ([#57](https://github.com/nexus-xyz/nexus-exchange-rs/pull/57))
 
-### Added
+### Other
 
-- `Client::connect_ws` convenience that mints a single-use token and opens the
-  per-account WebSocket stream, re-minting on each reconnect.
-
-### Changed
-
-- **Breaking:** the WebSocket origin is no longer derived from the REST base.
-  `Network::ws_url()` is now `Network::ws_base()` and `Config::ws_url()` returns
-  `Option<&str>` (`None` for networks whose WS host is unconfirmed, currently
-  `Stable`/`Beta`). `Config::with_base_url` no longer infers a WS URL.
+- bump SDK .api-version to v0.5.0 (ENG-4344) ([#67](https://github.com/nexus-xyz/nexus-exchange-rs/pull/67))
+- clear stale [Unreleased] changelog so release-plz generates clean v0.3.0 (ENG-4214) ([#64](https://github.com/nexus-xyz/nexus-exchange-rs/pull/64))
+- distinguish a semver tool/infra failure from a detected break ([#58](https://github.com/nexus-xyz/nexus-exchange-rs/pull/58))
+- emit test-coverage % via cargo-llvm-cov (ENG-4016) ([#56](https://github.com/nexus-xyz/nexus-exchange-rs/pull/56))
+- add license badge to README ([#51](https://github.com/nexus-xyz/nexus-exchange-rs/pull/51))
+- add SECURITY.md pointing at private vulnerability reporting ([#53](https://github.com/nexus-xyz/nexus-exchange-rs/pull/53))
+- bump hmac 0.12→0.13 and sha2 0.10→0.11 together (ENG-3899) ([#50](https://github.com/nexus-xyz/nexus-exchange-rs/pull/50))
+- *(semver)* fail only on undeclared breaking API changes (ENG-3904) ([#52](https://github.com/nexus-xyz/nexus-exchange-rs/pull/52))
+- route code review to @nexus-xyz/eng (+ @collinjackson) instead of a single owner ([#55](https://github.com/nexus-xyz/nexus-exchange-rs/pull/55))
+- harden CI floor + add MSRV gate (ENG-3384) ([#30](https://github.com/nexus-xyz/nexus-exchange-rs/pull/30))
+- harden spec-drift check: verify client code ↔ endpoints.txt ([#49](https://github.com/nexus-xyz/nexus-exchange-rs/pull/49))
+- add per-PR cargo-semver-checks + compatibility/deprecation policy ([#46](https://github.com/nexus-xyz/nexus-exchange-rs/pull/46))
+- *(examples)* idiomatic, copy-pasteable example programs ([#29](https://github.com/nexus-xyz/nexus-exchange-rs/pull/29))
 
 ## [0.1.0](https://github.com/nexus-xyz/nexus-exchange-rs/releases/tag/v0.1.0) - 2026-06-22
 

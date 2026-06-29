@@ -1,10 +1,17 @@
 name: Spec drift
 
-# Verifies the endpoints the SDK targets (endpoints.txt) all still exist in the
-# pinned OpenAPI spec (.api-version), and reports any spec operations not yet
-# covered. Fetches the spec from the raw-at-tag URL (uncounted — the release
-# asset download_count is reserved as an external adoption signal) and caches
-# it by the pinned version so a normal run does no network.
+# Verifies, against the pinned OpenAPI spec (.api-version): the endpoints the SDK
+# targets (endpoints.txt) all still exist; the REST client code matches that
+# list; and a representative set of serde models (src/types.rs) read/write only
+# fields the spec still defines. Reports spec operations not yet covered. Fetches
+# the spec from the raw-at-tag URL (uncounted — the release asset download_count
+# is reserved as an external adoption signal) and caches it by the pinned version
+# so a normal run does no network.
+#
+# Triggered by the spec pin and by the SDK surfaces the check derives from
+# (src/rest.rs for the code<->endpoints check, src/types.rs for the model<->spec
+# check) so editing a model or a wrapper re-runs drift even when the pin is
+# unchanged.
 
 on:
   pull_request:
@@ -13,12 +20,16 @@ on:
       - 'endpoints.txt'
       - 'scripts/check_spec_drift.py'
       - '.github/workflows/spec-drift.yml'
+      - 'src/rest.rs'
+      - 'src/types.rs'
   push:
     branches: [main]
     paths:
       - '.api-version'
       - 'endpoints.txt'
       - 'scripts/check_spec_drift.py'
+      - 'src/rest.rs'
+      - 'src/types.rs'
 
 permissions:
   contents: read

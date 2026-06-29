@@ -124,17 +124,29 @@ jobs:
 
           api="https://api.github.com/repos/${SPEC_REPO}"
 
-          # 1. The pinned version must exist as a release in the spec repo.
+          # Real, breaking drift FAILS this check; a pin that merely lags the
+          # latest release WARNS but passes. Rationale (EDR-002): the SDK
+          # deliberately tracks the latest stable tag and may validly lag the
+          # bleeding edge, so "a newer release exists" is informational, not a
+          # build break. The complementary endpoints.txt<->spec invariant — an
+          # operation that vanished from the pinned spec — is enforced separately
+          # by scripts/check_spec_drift.py (the `Spec drift` workflow); that is
+          # where real breakage against the *pinned* spec fails.
+
+          # 1. The pinned version must exist as a published release in the spec
+          #    repo. A pin that is not a real release tag is genuine breakage
+          #    (typo, deleted/yanked release, or unreadable spec repo) and FAILS.
           pinned_status="$(curl -sS -o /dev/null -w '%{http_code}' \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             "${api}/releases/tags/${pinned}")"
           if [ "$pinned_status" != "200" ]; then
-            echo "::error::Pinned spec version ${pinned} not found as a release in ${SPEC_REPO} (HTTP ${pinned_status}). Cannot verify spec; check the pin in .api-version and that CI can read the spec repo."
+            echo "::error::Pinned spec version ${pinned} is not a published release in ${SPEC_REPO} (HTTP ${pinned_status}). Cannot verify spec; check the pin in .api-version and that CI can read the spec repo."
             exit 1
           fi
 
-          # 2. Compare the pin to the latest published release.
+          # 2. Compare the pin to the latest published release. If the pin is
+          #    simply behind, that is the SDK validly lagging — WARN, do not fail.
           latest="$(curl -sS \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
@@ -146,8 +158,8 @@ jobs:
           echo "Latest API spec release:  $latest"
 
           if [ "$pinned" != "$latest" ]; then
-            echo "::error::Spec drift: SDK pins ${pinned} but the latest Exchange API spec is ${latest}. Bump .api-version (and the README table) once the SDK is updated for ${latest}."
-            exit 1
+            echo "::warning::SDK pins ${pinned} but the latest Exchange API spec is ${latest} (pinned ${pinned} vs latest ${latest}; the SDK is behind). This is advisory: the SDK deliberately tracks the latest stable tag and may lag the bleeding edge (EDR-002). Bump .api-version (and the README table) once the SDK is updated for ${latest}; the spec-autobump workflow will normally open that PR automatically."
+            exit 0
           fi
 
           echo "No drift: SDK is pinned to the latest API spec (${pinned})."

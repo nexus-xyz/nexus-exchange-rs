@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.4.0...v0.4.1) - 2026-07-02
+
+### Other
+
+- Merge pull request #33 from nexus-xyz/dependabot/github_actions/actions/checkout-7
+
 ## [0.4.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.3.0...v0.4.0) - 2026-07-02
 
 ### Added

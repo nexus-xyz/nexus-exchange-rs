@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.4.1...v0.5.0) - 2026-07-02
+
+### Added
+
+- [**breaking**] expose post-only via `TimeInForce::PostOnly` ([#75](https://github.com/nexus-xyz/nexus-exchange-rs/pull/75))
+
+### Other
+
+- bump SDK `.api-version` to v0.6.0 ([#78](https://github.com/nexus-xyz/nexus-exchange-rs/pull/78))
+
 ## [0.4.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.4.0...v0.4.1) - 2026-07-02
 
 ### Other

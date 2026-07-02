@@ -44,7 +44,7 @@ environment and default to a non-production network where they mutate state.
 
 <!-- api-version-sync:start -->
 
-Currently targets Exchange API spec **`v0.5.0`**.
+Currently targets Exchange API spec **`v0.6.0`**.
 
 <!-- api-version-sync:end -->
 
@@ -60,7 +60,7 @@ in-development SDK series) are bot-managed; the historical rows are left as-is.
 
 | SDK version | API spec |
 |---|---|
-| `0.3.x` | `v0.5.0` |
+| `0.3.x` | `v0.6.0` |
 | `0.1.x`–`0.2.x` | `v0.3.5` |
 
 ## License

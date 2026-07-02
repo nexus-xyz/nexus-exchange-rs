@@ -282,6 +282,18 @@ pub enum TimeInForce {
     Ioc,
     /// Fill-or-kill.
     Fok,
+    /// Post-only (add-liquidity-only): the order is rejected if it would take
+    /// liquidity (cross the book) on entry, guaranteeing it rests as a maker.
+    /// A crossing post-only order is rejected server-side with the
+    /// `WouldTakeLiquidity` error (surfaced as [`TerminalError::InvalidOrder`]
+    /// with that `code`).
+    ///
+    /// The wire value is `PostOnly` (PascalCase), so it opts out of the
+    /// container's `UPPERCASE` renaming.
+    ///
+    /// [`TerminalError::InvalidOrder`]: crate::TerminalError::InvalidOrder
+    #[serde(rename = "PostOnly")]
+    PostOnly,
 }
 
 /// A public trade print.
@@ -1108,6 +1120,31 @@ mod tests {
         }))
         .unwrap();
         assert!(key.tier.is_none());
+    }
+
+    #[test]
+    fn time_in_force_serde_wire_values() {
+        // GTC/IOC/FOK take the container's UPPERCASE rename; PostOnly overrides it
+        // to the PascalCase `PostOnly` the engine expects (a bare UPPERCASE rename
+        // would emit `POSTONLY` and be rejected). Round-trip each so a rename slip
+        // is caught in both directions.
+        for (tif, wire) in [
+            (TimeInForce::Gtc, "\"GTC\""),
+            (TimeInForce::Ioc, "\"IOC\""),
+            (TimeInForce::Fok, "\"FOK\""),
+            (TimeInForce::PostOnly, "\"PostOnly\""),
+        ] {
+            assert_eq!(
+                serde_json::to_string(&tif).unwrap(),
+                wire,
+                "serialize {tif:?}"
+            );
+            assert_eq!(
+                serde_json::from_str::<TimeInForce>(wire).unwrap(),
+                tif,
+                "deserialize {wire}"
+            );
+        }
     }
 
     #[test]

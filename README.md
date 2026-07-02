@@ -32,10 +32,8 @@ double as the primary docs. Run one with `cargo run --example <name>`:
 | `cancel_order` | yes | Cancel one order by id, one market, or cancel all |
 | `account_balances` | yes | Balance, collateral, equity, margin |
 | `positions` | yes | Open positions with PnL and liquidation price |
-
-The two WebSocket streaming examples (`ws_orderbook`, `ws_user_events`) land
-separately via [#37](https://github.com/nexus-xyz/nexus-exchange-rs/pull/37),
-which merges after this PR.
+| `ws_orderbook` | no | Live order-book stream over WebSocket |
+| `ws_user_events` | yes | Private per-account events (fills, orders) over WebSocket |
 
 Authenticated examples read `NEXUS_API_KEY` / `NEXUS_API_SECRET` from the
 environment and default to a non-production network where they mutate state.

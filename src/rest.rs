@@ -349,9 +349,19 @@ impl Client {
         self.signed_post("/orders/batch", &orders).await
     }
 
-    /// Cancel a single order by id. Requires credentials.
-    pub async fn cancel_order(&self, order_id: &str) -> Result<serde_json::Value> {
-        self.signed_delete(&format!("/orders/{order_id}")).await
+    /// Cancel a single order by id on `market_id`. Requires credentials.
+    ///
+    /// `market_id` is required: the engine routes single-order-by-id requests to
+    /// the order's owning market, so a missing or wrong market resolves to
+    /// `OrderNotFound`. It is sent as the `?market_id=` query and rejected
+    /// locally if empty.
+    pub async fn cancel_order(&self, order_id: &str, market_id: &str) -> Result<serde_json::Value> {
+        require_non_empty(market_id, "market_id")?;
+        self.signed_delete_with_query(
+            &format!("/orders/{order_id}"),
+            &[("market_id", market_id.to_string())],
+        )
+        .await
     }
 
     /// Cancel all open orders for the account. Requires credentials.
@@ -387,9 +397,19 @@ impl Client {
         self.signed_get("/orders", &[]).await
     }
 
-    /// Fetch a single order by id. Requires credentials.
-    pub async fn fetch_order(&self, order_id: &str) -> Result<Order> {
-        self.signed_get(&format!("/orders/{order_id}"), &[]).await
+    /// Fetch a single order by id on `market_id`. Requires credentials.
+    ///
+    /// `market_id` is required: the engine routes single-order-by-id requests to
+    /// the order's owning market, so a missing or wrong market resolves to
+    /// `OrderNotFound`. It is sent as the `?market_id=` query and rejected
+    /// locally if empty.
+    pub async fn fetch_order(&self, order_id: &str, market_id: &str) -> Result<Order> {
+        require_non_empty(market_id, "market_id")?;
+        self.signed_get(
+            &format!("/orders/{order_id}"),
+            &[("market_id", market_id.to_string())],
+        )
+        .await
     }
 
     /// Deposit **real** USDX collateral (`POST /account/deposit`). Requires
@@ -533,20 +553,36 @@ impl Client {
         .await
     }
 
-    /// Amend an open order in place (`PUT /orders/{id}`) — an atomic server-side
-    /// cancel-replace. Requires credentials.
+    /// Amend an open order in place on `market_id` (`PATCH /orders/{id}`) — an
+    /// atomic server-side cancel-replace. Requires credentials.
+    ///
+    /// `market_id` is required: the engine routes single-order-by-id requests to
+    /// the order's owning market, so a missing or wrong market resolves to
+    /// `OrderNotFound`. It is sent as the `?market_id=` query and rejected
+    /// locally if empty.
     ///
     /// Only the fields set on `amend` change; the rest of the order is left as
     /// is. An amend that would change nothing is rejected locally (no request is
     /// sent) so a stray no-op can't silently churn the order's queue priority.
-    pub async fn amend_order(&self, order_id: &str, amend: &AmendOrder) -> Result<OrderResponse> {
+    pub async fn amend_order(
+        &self,
+        order_id: &str,
+        market_id: &str,
+        amend: &AmendOrder,
+    ) -> Result<OrderResponse> {
+        require_non_empty(market_id, "market_id")?;
         if !amend.has_changes() {
             return Err(Error::invalid_request(
                 "amend_order requires at least one field to change",
             ));
         }
         let id = encoded_segment(order_id, "order_id")?;
-        self.signed_put(&format!("/orders/{id}"), amend).await
+        self.signed_patch_with_query(
+            &format!("/orders/{id}"),
+            &[("market_id", market_id.to_string())],
+            amend,
+        )
+        .await
     }
 
     /// Cancel a batch of orders by id (`POST /orders/batch-cancel`). Requires

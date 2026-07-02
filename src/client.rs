@@ -261,6 +261,47 @@ impl Client {
             .await
     }
 
+    /// Signed `PATCH` carrying BOTH a query string and a JSON body — signs the
+    /// exact path + query + body that is sent (e.g.
+    /// `PATCH /orders/{id}?market_id=…`, where the query routes the request to
+    /// the owning market and the body carries the change). The query is signed
+    /// separately from the path, exactly like [`signed_get`].
+    pub(crate) async fn signed_patch_with_query<B: Serialize, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+        body: &B,
+    ) -> Result<T> {
+        // Propagate an encode failure rather than silently dropping the query:
+        // on a by-id route the query carries the required routing key, so a
+        // silently empty query would misroute the request.
+        let qs = serde_urlencoded::to_string(query)
+            .map_err(|e| Error::invalid_request(format!("could not encode query string: {e}")))?;
+        let body_bytes = serde_json::to_vec(body)?;
+        let headers = self.creds()?.auth_headers(&SigningContext {
+            method: "PATCH",
+            path,
+            query: &qs,
+            body: &body_bytes,
+            timestamp_ms: self.nonce(),
+        })?;
+        let url = if qs.is_empty() {
+            format!("{}{}", self.config.base_url, path)
+        } else {
+            format!("{}{}?{}", self.config.base_url, path, qs)
+        };
+        let mut req = self
+            .http
+            .request(reqwest::Method::PATCH, url)
+            .timeout(self.config.timeout)
+            .header("content-type", "application/json")
+            .body(body_bytes);
+        for (name, value) in &headers {
+            req = req.header(*name, value);
+        }
+        self.handle(req.send().await?).await
+    }
+
     /// Signed `POST` with no body (e.g. token mint).
     pub(crate) async fn signed_post_empty<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         self.signed_no_body(reqwest::Method::POST, path, &[]).await

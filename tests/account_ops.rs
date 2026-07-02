@@ -195,13 +195,20 @@ async fn fetch_order_defaults_omitted_optional_fields() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/orders/o1"))
+        .and(wiremock::matchers::query_param(
+            "market_id",
+            "BTC-USDX-PERP",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "o1", "market_id": "BTC-USDX-PERP", "side": "Buy",
             "order_type": "Limit", "time_in_force": "GTC"
         })))
         .mount(&server)
         .await;
-    let o = authed(server.uri()).fetch_order("o1").await.unwrap();
+    let o = authed(server.uri())
+        .fetch_order("o1", "BTC-USDX-PERP")
+        .await
+        .unwrap();
     assert_eq!(o.account_id, "");
     assert_eq!(o.quantity.to_string(), "0");
     assert_eq!(o.filled_qty.to_string(), "0");

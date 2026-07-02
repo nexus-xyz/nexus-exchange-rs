@@ -42,6 +42,7 @@ DELETE /orders/{order_id}
 DELETE /orders
 GET /orders
 GET /orders/{order_id}
+PATCH /orders/{order_id}
 POST /account/deposit
 GET /withdrawals
 POST /account/credit

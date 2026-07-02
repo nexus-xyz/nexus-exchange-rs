@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.3.0...v0.4.0) - 2026-07-02
+
+### Added
+
+- [**breaking**] send market_id on the by-id order routes; amend via PATCH
+
+### Other
+
+- make releases one-click — release-plz token fallback + advisory drift (ENG-4360)
+
 ## [0.3.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.2.0...v0.3.0) - 2026-06-26
 
 ### Added

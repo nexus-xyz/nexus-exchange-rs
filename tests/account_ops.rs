@@ -32,7 +32,7 @@ async fn deposit_sends_amount_and_parses_balance() {
 async fn claim_credit_without_amount_sends_empty_object() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/account/credit"))
+        .and(path("/api/v1/account/credit"))
         .and(body_json(serde_json::json!({})))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "amount": "500", "credited_today": "500", "daily_limit": "500"

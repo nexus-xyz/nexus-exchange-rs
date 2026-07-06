@@ -3,6 +3,17 @@
 //! Added incrementally by route group: public market data, account & trading,
 //! admin. Skeleton.
 //!
+//! **Dual-stack routing (ENG-4947 / gateway elimination ENG-4740).** Endpoints
+//! whose path begins with `/api/v1/` are served directly by the indexer at the
+//! host root ([`Config::direct_base_url`](crate::Config::direct_base_url));
+//! every other path stays on the legacy `/api/exchange` gateway base. The
+//! [`Client`] picks the base off the path prefix, so the method here just names
+//! the full path it targets. Market-data and account/trading endpoints have been
+//! migrated to `/api/v1`; endpoints without a `/api/v1` variant yet (health,
+//! keys, agents, wallet auth, deposits/withdrawals, ADL, admin, WebSocket-token,
+//! `GET /orders/{id}`, and the tier-3 endpoints) remain on the gateway until the
+//! spec grows those variants.
+//!
 //! List endpoints return an auto-paging [`pagination::Paginator`] rather than a
 //! bare page, so callers never have to drive cursors by hand.
 
@@ -86,7 +97,7 @@ impl Client {
 
     /// Per-market summaries with 24h volume and halt state.
     pub async fn fetch_market_summaries(&self) -> Result<Vec<MarketSummary>> {
-        self.get("/markets/summary", &[], COST_DEFAULT).await
+        self.get("/api/v1/markets/summary", &[], COST_DEFAULT).await
     }
 
     /// Tickers for all markets, keyed by market id (e.g. `BTC-USDX-PERP`).
@@ -98,19 +109,23 @@ impl Client {
     /// model is authoritative; an empty result is `{}`, which decodes to an
     /// empty map.
     pub async fn fetch_tickers(&self) -> Result<HashMap<String, Ticker>> {
-        self.get("/tickers", &[], COST_DEFAULT).await
+        self.get("/api/v1/tickers", &[], COST_DEFAULT).await
     }
 
     /// Fetch the ticker for a single market, e.g. `BTC-USDX-PERP`.
     pub async fn fetch_ticker(&self, market_id: &str) -> Result<Ticker> {
-        self.get(&format!("/markets/{market_id}/ticker"), &[], COST_DEFAULT)
-            .await
+        self.get(
+            &format!("/api/v1/markets/{market_id}/ticker"),
+            &[],
+            COST_DEFAULT,
+        )
+        .await
     }
 
     /// Order book snapshot for a market.
     pub async fn fetch_order_book(&self, market_id: &str) -> Result<OrderBook> {
         self.get(
-            &format!("/markets/{market_id}/orderbook"),
+            &format!("/api/v1/markets/{market_id}/orderbook"),
             &[],
             COST_DEFAULT,
         )
@@ -124,7 +139,7 @@ impl Client {
             query.push(("limit", limit.to_string()));
         }
         self.get(
-            &format!("/markets/{market_id}/trades"),
+            &format!("/api/v1/markets/{market_id}/trades"),
             &query,
             COST_DEFAULT,
         )
@@ -146,7 +161,7 @@ impl Client {
             query.push(("limit", limit.to_string()));
         }
         self.get(
-            &format!("/markets/{market_id}/candles"),
+            &format!("/api/v1/markets/{market_id}/candles"),
             &query,
             COST_DEFAULT,
         )
@@ -164,7 +179,7 @@ impl Client {
             query.push(("limit", limit.to_string()));
         }
         self.get(
-            &format!("/markets/{market_id}/funding"),
+            &format!("/api/v1/markets/{market_id}/funding"),
             &query,
             COST_DEFAULT,
         )
@@ -174,7 +189,7 @@ impl Client {
     /// Current mark price for a market.
     pub async fn fetch_mark_price(&self, market_id: &str) -> Result<MarkPrice> {
         self.get(
-            &format!("/markets/{market_id}/mark-price"),
+            &format!("/api/v1/markets/{market_id}/mark-price"),
             &[],
             COST_DEFAULT,
         )
@@ -183,8 +198,12 @@ impl Client {
 
     /// Lifecycle / halt status for a market.
     pub async fn fetch_market_status(&self, market_id: &str) -> Result<MarketStatus> {
-        self.get(&format!("/markets/{market_id}/status"), &[], COST_DEFAULT)
-            .await
+        self.get(
+            &format!("/api/v1/markets/{market_id}/status"),
+            &[],
+            COST_DEFAULT,
+        )
+        .await
     }
 
     /// ADL settlement events for a market, most recent first (v0.21). `limit`
@@ -243,7 +262,7 @@ impl Client {
     /// tier, so subsequent requests are metered against the actual server-side
     /// budget instead of the conservative default.
     pub async fn fetch_rate_limit_status(&self) -> Result<RateLimitStatus> {
-        let status: RateLimitStatus = self.signed_get("/account/rate-limit", &[]).await?;
+        let status: RateLimitStatus = self.signed_get("/api/v1/account/rate-limit", &[]).await?;
         self.sync_rate_limit(&status);
         Ok(status)
     }
@@ -317,26 +336,27 @@ impl Client {
 
     /// Account balance and collateral summary. Requires credentials.
     pub async fn fetch_balance(&self) -> Result<AccountSummary> {
-        self.signed_get("/account", &[]).await
+        self.signed_get("/api/v1/account", &[]).await
     }
 
     /// Open positions for the authenticated account. Requires credentials.
     pub async fn fetch_positions(&self) -> Result<Vec<Position>> {
-        self.signed_get("/positions", &[]).await
+        self.signed_get("/api/v1/positions", &[]).await
     }
 
     /// Recent fills (private trade executions) for the authenticated account.
     /// Requires credentials.
     pub async fn fetch_my_trades(&self) -> Result<Vec<Fill>> {
-        self.signed_get("/fills", &[]).await
+        self.signed_get("/api/v1/fills", &[]).await
     }
 
     /// Place a single order. Requires credentials.
     pub async fn create_order(&self, order: &OrderRequest) -> Result<OrderResponse> {
-        self.signed_post("/orders", order).await
+        self.signed_post("/api/v1/orders", order).await
     }
 
-    /// Submit a batch of orders (`POST /orders/batch`). Requires credentials.
+    /// Submit a batch of orders (`POST /api/v1/orders/batch`). Requires
+    /// credentials.
     ///
     /// Orders are processed sequentially and non-atomically: an early order
     /// consuming margin can reject a later one, and a per-order rejection does
@@ -346,12 +366,13 @@ impl Client {
     /// [`OrderResult::succeeded`]) per entry rather than assuming the whole
     /// batch succeeded.
     pub async fn create_orders(&self, orders: &[OrderRequest]) -> Result<Vec<OrderResult>> {
-        self.signed_post("/orders/batch", &orders).await
+        self.signed_post("/api/v1/orders/batch", &orders).await
     }
 
     /// Cancel a single order by id. Requires credentials.
     pub async fn cancel_order(&self, order_id: &str) -> Result<serde_json::Value> {
-        self.signed_delete(&format!("/orders/{order_id}")).await
+        self.signed_delete(&format!("/api/v1/orders/{order_id}"))
+            .await
     }
 
     /// Cancel all open orders for the account. Requires credentials.
@@ -361,30 +382,30 @@ impl Client {
     /// the `fetch_open_orders` → filter → `cancel_orders` round-trip on the
     /// hot reprice path.
     pub async fn cancel_all_orders(&self) -> Result<serde_json::Value> {
-        self.signed_delete("/orders").await
+        self.signed_delete("/api/v1/orders").await
     }
 
-    /// Cancel all open orders for a single market (`DELETE /orders?market_id=`).
-    /// Requires credentials.
+    /// Cancel all open orders for a single market
+    /// (`DELETE /api/v1/orders?market_id=`). Requires credentials.
     ///
     /// Maps to the per-market reprice loop of a market maker quoting many
     /// markets: flatten one market in a single round-trip rather than fetching
     /// open orders, filtering client-side, and cancelling by id.
     ///
     /// An empty `market_id` is rejected locally and never sent: omitting the
-    /// filter on `DELETE /orders` cancels account-wide, so a blank market must
+    /// filter on `DELETE /api/v1/orders` cancels account-wide, so a blank market must
     /// not be allowed to silently widen a per-market cancel into a full
     /// account flatten. Use [`cancel_all_orders`](Self::cancel_all_orders)
     /// when that account-wide cancel is what you actually want.
     pub async fn cancel_orders_for_market(&self, market_id: &str) -> Result<serde_json::Value> {
         require_non_empty(market_id, "market_id")?;
-        self.signed_delete_with_query("/orders", &[("market_id", market_id.to_string())])
+        self.signed_delete_with_query("/api/v1/orders", &[("market_id", market_id.to_string())])
             .await
     }
 
     /// List open orders for the authenticated account. Requires credentials.
     pub async fn fetch_open_orders(&self) -> Result<Vec<Order>> {
-        self.signed_get("/orders", &[]).await
+        self.signed_get("/api/v1/orders", &[]).await
     }
 
     /// Fetch a single order by id. Requires credentials.
@@ -414,7 +435,7 @@ impl Client {
             Some(a) => serde_json::json!({ "amount": a.to_string() }),
             None => serde_json::json!({}),
         };
-        self.signed_post("/account/credit", &body).await
+        self.signed_post("/api/v1/account/credit", &body).await
     }
 
     /// Set an account's rate-limit tier (admin). Requires admin credentials.

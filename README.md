@@ -44,9 +44,16 @@ environment and default to a non-production network where they mutate state.
 
 <!-- api-version-sync:start -->
 
-Currently targets Exchange API spec **`v0.4.0`**.
+Currently targets Exchange API spec **`v0.6.1`**.
 
 <!-- api-version-sync:end -->
+
+> **⚠️ Pending release.** `v0.6.1` is the **anticipated** tag for the `/api/v1`
+> spec change (ENG-4943, [`nexus-exchange-api#41`](https://github.com/nexus-xyz/nexus-exchange-api/pull/41)),
+> which is **not merged or released yet**. Until it is, `spec-drift` CI is
+> temporarily pointed at that PR's branch (see `.github/workflows/spec-drift.yml`).
+> When ENG-4943 merges and the release is cut, confirm this tag matches the
+> actual release and restore the drift check to fetch the release (ENG-4947).
 
 The pinned version lives in [`.api-version`](./.api-version); the spec itself is
 published by

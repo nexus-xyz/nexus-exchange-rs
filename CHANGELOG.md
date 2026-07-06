@@ -29,6 +29,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Migrated the market-data and account/trading endpoints to the direct-service
+  `/api/v1` surface (ENG-4947): they are now served at the **host root** instead
+  of the `/api/exchange` gateway, matching the gateway-elimination work
+  (ENG-4740). The Rust method surface is unchanged — only the wire path/base
+  moves — so this is not a source-breaking change. Endpoints with no `/api/v1`
+  variant yet (health, keys, agents, wallet auth, deposits/withdrawals, ADL,
+  admin, WebSocket-token, `GET /orders/{id}`, and the tier-3 endpoints) stay on
+  the gateway (dual-stack, ENG-4751). `Config` gains a `direct_base_url` (host
+  root) alongside the gateway `base_url` — set from the `Network`, derived from
+  `with_base_url` (strips a trailing `/api/exchange`), or overridden with
+  `Config::with_direct_base_url`. Signed `/api/v1` requests sign the **full path
+  including the prefix**, matching the server (the gateway strips its prefix
+  before signing; the direct surface does not). **Pending:** depends on the
+  unreleased `/api/v1` spec (ENG-4943 / `nexus-exchange-api#41`) — the pin
+  (`v0.6.1`) and the temporary `spec-drift` branch override must be finalized
+  when that spec releases.
 - **Breaking:** `Client::create_orders` now returns `Vec<OrderResult>` instead of
   the untyped `serde_json::Value`, so callers no longer re-serialize and
   string-parse the batch result (ENG-4199). `OrderResult` is a typed enum

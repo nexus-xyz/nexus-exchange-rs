@@ -75,7 +75,7 @@ async fn exhausting_retries_yields_rate_limited_error() {
 async fn fetch_rate_limit_status_parses_and_returns() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/account/rate-limit"))
+        .and(path("/api/v1/account/rate-limit"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "tier": "pro", "limit": 50, "remaining": 12, "reset_at_ms": 1776033900000i64
         })))
@@ -96,7 +96,7 @@ async fn fetch_rate_limit_status_parses_and_returns() {
 async fn unlimited_tier_status_has_null_fields() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/account/rate-limit"))
+        .and(path("/api/v1/account/rate-limit"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "tier": "unlimited", "limit": null, "remaining": null, "reset_at_ms": null
         })))

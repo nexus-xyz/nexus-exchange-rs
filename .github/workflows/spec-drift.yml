@@ -52,23 +52,52 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Cache the pinned spec
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: openapi.pinned.json
-          key: spec-${{ steps.pin.outputs.tag }}
-
-      - name: Fetch spec (cache miss only)
-        if: steps.cache.outputs.cache-hit != 'true'
+      # ─────────────────────────────────────────────────────────────────────
+      # TEMPORARY (ENG-4947, blocked on ENG-4943) — RESTORE BEFORE/AT MERGE.
+      #
+      # The `/api/v1` routes this SDK now targets live only on the unmerged
+      # nexus-exchange-api PR branch (ENG-4943, PR #41); no release tag contains
+      # them yet. So the drift check is pointed at that branch instead of the
+      # raw-at-tag release asset, and caching is disabled (a branch is mutable,
+      # so a cache keyed by tag would serve a stale snapshot).
+      #
+      # TO RESTORE once ENG-4943 merges and a release is cut:
+      #   1. Confirm `.api-version` holds the ACTUAL cut tag (anticipated v0.6.1).
+      #   2. Delete the "Fetch spec from …PR branch" step below.
+      #   3. Un-comment the "Cache the pinned spec" + "Fetch spec (cache miss
+      #      only)" steps that follow it (they fetch the raw-at-tag release).
+      # This whole block, the `.api-version`/README notes, and the SDK code are
+      # all tracked under ENG-4947.
+      - name: Fetch spec from the unreleased /api/v1 PR branch (TEMPORARY — ENG-4947)
         env:
-          # Passed via env (not interpolated into the script) so the tag is
-          # data, not code; validated to ^v[0-9.]+$ in the pin step above.
-          SPEC_TAG: ${{ steps.pin.outputs.tag }}
+          # Hardcoded branch ref (constant, not derived from `.api-version`), so
+          # there is no injection surface. `refs/heads/…` disambiguates the
+          # slashes in the branch name for the raw URL.
+          SPEC_REF: refs/heads/lucascampos/eng-4943-nexus-exchange-api-add-apiv1-routes-to-openapi-spec-cut
         run: |
           curl -fsSL \
-            "https://raw.githubusercontent.com/nexus-xyz/nexus-exchange-api/${SPEC_TAG}/openapi.json" \
+            "https://raw.githubusercontent.com/nexus-xyz/nexus-exchange-api/${SPEC_REF}/openapi.json" \
             -o openapi.pinned.json
+
+      # --- RESTORE: un-comment the two steps below and delete the temp step above. ---
+      # - name: Cache the pinned spec
+      #   id: cache
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: openapi.pinned.json
+      #     key: spec-${{ steps.pin.outputs.tag }}
+      #
+      # - name: Fetch spec (cache miss only)
+      #   if: steps.cache.outputs.cache-hit != 'true'
+      #   env:
+      #     # Passed via env (not interpolated into the script) so the tag is
+      #     # data, not code; validated to ^v[0-9.]+$ in the pin step above.
+      #     SPEC_TAG: ${{ steps.pin.outputs.tag }}
+      #   run: |
+      #     curl -fsSL \
+      #       "https://raw.githubusercontent.com/nexus-xyz/nexus-exchange-api/${SPEC_TAG}/openapi.json" \
+      #       -o openapi.pinned.json
+      # ─────────────────────────────────────────────────────────────────────
 
       - name: Check drift
         run: python3 scripts/check_spec_drift.py openapi.pinned.json

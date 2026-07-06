@@ -19,6 +19,19 @@ struct ApiErrorBody {
     message: Option<String>,
 }
 
+/// Path prefix for the direct-service (`/api/v1`) surface. A request whose path
+/// begins with this is routed to the host-root direct base
+/// ([`Config::direct_base_url`](crate::Config::direct_base_url)) rather than the
+/// legacy `/api/exchange` gateway base; everything else stays on the gateway.
+///
+/// The prefix is part of the `path` that is both **signed and sent**: the server
+/// verifies the HMAC over the exact path it receives, and — unlike the legacy
+/// gateway, which strips its own `/api/exchange` prefix before the indexer signs
+/// — the direct surface is served at the host root with no stripping, so the
+/// full `/api/v1/...` path is what must be signed. Selecting the base off this
+/// same prefix keeps the signed path and the sent URL from ever disagreeing.
+const API_V1_PREFIX: &str = "/api/v1/";
+
 /// Build the underlying HTTP client with the configured `User-Agent`.
 ///
 /// The UA is already normalized to a valid header value in
@@ -74,6 +87,22 @@ impl Client {
         &self.config.base_url
     }
 
+    /// Select the base URL for `path`: the host-root direct base for the
+    /// `/api/v1` surface, the legacy `/api/exchange` gateway base otherwise.
+    ///
+    /// Detection keys off the path prefix rather than a per-call flag so a single
+    /// centralized rule governs every request builder below — there is no way for
+    /// a v1 path to be sent to the gateway base (or vice versa) by omission. The
+    /// `path` argument is unchanged by this choice, so the value signed always
+    /// equals the value appended to the base.
+    fn base_for(&self, path: &str) -> &str {
+        if path.starts_with(API_V1_PREFIX) {
+            &self.config.direct_base_url
+        } else {
+            &self.config.base_url
+        }
+    }
+
     /// Unauthenticated `GET`, deserializing the JSON response and decoding the
     /// API's `{ code, message }` envelope on non-2xx.
     ///
@@ -95,7 +124,7 @@ impl Client {
         query: &[(&str, String)],
         cost: f64,
     ) -> Result<T> {
-        let url = format!("{}{}", self.config.base_url, path);
+        let url = format!("{}{}", self.base_for(path), path);
 
         // Reserve the endpoint's cost once for this logical request. Retries
         // below reuse that reservation and pace off `Retry-After` instead, so a
@@ -190,7 +219,7 @@ impl Client {
         let body_bytes = serde_json::to_vec(body)?;
         let req = self
             .http
-            .post(format!("{}{}", self.config.base_url, path))
+            .post(format!("{}{}", self.base_for(path), path))
             .timeout(self.config.timeout)
             .header("content-type", "application/json")
             .body(body_bytes);
@@ -213,9 +242,9 @@ impl Client {
             timestamp_ms: self.nonce(),
         })?;
         let url = if qs.is_empty() {
-            format!("{}{}", self.config.base_url, path)
+            format!("{}{}", self.base_for(path), path)
         } else {
-            format!("{}{}?{}", self.config.base_url, path, qs)
+            format!("{}{}?{}", self.base_for(path), path, qs)
         };
         let mut req = self.http.get(url).timeout(self.config.timeout);
         for (name, value) in &headers {
@@ -294,7 +323,7 @@ impl Client {
         })?;
         let mut req = self
             .http
-            .request(method, format!("{}{}", self.config.base_url, path))
+            .request(method, format!("{}{}", self.base_for(path), path))
             .timeout(self.config.timeout)
             .header("content-type", "application/json")
             .body(body_bytes);
@@ -324,9 +353,9 @@ impl Client {
             timestamp_ms: self.nonce(),
         })?;
         let url = if qs.is_empty() {
-            format!("{}{}", self.config.base_url, path)
+            format!("{}{}", self.base_for(path), path)
         } else {
-            format!("{}{}?{}", self.config.base_url, path, qs)
+            format!("{}{}?{}", self.base_for(path), path, qs)
         };
         let mut req = self.http.request(method, url).timeout(self.config.timeout);
         for (name, value) in &headers {
@@ -468,6 +497,55 @@ mod tests {
         // A newline is not a legal header-value byte.
         let client = Client::new(Config::with_base_url(server.uri()).with_user_agent("bad\nua"));
         let _: serde_json::Value = client.get("/x", &[], 0.0).await.unwrap();
+    }
+
+    /// `/api/v1/*` paths route to the host-root direct base; everything else
+    /// stays on the gateway base. This is the single rule every request builder
+    /// relies on, so pin it directly.
+    #[test]
+    fn base_for_routes_v1_to_direct_and_rest_to_gateway() {
+        let client = Client::new(Config::new(crate::Network::Stable));
+        assert_eq!(
+            client.base_for("/api/v1/orders"),
+            "https://exchange.nexus.xyz"
+        );
+        assert_eq!(
+            client.base_for("/api/v1/markets/summary"),
+            "https://exchange.nexus.xyz"
+        );
+        // Legacy / not-yet-migrated routes stay on the gateway base.
+        assert_eq!(
+            client.base_for("/health"),
+            "https://exchange.nexus.xyz/api/exchange"
+        );
+        assert_eq!(
+            client.base_for("/orders/o1"),
+            "https://exchange.nexus.xyz/api/exchange"
+        );
+    }
+
+    /// A signed request to a `/api/v1` path must be sent to the host root (no
+    /// `/api/exchange`) AND sign the full `/api/v1/...` path — the server signs
+    /// the path it receives, and nothing strips the prefix on the direct
+    /// surface. Drive it through a mock at the host root to prove both.
+    #[tokio::test]
+    async fn v1_path_is_sent_to_direct_base_and_signed_over_full_path() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/account"))
+            .and(header_exists("x-signature"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // A bare origin: the derived direct base equals the gateway base, so the
+        // only thing sending the request to `/api/v1/account` is the path prefix.
+        let client = Client::new(Config::with_base_url(server.uri()).api_key(
+            "nx",
+            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+        ));
+        let _: serde_json::Value = client.signed_get("/api/v1/account", &[]).await.unwrap();
     }
 
     #[tokio::test]

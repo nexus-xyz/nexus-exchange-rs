@@ -189,7 +189,7 @@ async fn create_orders_posts_batch_and_parses_typed_results() {
     // request order. Each entry is internally tagged by `outcome` (`ok`/`err`),
     // matching the engine's `BatchOrderResult`.
     Mock::given(method("POST"))
-        .and(path("/orders/batch"))
+        .and(path("/api/v1/orders/batch"))
         .and(header_exists("x-signature"))
         .and(body_json(serde_json::json!([
             {
@@ -255,7 +255,7 @@ async fn create_orders_posts_batch_and_parses_typed_results() {
 async fn create_order_with_client_order_id_serializes_field() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/orders"))
+        .and(path("/api/v1/orders"))
         .and(body_json(serde_json::json!({
             "market_id": "BTC-USDX-PERP", "side": "Buy", "order_type": "Market",
             "quantity": "0.1", "time_in_force": "IOC", "client_order_id": "my-id-1"

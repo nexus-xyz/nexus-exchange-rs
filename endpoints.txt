@@ -44,6 +44,7 @@ GET /orders
 GET /orders/{order_id}
 PATCH /orders/{order_id}
 POST /account/deposit
+POST /account/margin
 GET /withdrawals
 POST /account/credit
 PUT /admin/tiers

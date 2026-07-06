@@ -16,10 +16,10 @@ use crate::auth::{AgentRegistration, EthSigner};
 use crate::types::{
     AccountSummary, AdlEvent, AgentInfo, AgentRegistered, AmendOrder, ApiKeyInfo, CreatedApiKey,
     CreditResult, Decimal, DepositResult, Fill, FundingPayment, FundingSample, HealthStatus,
-    LeverageUpdate, LoginResponse, MarginMode, MarginModeUpdate, MarkPrice, Market, MarketStatus,
-    MarketSummary, Ohlcv, Order, OrderBook, OrderRequest, OrderResponse, OrderResult, Position,
-    RateLimitStatus, SubAccount, Ticker, TierOverride, Trade, Transfer, TransferRequest,
-    Withdrawal, WsToken,
+    LeverageUpdate, LoginResponse, MarginAdjustment, MarginDirection, MarginMode, MarginModeUpdate,
+    MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderRequest,
+    OrderResponse, OrderResult, Position, RateLimitStatus, SubAccount, Ticker, TierOverride, Trade,
+    Transfer, TransferRequest, Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
 
@@ -551,6 +551,61 @@ impl Client {
             &serde_json::json!({ "market_id": market_id, "margin_mode": margin_mode }),
         )
         .await
+    }
+
+    /// Add or remove isolated margin on an open position (`POST /account/margin`).
+    /// Requires credentials.
+    ///
+    /// Only applies to a position in [`MarginMode::Isolated`] mode — the server
+    /// rejects a cross-margined position with `MarginModeNotIsolated`. `amount`
+    /// is the collateral to move, sent as a decimal string; it must be positive
+    /// (checked locally before sending). Removing more than the position's free
+    /// isolated margin, or below the withdrawal floor, is rejected server-side
+    /// (`InsufficientMargin` / `InsufficientBalance`); a market with no open
+    /// position yields `NoOpenPosition`.
+    ///
+    /// See also [`add_margin`](Self::add_margin) and
+    /// [`remove_margin`](Self::remove_margin), thin wrappers that fix the
+    /// direction.
+    pub async fn adjust_margin(
+        &self,
+        market_id: &str,
+        direction: MarginDirection,
+        amount: Decimal,
+    ) -> Result<MarginAdjustment> {
+        require_non_empty(market_id, "market_id")?;
+        if amount <= Decimal::ZERO {
+            return Err(Error::invalid_request("margin amount must be positive"));
+        }
+        self.signed_post(
+            "/account/margin",
+            &serde_json::json!({
+                "market_id": market_id,
+                "direction": direction,
+                "amount": amount.to_string(),
+            }),
+        )
+        .await
+    }
+
+    /// Add isolated margin to an open position (`POST /account/margin` with
+    /// `direction: add`). Requires credentials. Convenience wrapper over
+    /// [`adjust_margin`](Self::adjust_margin).
+    pub async fn add_margin(&self, market_id: &str, amount: Decimal) -> Result<MarginAdjustment> {
+        self.adjust_margin(market_id, MarginDirection::Add, amount)
+            .await
+    }
+
+    /// Remove isolated margin from an open position (`POST /account/margin` with
+    /// `direction: remove`). Requires credentials. Convenience wrapper over
+    /// [`adjust_margin`](Self::adjust_margin).
+    pub async fn remove_margin(
+        &self,
+        market_id: &str,
+        amount: Decimal,
+    ) -> Result<MarginAdjustment> {
+        self.adjust_margin(market_id, MarginDirection::Remove, amount)
+            .await
     }
 
     /// Amend an open order in place on `market_id` (`PATCH /orders/{id}`) — an

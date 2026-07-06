@@ -4,7 +4,8 @@
 //! path-segment encoding, and the client-side validation guards.
 
 use nexus_exchange::types::{
-    AmendOrder, Decimal, MarginMode, OrderRequest, OrderResult, Side, TimeInForce, TransferRequest,
+    AmendOrder, Decimal, MarginDirection, MarginMode, OrderRequest, OrderResult, Side, TimeInForce,
+    TransferRequest,
 };
 use nexus_exchange::{Client, Config, Error};
 use wiremock::matchers::{body_json, header_exists, method, path};
@@ -76,6 +77,81 @@ async fn set_margin_mode_serializes_lowercase() {
         .await
         .unwrap();
     assert_eq!(r.margin_mode, MarginMode::Isolated);
+}
+
+#[tokio::test]
+async fn adjust_margin_posts_signed_body_and_parses() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/account/margin"))
+        .and(header_exists("x-signature"))
+        .and(body_json(serde_json::json!({
+            "market_id": "BTC-USDX-PERP",
+            "direction": "add",
+            "amount": "100",
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "market_id": "BTC-USDX-PERP",
+            "allocated_margin": "350.00",
+            "collateral": "9900.00",
+        })))
+        .mount(&server)
+        .await;
+    let r = authed(server.uri())
+        .adjust_margin("BTC-USDX-PERP", MarginDirection::Add, dec("100"))
+        .await
+        .unwrap();
+    assert_eq!(r.market_id, "BTC-USDX-PERP");
+    assert_eq!(r.allocated_margin, dec("350.00"));
+    assert_eq!(r.collateral, dec("9900.00"));
+}
+
+#[tokio::test]
+async fn remove_margin_sends_remove_direction() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/account/margin"))
+        .and(header_exists("x-signature"))
+        .and(body_json(serde_json::json!({
+            "market_id": "BTC-USDX-PERP",
+            "direction": "remove",
+            "amount": "25.5",
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "market_id": "BTC-USDX-PERP",
+            "allocated_margin": "324.50",
+            "collateral": "9925.50",
+        })))
+        .mount(&server)
+        .await;
+    let r = authed(server.uri())
+        .remove_margin("BTC-USDX-PERP", dec("25.5"))
+        .await
+        .unwrap();
+    assert_eq!(r.allocated_margin, dec("324.50"));
+}
+
+#[tokio::test]
+async fn adjust_margin_rejects_non_positive_amount_and_empty_market() {
+    // No mock mounted: a request escaping the client would surface as a
+    // transport error rather than the local validation error.
+    let client = authed("http://127.0.0.1:1".to_string());
+    let zero = client
+        .add_margin("BTC-USDX-PERP", dec("0"))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        zero,
+        Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+    ));
+    let empty = client
+        .adjust_margin("", MarginDirection::Add, dec("100"))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        empty,
+        Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+    ));
 }
 
 #[tokio::test]

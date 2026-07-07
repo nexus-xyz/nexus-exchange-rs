@@ -41,10 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `with_base_url` (strips a trailing `/api/exchange`), or overridden with
   `Config::with_direct_base_url`. Signed `/api/v1` requests sign the **full path
   including the prefix**, matching the server (the gateway strips its prefix
-  before signing; the direct surface does not). **Pending:** depends on the
-  unreleased `/api/v1` spec (ENG-4943 / `nexus-exchange-api#41`) — the pin
-  (`v0.6.1`) and the temporary `spec-drift` branch override must be finalized
-  when that spec releases.
+  before signing; the direct surface does not). The `/api/v1` routes landed in
+  the `v0.6.2` spec (ENG-4943 / `nexus-exchange-api#41`).
 - **Breaking:** `Client::create_orders` now returns `Vec<OrderResult>` instead of
   the untyped `serde_json::Value`, so callers no longer re-serialize and
   string-parse the batch result (ENG-4199). `OrderResult` is a typed enum

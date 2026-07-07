@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Migrated the market-data and account/trading endpoints to the direct-service
+  `/api/v1` surface (ENG-4947): they are now served at the **host root** instead
+  of the `/api/exchange` gateway, matching the gateway-elimination work
+  (ENG-4740). The Rust method surface is unchanged — only the wire path/base
+  moves — so this is not a source-breaking change. Endpoints with no `/api/v1`
+  variant yet (health, keys, agents, wallet auth, deposits/withdrawals, ADL,
+  admin, WebSocket-token, `GET /orders/{id}`, and the tier-3 endpoints) stay on
+  the gateway (dual-stack, ENG-4751). `Config` gains a `direct_base_url` (host
+  root) alongside the gateway `base_url` — set from the `Network`, derived from
+  `with_base_url` (strips a trailing `/api/exchange`), or overridden with
+  `Config::with_direct_base_url`. Signed `/api/v1` requests sign the **full path
+  including the prefix**, matching the server (the gateway strips its prefix
+  before signing; the direct surface does not). The `/api/v1` routes landed in
+  the `v0.6.2` spec (ENG-4943 / `nexus-exchange-api#41`).
+
 ## [0.5.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.4.1...v0.5.0) - 2026-07-02
 
 ### Other

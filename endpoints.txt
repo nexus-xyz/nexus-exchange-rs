@@ -12,16 +12,36 @@
 # So: add a line here whenever you add a REST wrapper for a spec operation, or
 # the drift check fails. Format:
 #   METHOD /path   (path placeholders match the spec, e.g. {market_id})
+#
+# Dual-stack routing (ENG-4947 / gateway elimination ENG-4740): paths under the
+# `/api/v1/` prefix are the direct-indexer surface (served at the host root); the
+# rest stay on the legacy `/api/exchange` gateway. The path here is the FULL path
+# the SDK signs and sends — so a migrated op is listed with its `/api/v1` prefix,
+# exactly as it appears in the spec and in the src/rest.rs literal.
+
+# --- Direct-service surface (/api/v1) — migrated off the gateway ---
+GET /api/v1/markets/summary
+GET /api/v1/tickers
+GET /api/v1/markets/{market_id}/ticker
+GET /api/v1/markets/{market_id}/orderbook
+GET /api/v1/markets/{market_id}/trades
+GET /api/v1/markets/{market_id}/candles
+GET /api/v1/markets/{market_id}/funding
+GET /api/v1/markets/{market_id}/mark-price
+GET /api/v1/markets/{market_id}/status
+GET /api/v1/account
+GET /api/v1/account/rate-limit
+POST /api/v1/account/credit
+GET /api/v1/positions
+GET /api/v1/fills
+POST /api/v1/orders
+GET /api/v1/orders
+DELETE /api/v1/orders
+POST /api/v1/orders/batch
+DELETE /api/v1/orders/{order_id}
+
+# --- Legacy gateway surface (/api/exchange) — no /api/v1 variant yet ---
 GET /markets
-GET /markets/summary
-GET /tickers
-GET /markets/{market_id}/ticker
-GET /markets/{market_id}/orderbook
-GET /markets/{market_id}/trades
-GET /markets/{market_id}/candles
-GET /markets/{market_id}/funding
-GET /markets/{market_id}/mark-price
-GET /markets/{market_id}/status
 GET /markets/{market_id}/adl-events
 GET /account/{address}/adl-history
 GET /health
@@ -32,21 +52,11 @@ GET /agents
 POST /agents/register
 DELETE /agents/{address}
 POST /auth/login
-GET /account
-GET /positions
-GET /fills
-GET /account/rate-limit
-POST /orders
-POST /orders/batch
-DELETE /orders/{order_id}
-DELETE /orders
-GET /orders
 GET /orders/{order_id}
 PATCH /orders/{order_id}
 POST /account/deposit
 POST /account/margin
 GET /withdrawals
-POST /account/credit
 PUT /admin/tiers
 GET /admin/tiers
 DELETE /admin/tiers/{address}

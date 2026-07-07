@@ -17,7 +17,7 @@ fn authed(uri: String) -> Client {
 async fn create_order_serializes_pascalcase_and_parses_response() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/orders"))
+        .and(path("/api/v1/orders"))
         .and(header("x-api-key", "nx_test"))
         // proves enum serialization (Buy/Limit/GTC) and decimal-string fields
         .and(body_json(serde_json::json!({
@@ -52,7 +52,7 @@ async fn create_order_serializes_pascalcase_and_parses_response() {
 async fn fetch_open_orders_parses() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/orders"))
+        .and(path("/api/v1/orders"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([{
             "id": "o1", "market_id": "BTC-USDX-PERP", "account_id": "0xabc", "side": "Sell",
             "order_type": "Limit", "price": "51000", "quantity": "0.2", "filled_qty": "0.05",
@@ -69,7 +69,7 @@ async fn fetch_open_orders_parses() {
 async fn cancel_order_returns_ack() {
     let server = MockServer::start().await;
     Mock::given(method("DELETE"))
-        .and(path("/orders/o1"))
+        .and(path("/api/v1/orders/o1"))
         .and(wiremock::matchers::query_param(
             "market_id",
             "BTC-USDX-PERP",
@@ -92,7 +92,7 @@ async fn cancel_all_orders_sends_no_market_filter() {
     // no `market_id` query param — otherwise it would scope to a market.
     let server = MockServer::start().await;
     Mock::given(method("DELETE"))
-        .and(path("/orders"))
+        .and(path("/api/v1/orders"))
         .and(query_param_is_missing("market_id"))
         .and(body_string(""))
         .and(header_exists("x-signature"))
@@ -112,7 +112,7 @@ async fn cancel_orders_for_market_scopes_to_market() {
     // the path+query that is actually sent.
     let server = MockServer::start().await;
     Mock::given(method("DELETE"))
-        .and(path("/orders"))
+        .and(path("/api/v1/orders"))
         .and(query_param("market_id", "BTC-USDX-PERP"))
         .and(body_string(""))
         .and(header_exists("x-signature"))

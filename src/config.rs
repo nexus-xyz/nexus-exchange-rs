@@ -26,11 +26,32 @@ pub enum Network {
 }
 
 impl Network {
-    /// Base URL for this network.
+    /// Legacy gateway base URL for this network (the `/api/exchange` REST
+    /// gateway). Routes that have **not** yet migrated to the direct `/api/v1`
+    /// service are still served here (dual-stack — ENG-4751).
     pub fn base_url(self) -> &'static str {
         match self {
             Network::Stable => "https://exchange.nexus.xyz/api/exchange",
             Network::Beta => "https://beta.exchange.nexus.xyz/api/exchange",
+            Network::Local => "http://localhost:9090",
+        }
+    }
+
+    /// Direct-service base URL for the `/api/v1` surface — the **host root**,
+    /// with no `/api/exchange` gateway prefix.
+    ///
+    /// Under the gateway-elimination work (ENG-4740) each backend service
+    /// exposes its own REST API at the host root under the `/api/v1` prefix,
+    /// served directly by the indexer rather than proxied through the
+    /// `/api/exchange` gateway. Requests to `/api/v1/*` paths are routed here;
+    /// see [`crate::Client`] for how the base is selected per request. Local dev
+    /// serves both surfaces from the same origin, so it matches [`base_url`].
+    ///
+    /// [`base_url`]: Self::base_url
+    pub fn direct_base_url(self) -> &'static str {
+        match self {
+            Network::Stable => "https://exchange.nexus.xyz",
+            Network::Beta => "https://beta.exchange.nexus.xyz",
             Network::Local => "http://localhost:9090",
         }
     }
@@ -277,11 +298,30 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const DEFAULT_USER_AGENT: &str =
     concat!("nexus-exchange-rs/", env!("CARGO_PKG_VERSION"));
 
+/// Derive the direct-service base (host root) for the `/api/v1` surface from a
+/// gateway-style base URL, by stripping a single trailing `/api/exchange`
+/// gateway segment (and any trailing slash). A base that carries no such segment
+/// — a bare origin, a local dev server, or a custom deployment — is returned
+/// unchanged, so `/api/v1` requests resolve at that same origin. When the direct
+/// host genuinely differs, override it with [`Config::with_direct_base_url`].
+fn derive_direct_base(base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    trimmed
+        .strip_suffix("/api/exchange")
+        .unwrap_or(trimmed)
+        .to_string()
+}
+
 /// Client configuration. Credentials are optional — public market-data
 /// endpoints need none.
 #[derive(Debug, Clone)]
 pub struct Config {
     pub(crate) base_url: String,
+    /// Host-root base for the direct-service `/api/v1` surface (see
+    /// [`Network::direct_base_url`]). Requests whose path begins with `/api/v1/`
+    /// are sent here instead of [`base_url`](Self::base_url); everything else
+    /// stays on the legacy gateway base.
+    pub(crate) direct_base_url: String,
     /// The [`Network`] this client targets, when built via [`Config::new`].
     /// `None` when built from a raw base URL ([`Config::with_base_url`]), where
     /// the real-money-vs-faucet character of the host is unknown — see
@@ -305,6 +345,7 @@ impl Config {
     pub fn new(network: Network) -> Self {
         Self {
             base_url: network.base_url().to_string(),
+            direct_base_url: network.direct_base_url().to_string(),
             network: Some(network),
             ws_url: network.ws_base().map(str::to_string),
             ws: WsConfig::default(),
@@ -331,8 +372,10 @@ impl Config {
     /// [`Client::connect_ws`]: crate::Client::connect_ws
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
         let base_url = base_url.into();
+        let direct_base_url = derive_direct_base(&base_url);
         Self {
             base_url,
+            direct_base_url,
             network: None,
             ws_url: None,
             ws: WsConfig::default(),
@@ -382,6 +425,20 @@ impl Config {
         } else {
             DEFAULT_USER_AGENT.to_string()
         };
+        self
+    }
+
+    /// Override the direct-service base URL used for the `/api/v1` surface (the
+    /// host root; see [`Network::direct_base_url`]).
+    ///
+    /// [`Config::with_base_url`] derives this by stripping a trailing
+    /// `/api/exchange` gateway segment from the base URL, which is correct for
+    /// the standard split deployment and for a single-origin dev server. Use
+    /// this setter when the direct `/api/v1` host cannot be derived that way —
+    /// e.g. a preview deployment whose direct service lives on a different host
+    /// than its gateway.
+    pub fn with_direct_base_url(mut self, direct_base_url: impl Into<String>) -> Self {
+        self.direct_base_url = direct_base_url.into();
         self
     }
 
@@ -446,9 +503,15 @@ impl Config {
         self
     }
 
-    /// The configured REST base URL.
+    /// The configured (legacy gateway) REST base URL.
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    /// The configured direct-service base URL for the `/api/v1` surface (see
+    /// [`Network::direct_base_url`]).
+    pub fn direct_base_url(&self) -> &str {
+        &self.direct_base_url
     }
 
     /// The [`Network`] this client targets, or `None` when it was built from a
@@ -560,5 +623,51 @@ mod tests {
     fn channel_capacity_is_clamped_to_at_least_one() {
         let cfg = Config::default().with_channel_capacity(0);
         assert_eq!(cfg.ws.channel_capacity, 1);
+    }
+
+    /// Built-in networks carry both bases: the gateway base keeps `/api/exchange`,
+    /// while the direct `/api/v1` base is the host root with no gateway prefix.
+    #[test]
+    fn networks_expose_gateway_and_direct_bases() {
+        assert_eq!(
+            Network::Stable.base_url(),
+            "https://exchange.nexus.xyz/api/exchange"
+        );
+        assert_eq!(
+            Network::Stable.direct_base_url(),
+            "https://exchange.nexus.xyz"
+        );
+        // Local dev serves both surfaces from one origin.
+        assert_eq!(Network::Local.base_url(), Network::Local.direct_base_url());
+    }
+
+    /// `with_base_url` derives the direct base by stripping a trailing
+    /// `/api/exchange` gateway segment; a bare origin is used unchanged so
+    /// `/api/v1` requests resolve at that same host (this is what keeps the
+    /// wiremock tests, which pass a bare `http://127.0.0.1:PORT`, working).
+    #[test]
+    fn direct_base_is_derived_from_gateway_base() {
+        let cfg = Config::with_base_url("https://preview.example/api/exchange");
+        assert_eq!(cfg.base_url(), "https://preview.example/api/exchange");
+        assert_eq!(cfg.direct_base_url(), "https://preview.example");
+
+        // Trailing slash tolerated.
+        assert_eq!(
+            Config::with_base_url("https://preview.example/api/exchange/").direct_base_url(),
+            "https://preview.example"
+        );
+
+        // A bare origin (no gateway segment) is used unchanged for both.
+        let bare = Config::with_base_url("http://127.0.0.1:8080");
+        assert_eq!(bare.base_url(), "http://127.0.0.1:8080");
+        assert_eq!(bare.direct_base_url(), "http://127.0.0.1:8080");
+
+        // Explicit override wins over the derivation.
+        assert_eq!(
+            Config::with_base_url("https://preview.example/api/exchange")
+                .with_direct_base_url("https://direct.preview.example")
+                .direct_base_url(),
+            "https://direct.preview.example"
+        );
     }
 }

@@ -64,7 +64,7 @@ in-development SDK series) are bot-managed; the historical rows are left as-is.
 
 | SDK version | API spec |
 |---|---|
-| `0.3.x` | `v0.6.0` |
+| `0.3.x` | `v0.6.2` |
 | `0.1.x`–`0.2.x` | `v0.3.5` |
 
 ## License

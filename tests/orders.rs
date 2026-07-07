@@ -70,12 +70,19 @@ async fn cancel_order_returns_ack() {
     let server = MockServer::start().await;
     Mock::given(method("DELETE"))
         .and(path("/api/v1/orders/o1"))
+        .and(wiremock::matchers::query_param(
+            "market_id",
+            "BTC-USDX-PERP",
+        ))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(serde_json::json!({"status": "Cancelled"})),
         )
         .mount(&server)
         .await;
-    let ack = authed(server.uri()).cancel_order("o1").await.unwrap();
+    let ack = authed(server.uri())
+        .cancel_order("o1", "BTC-USDX-PERP")
+        .await
+        .unwrap();
     assert_eq!(ack["status"], "Cancelled");
 }
 

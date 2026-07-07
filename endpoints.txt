@@ -53,6 +53,7 @@ POST /agents/register
 DELETE /agents/{address}
 POST /auth/login
 GET /orders/{order_id}
+PATCH /orders/{order_id}
 POST /account/deposit
 GET /withdrawals
 PUT /admin/tiers

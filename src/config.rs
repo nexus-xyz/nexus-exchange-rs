@@ -81,6 +81,22 @@ impl Network {
             Network::Stable | Network::Beta => None,
         }
     }
+
+    /// Whether this network moves **real collateral** (production), as opposed
+    /// to a non-production environment where funding comes from the synthetic
+    /// testnet faucet ([`Client::claim_credit`](crate::Client::claim_credit)).
+    ///
+    /// This is the safety predicate behind [`Client::fund`](crate::Client::fund):
+    /// the convenience helper claims faucet credit on non-production networks
+    /// but refuses to silently deposit on production. The match is exhaustive
+    /// on purpose — a new [`Network`] variant must consciously declare whether
+    /// it is real-money before any helper will fund it.
+    pub fn is_production(self) -> bool {
+        match self {
+            Network::Stable => true,
+            Network::Beta | Network::Local => false,
+        }
+    }
 }
 
 /// Tunables for the streaming WebSocket client.
@@ -306,6 +322,11 @@ pub struct Config {
     /// are sent here instead of [`base_url`](Self::base_url); everything else
     /// stays on the legacy gateway base.
     pub(crate) direct_base_url: String,
+    /// The [`Network`] this client targets, when built via [`Config::new`].
+    /// `None` when built from a raw base URL ([`Config::with_base_url`]), where
+    /// the real-money-vs-faucet character of the host is unknown — see
+    /// [`Config::network`].
+    pub(crate) network: Option<Network>,
     /// The WebSocket origin to stream from, or `None` when it is not known for
     /// the configured network (production host unconfirmed — ENG-3398). A
     /// separate host from `base_url`; see [`Network::ws_base`].
@@ -325,6 +346,7 @@ impl Config {
         Self {
             base_url: network.base_url().to_string(),
             direct_base_url: network.direct_base_url().to_string(),
+            network: Some(network),
             ws_url: network.ws_base().map(str::to_string),
             ws: WsConfig::default(),
             rate_limit: RateLimit::default(),
@@ -354,6 +376,7 @@ impl Config {
         Self {
             base_url,
             direct_base_url,
+            network: None,
             ws_url: None,
             ws: WsConfig::default(),
             rate_limit: RateLimit::default(),
@@ -491,6 +514,13 @@ impl Config {
         &self.direct_base_url
     }
 
+    /// The [`Network`] this client targets, or `None` when it was built from a
+    /// raw base URL via [`Config::with_base_url`] (the host's real-money vs.
+    /// testnet-faucet character is then unknown to the SDK).
+    pub fn network(&self) -> Option<Network> {
+        self.network
+    }
+
     /// The configured WebSocket origin, or `None` if none is known for this
     /// network yet (see [`Network::ws_base`]).
     pub fn ws_url(&self) -> Option<&str> {
@@ -546,6 +576,23 @@ mod tests {
         assert_eq!(Network::Local.ws_base(), Some("ws://localhost:9090/ws"));
         assert_eq!(Network::Stable.ws_base(), None);
         assert_eq!(Network::Beta.ws_base(), None);
+    }
+
+    /// Only the production channel moves real collateral; the others fund from
+    /// the testnet faucet. `fund()` keys its real-money safety guard off this.
+    #[test]
+    fn only_stable_is_production() {
+        assert!(Network::Stable.is_production());
+        assert!(!Network::Beta.is_production());
+        assert!(!Network::Local.is_production());
+    }
+
+    /// A network-built config carries its `Network`; a raw-base-URL one does
+    /// not (so `fund()` can tell "known testnet" from "unknown host").
+    #[test]
+    fn config_retains_network_only_when_built_from_one() {
+        assert_eq!(Config::new(Network::Beta).network(), Some(Network::Beta));
+        assert_eq!(Config::with_base_url("http://x").network(), None);
     }
 
     /// `Config` mirrors `ws_base`: a network with a known WS host carries it,

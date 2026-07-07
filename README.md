@@ -5,7 +5,9 @@
 Official Rust SDK for the [Nexus Exchange](https://exchange.nexus.xyz) API — a
 thin, idiomatic wrapper over the public REST + WebSocket API.
 
-> **Status: early.** This is the crate skeleton; endpoints land incrementally.
+> **Status: in production use.** The SDK covers the public REST + WebSocket
+> surface and is what Nexus's own market-making bots trade through. The API is
+> pre-1.0 and evolves with the [spec](#api-version).
 
 ## Design
 
@@ -25,20 +27,22 @@ double as the primary docs. Run one with `cargo run --example <name>`:
 
 | Example | Auth | What it shows |
 |---|---|---|
-| `public_endpoints` | no | Markets, tickers, top of book |
-| `orderbook_snapshot` | no | Full order-book snapshot + spread |
-| `recent_trades` | no | Recent public trade prints |
-| `place_order` | yes | Normalize to tick/lot, then place a limit order |
-| `cancel_order` | yes | Cancel one order by id, one market, or cancel all |
-| `account_balances` | yes | Balance, collateral, equity, margin |
-| `positions` | yes | Open positions with PnL and liquidation price |
-
-The two WebSocket streaming examples (`ws_orderbook`, `ws_user_events`) land
-separately via [#37](https://github.com/nexus-xyz/nexus-exchange-rs/pull/37),
-which merges after this PR.
+| [`public_endpoints`](./examples/public_endpoints.rs) | no | Markets, tickers, top of book |
+| [`orderbook_snapshot`](./examples/orderbook_snapshot.rs) | no | Full order-book snapshot + spread |
+| [`recent_trades`](./examples/recent_trades.rs) | no | Recent public trade prints |
+| [`ws_orderbook`](./examples/ws_orderbook.rs) | no | Stream live order-book updates over the WebSocket |
+| [`place_order`](./examples/place_order.rs) | yes | Normalize to tick/lot, then place a limit order |
+| [`cancel_order`](./examples/cancel_order.rs) | yes | Cancel one order by id, one market, or cancel all |
+| [`account_balances`](./examples/account_balances.rs) | yes | Balance, collateral, equity, margin |
+| [`positions`](./examples/positions.rs) | yes | Open positions with PnL and liquidation price |
+| [`ws_user_events`](./examples/ws_user_events.rs) | yes | Stream private per-account events (fills, orders) |
 
 Authenticated examples read `NEXUS_API_KEY` / `NEXUS_API_SECRET` from the
 environment and default to a non-production network where they mutate state.
+
+For a complete command-line application built on the SDK — every request goes
+through the crate's `Client`, with no transport of its own — see
+[`nexus-exchange-cli`](https://github.com/nexus-xyz/nexus-exchange-cli).
 
 ## API version
 
@@ -52,13 +56,15 @@ The pinned version lives in [`.api-version`](./.api-version); the spec itself is
 published by
 [`nexus-xyz/nexus-exchange-api`](https://github.com/nexus-xyz/nexus-exchange-api).
 This repo does not vendor a copy — `spec-drift` CI fetches the pinned release to
-check for drift, and the scheduled `api-version-sync` workflow opens a PR when a
-newer spec releases. The line above is bot-managed; the table below is
-maintained by hand when an SDK release ships a new pin.
+check for drift, and `spec-autobump` opens a PR when a newer spec releases
+(dispatched on api-repo release, with a daily poll fallback). It classifies the
+change with oasdiff: non-breaking bumps arm auto-merge, breaking ones route to a
+human (ENG-3563). The line above and the top row of the table below (the
+in-development SDK series) are bot-managed; the historical rows are left as-is.
 
 | SDK version | API spec |
 |---|---|
-| `0.3.x` | `v0.4.0` |
+| `0.3.x` | `v0.6.0` |
 | `0.1.x`–`0.2.x` | `v0.3.5` |
 
 ## License

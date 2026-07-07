@@ -81,8 +81,12 @@ async fn set_margin_mode_serializes_lowercase() {
 #[tokio::test]
 async fn amend_order_puts_only_changed_fields() {
     let server = MockServer::start().await;
-    Mock::given(method("PUT"))
+    Mock::given(method("PATCH"))
         .and(path("/orders/o1"))
+        .and(wiremock::matchers::query_param(
+            "market_id",
+            "BTC-USDX-PERP",
+        ))
         .and(header_exists("x-signature"))
         // Only `price` and `quantity` were set: the unset fields must be absent.
         .and(body_json(
@@ -99,7 +103,7 @@ async fn amend_order_puts_only_changed_fields() {
         .await;
     let amend = AmendOrder::new().price(dec("50500")).quantity(dec("0.2"));
     let resp = authed(server.uri())
-        .amend_order("o1", &amend)
+        .amend_order("o1", "BTC-USDX-PERP", &amend)
         .await
         .unwrap();
     assert_eq!(resp.order.price, Some(dec("50500")));
@@ -109,8 +113,12 @@ async fn amend_order_puts_only_changed_fields() {
 #[tokio::test]
 async fn amend_order_serializes_tif_and_client_order_id() {
     let server = MockServer::start().await;
-    Mock::given(method("PUT"))
+    Mock::given(method("PATCH"))
         .and(path("/orders/o1"))
+        .and(wiremock::matchers::query_param(
+            "market_id",
+            "BTC-USDX-PERP",
+        ))
         .and(header_exists("x-signature"))
         // Exercises the `time_in_force` and `client_order_id` setters: TIF
         // serializes UPPERCASE, and only the two set fields appear in the body.
@@ -130,7 +138,7 @@ async fn amend_order_serializes_tif_and_client_order_id() {
         .time_in_force(TimeInForce::Ioc)
         .client_order_id("replacement-1");
     let resp = authed(server.uri())
-        .amend_order("o1", &amend)
+        .amend_order("o1", "BTC-USDX-PERP", &amend)
         .await
         .unwrap();
     assert_eq!(resp.order.time_in_force, TimeInForce::Ioc);
@@ -140,7 +148,7 @@ async fn amend_order_serializes_tif_and_client_order_id() {
 #[tokio::test]
 async fn amend_order_with_no_changes_is_rejected() {
     let err = authed("http://127.0.0.1:1".to_string())
-        .amend_order("o1", &AmendOrder::new())
+        .amend_order("o1", "BTC-USDX-PERP", &AmendOrder::new())
         .await
         .unwrap_err();
     assert!(matches!(

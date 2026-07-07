@@ -1,0 +1,224 @@
+name: Spec autobump
+
+# Auto-pick-up a new nexus-exchange-api spec release. When the api repo cuts a
+# release it fans out a `repository_dispatch` (`spec-released`, carrying the new
+# tag); a daily `schedule` poll is the self-healing fallback if a dispatch is
+# dropped. Either way this workflow:
+#
+#   1. resolves the target tag (dispatch payload, or the api repo's latest
+#      release on the scheduled path) and confirms it is newer than `.api-version`,
+#   2. fetches the currently-pinned spec and the target spec (same raw-at-tag URL
+#      the spec-drift check uses — the download_count signal stays reserved),
+#   3. runs oasdiff to classify old-pin -> new as BREAKING vs NON-BREAKING,
+#   4. bumps `.api-version` + the README "currently targets" line
+#      (scripts/sync_api_version.py) and the README compat-table row
+#      (scripts/update_compat_table.py), and opens a PR.
+#
+#   * NON-BREAKING -> label `spec-autobump`, arm GitHub auto-merge (squash).
+#   * BREAKING      -> label `breaking · needs-SDK-update`, request review, do
+#                      NOT arm auto-merge.
+#
+# SAFETY: arming auto-merge does not merge. The PR still cannot merge until
+#   (a) the required status checks pass — the SDK's own `drift` + `test` (CI) —
+#       which prove the pin advance needs no code change, and
+#   (b) the ENG-4149 ruleset bypass for this bot is configured to satisfy the
+#       1-review + code-owner-review rule for these pin-bump PRs only.
+# Until ENG-4149 lands, a non-breaking PR just sits green awaiting the bypass —
+# no premature merges. Landing this workflow now is safe.
+#
+# This is the REFERENCE implementation for ENG-3563. To replicate it to the
+# other SDKs / the monorepo, see docs/spec-autobump-replication.md.
+#
+# Supersedes the old `api-version-sync.yml` (poll-only, no oasdiff gate, no
+# auto-merge) — that workflow is removed in the same change. The pin-bump helper
+# it used (scripts/sync_api_version.py) is reused here.
+
+on:
+  repository_dispatch:
+    types: [spec-released]
+  schedule:
+    # Daily fallback poll; the dispatch from the api repo is the fast path.
+    - cron: "23 8 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Spec tag to evaluate (e.g. v0.5.0). Defaults to api repo latest."
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # Serialize on the workflow, not the tag: two near-simultaneous releases must
+  # not race to bump the same pin.
+  group: spec-autobump
+  cancel-in-progress: false
+
+env:
+  SPEC_REPO: nexus-xyz/nexus-exchange-api
+
+jobs:
+  autobump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Use the bump token (ENG-4149) so the opened PR triggers the required
+          # checks (drift, CI). A PR opened with the default GITHUB_TOKEN does
+          # not trigger other workflows, which would wedge auto-merge forever.
+          token: ${{ secrets.SDK_DISPATCH_TOKEN || github.token }}
+
+      - name: Resolve target tag
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ github.token }} # lifts the releases-API rate limit
+          # Dispatch payload tag is repo-controlled, but keep it as data.
+          DISPATCH_TAG: ${{ github.event.client_payload.tag }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${DISPATCH_TAG:-${INPUT_TAG:-}}"
+          if [ -z "$tag" ]; then
+            # Scheduled path: ask the api repo for its latest release tag.
+            tag="$(gh api "repos/${SPEC_REPO}/releases/latest" --jq .tag_name)"
+          fi
+          # Validate strictly before the tag reaches a URL, a file, or a branch
+          # name — a dispatch payload is untrusted data.
+          if [[ ! "$tag" =~ ^v[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            echo "::error::resolved tag is not vX.Y.Z: '$tag'"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "pinned=$(cat .api-version)" >> "$GITHUB_OUTPUT"
+          echo "Resolved target tag: $tag (currently pinned: $(cat .api-version))"
+
+      - name: Stop if not newer than the pin
+        id: gate
+        env:
+          NEW_TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Reuse the lag check; exit 3 == behind (a newer spec exists), 0 == current.
+          if python3 scripts/sync_api_version.py --check --latest "$NEW_TAG"; then
+            echo "Pin is already at or ahead of $NEW_TAG; nothing to bump."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          else
+            rc=$?
+            if [ "$rc" -eq 3 ]; then
+              echo "A newer spec ($NEW_TAG) is available; proceeding."
+              echo "proceed=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::sync_api_version.py --check failed (exit $rc)"
+              exit "$rc"
+            fi
+          fi
+
+      - name: Fetch pinned + target specs
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          OLD_TAG: ${{ steps.resolve.outputs.pinned }}
+          NEW_TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Same raw-at-tag URL the spec-drift check uses (uncounted; the release
+          # asset download_count stays reserved as an external adoption signal).
+          curl -fsSL "https://raw.githubusercontent.com/${SPEC_REPO}/${OLD_TAG}/openapi.json" -o /tmp/spec-old.json
+          curl -fsSL "https://raw.githubusercontent.com/${SPEC_REPO}/${NEW_TAG}/openapi.json" -o /tmp/spec-new.json
+
+      - name: Install oasdiff
+        if: steps.gate.outputs.proceed == 'true'
+        run: curl -fsSL https://raw.githubusercontent.com/oasdiff/oasdiff/main/install.sh | sh
+
+      - name: Classify old-pin -> new with oasdiff
+        if: steps.gate.outputs.proceed == 'true'
+        id: oasdiff
+        run: |
+          set -euo pipefail
+          # Informational changelog in the log for the PR reviewer.
+          oasdiff changelog /tmp/spec-old.json /tmp/spec-new.json || true
+
+          # Capture the breaking summary for the PR body.
+          oasdiff breaking /tmp/spec-old.json /tmp/spec-new.json --format text \
+            > /tmp/oasdiff-breaking.txt 2>&1 || true
+
+          # The classification: same gate the api repo's "Classify API changes"
+          # uses. `--fail-on ERR` exits non-zero iff there is an ERR-level
+          # (breaking) change; WARN/INFO-level changes are non-breaking.
+          if oasdiff breaking /tmp/spec-old.json /tmp/spec-new.json --fail-on ERR; then
+            echo "verdict=non-breaking" >> "$GITHUB_OUTPUT"
+            echo "No ERR-level (breaking) changes — NON-BREAKING."
+          else
+            echo "verdict=breaking" >> "$GITHUB_OUTPUT"
+            echo "ERR-level (breaking) change(s) detected — BREAKING."
+          fi
+
+      - name: Apply the pin bump + compat-table row
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          NEW_TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          python3 scripts/sync_api_version.py --write --latest "$NEW_TAG"
+          python3 scripts/update_compat_table.py --tag "$NEW_TAG"
+
+      - name: Open / update the bump PR
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SDK_DISPATCH_TOKEN || github.token }}
+          NEW_TAG: ${{ steps.resolve.outputs.tag }}
+          OLD_TAG: ${{ steps.resolve.outputs.pinned }}
+          VERDICT: ${{ steps.oasdiff.outputs.verdict }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No file change after bump — nothing to open."
+            exit 0
+          fi
+
+          branch="chore/spec-autobump-${NEW_TAG}"
+
+          # Idempotent: if the branch already exists upstream, or an open PR is
+          # already on it, leave it rather than churning a duplicate each poll.
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "Branch $branch already exists upstream; nothing to do."
+            exit 0
+          fi
+          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            echo "An open PR for $branch already exists; nothing to do."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add .api-version README.md
+          git commit -m "chore(spec): bump .api-version to ${NEW_TAG}"
+          git push --set-upstream origin "$branch"
+
+          # Render the body in Python (the markdown is dense with backticks and
+          # ${...} examples — keeping it out of inline shell avoids quoting traps).
+          python3 scripts/render_autobump_pr_body.py \
+            --new-tag "$NEW_TAG" \
+            --old-tag "$OLD_TAG" \
+            --verdict "$VERDICT" \
+            --oasdiff-file /tmp/oasdiff-breaking.txt \
+            > "$RUNNER_TEMP/pr-body.md"
+
+          if [ "$VERDICT" = "non-breaking" ]; then
+            gh pr create --base main --head "$branch" \
+              --title "chore(spec): bump .api-version to ${NEW_TAG}" \
+              --body-file "$RUNNER_TEMP/pr-body.md" \
+              --label "spec-autobump"
+            # Arm auto-merge (squash). Gated on required checks + ENG-4149 bypass;
+            # cannot actually merge until both are satisfied.
+            gh pr merge "$branch" --auto --squash
+          else
+            gh pr create --base main --head "$branch" \
+              --title "chore(spec): bump .api-version to ${NEW_TAG}" \
+              --body-file "$RUNNER_TEMP/pr-body.md" \
+              --label "breaking · needs-SDK-update"
+            # Route to a human; do NOT arm auto-merge.
+            gh pr edit "$branch" --add-reviewer nexus-xyz/eng || \
+              echo "::warning::could not request review (team handle may differ); add a reviewer manually."
+          fi

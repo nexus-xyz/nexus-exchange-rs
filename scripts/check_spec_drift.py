@@ -76,6 +76,8 @@ HELPER_METHOD = {
     "signed_post_empty": "POST",
     "signed_put": "PUT",
     "signed_delete": "DELETE",
+    "signed_delete_with_query": "DELETE",
+    "signed_patch_with_query": "PATCH",
 }
 
 # Implemented in src/rest.rs but intentionally absent from endpoints.txt: these
@@ -86,7 +88,6 @@ HELPER_METHOD = {
 CODE_ONLY_OPS = {
     ("POST", "/account/leverage"),       # set_leverage
     ("POST", "/account/margin-mode"),    # set_margin_mode
-    ("PUT", "/orders/{}"),               # amend_order
     ("POST", "/orders/batch-cancel"),    # cancel_orders
     ("GET", "/orders/by-client-id/{}"),  # fetch_order_by_client_id
     ("DELETE", "/orders/by-client-id/{}"),  # cancel_order_by_client_id

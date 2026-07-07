@@ -868,6 +868,35 @@ pub struct MarginModeUpdate {
     pub margin_mode: MarginMode,
 }
 
+/// Whether an isolated-margin adjustment adds collateral to a position or
+/// removes it (`POST /account/margin`).
+///
+/// Serializes lowercase (`add` / `remove`, as the margin endpoint expects) and
+/// deserializes case-insensitively so a response in any casing decodes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MarginDirection {
+    /// Add collateral to the position's isolated margin.
+    #[serde(alias = "Add", alias = "ADD")]
+    Add,
+    /// Remove collateral from the position's isolated margin.
+    #[serde(alias = "Remove", alias = "REMOVE")]
+    Remove,
+}
+
+/// Result of adjusting a position's isolated margin (`POST /account/margin`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct MarginAdjustment {
+    /// Market the adjustment applies to, e.g. `BTC-USDX-PERP`.
+    pub market_id: String,
+    /// Isolated margin now allocated to the position after the adjustment.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub allocated_margin: Decimal,
+    /// Account collateral remaining after the adjustment.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub collateral: Decimal,
+}
+
 /// Fields to change on an existing order (`PUT /orders/{id}`), an atomic
 /// server-side cancel-replace.
 ///

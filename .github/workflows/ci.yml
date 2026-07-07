@@ -223,9 +223,19 @@ jobs:
       # and its step `outcome` is `failure` in BOTH cases. cargo-semver-checks
       # also exits 1 for both, so the exit code alone can't tell them apart
       # either — we disambiguate on the tool's own structured report below.
+      #
+      # PIN THE VERSION (ENG-4136). The classify step below distinguishes a real
+      # break from a tool/infra failure by matching the exact summary string
+      # "semver requires new {major|minor} version". Leaving the tool unpinned
+      # lets install-action pull the latest cargo-semver-checks, so a future
+      # release that rewords that summary would make the classifier misread a
+      # real break as an infra failure. It still fails closed (a real break
+      # never silently passes — the job fails either way), but the error message
+      # would be wrong. Pinning keeps the summary string stable; when bumping,
+      # re-verify the summary text below still matches.
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-semver-checks
+          tool: cargo-semver-checks@0.48.0
       # Run the check, capturing combined output and exit code without aborting
       # the step (we classify the result ourselves in the next step).
       - id: semver
@@ -258,6 +268,7 @@ jobs:
           # Distinguish them on the tool's structured report: a genuine break
           # prints the summary
           #   "semver requires new {major|minor} version: N major and M minor checks failed"
+          # (stable for the version pinned in the install step above — ENG-4136)
           # whereas an infra/tool error aborts with an `error: …` line and never
           # emits that summary. Anything other than exit 0/1, or exit 1 without
           # the summary, is a tool/infra failure — fail loudly and distinctly so

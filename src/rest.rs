@@ -114,18 +114,16 @@ impl Client {
 
     /// Fetch the ticker for a single market, e.g. `BTC-USDX-PERP`.
     pub async fn fetch_ticker(&self, market_id: &str) -> Result<Ticker> {
-        self.get(
-            &format!("/api/v1/markets/{market_id}/ticker"),
-            &[],
-            COST_DEFAULT,
-        )
-        .await
+        let id = encoded_segment(market_id, "market_id")?;
+        self.get(&format!("/api/v1/markets/{id}/ticker"), &[], COST_DEFAULT)
+            .await
     }
 
     /// Order book snapshot for a market.
     pub async fn fetch_order_book(&self, market_id: &str) -> Result<OrderBook> {
+        let id = encoded_segment(market_id, "market_id")?;
         self.get(
-            &format!("/api/v1/markets/{market_id}/orderbook"),
+            &format!("/api/v1/markets/{id}/orderbook"),
             &[],
             COST_DEFAULT,
         )
@@ -134,12 +132,13 @@ impl Client {
 
     /// Recent public trades for a market (newest first), optionally limited.
     pub async fn fetch_trades(&self, market_id: &str, limit: Option<u32>) -> Result<Vec<Trade>> {
+        let id = encoded_segment(market_id, "market_id")?;
         let mut query = Vec::new();
         if let Some(limit) = limit {
             query.push(("limit", limit.to_string()));
         }
         self.get(
-            &format!("/api/v1/markets/{market_id}/trades"),
+            &format!("/api/v1/markets/{id}/trades"),
             &query,
             COST_DEFAULT,
         )
@@ -153,6 +152,7 @@ impl Client {
         timeframe: Option<&str>,
         limit: Option<u32>,
     ) -> Result<Vec<Ohlcv>> {
+        let id = encoded_segment(market_id, "market_id")?;
         let mut query = Vec::new();
         if let Some(timeframe) = timeframe {
             query.push(("timeframe", timeframe.to_string()));
@@ -161,7 +161,7 @@ impl Client {
             query.push(("limit", limit.to_string()));
         }
         self.get(
-            &format!("/api/v1/markets/{market_id}/candles"),
+            &format!("/api/v1/markets/{id}/candles"),
             &query,
             COST_DEFAULT,
         )
@@ -174,12 +174,13 @@ impl Client {
         market_id: &str,
         limit: Option<u32>,
     ) -> Result<Vec<FundingSample>> {
+        let id = encoded_segment(market_id, "market_id")?;
         let mut query = Vec::new();
         if let Some(limit) = limit {
             query.push(("limit", limit.to_string()));
         }
         self.get(
-            &format!("/api/v1/markets/{market_id}/funding"),
+            &format!("/api/v1/markets/{id}/funding"),
             &query,
             COST_DEFAULT,
         )
@@ -188,8 +189,9 @@ impl Client {
 
     /// Current mark price for a market.
     pub async fn fetch_mark_price(&self, market_id: &str) -> Result<MarkPrice> {
+        let id = encoded_segment(market_id, "market_id")?;
         self.get(
-            &format!("/api/v1/markets/{market_id}/mark-price"),
+            &format!("/api/v1/markets/{id}/mark-price"),
             &[],
             COST_DEFAULT,
         )
@@ -198,12 +200,9 @@ impl Client {
 
     /// Lifecycle / halt status for a market.
     pub async fn fetch_market_status(&self, market_id: &str) -> Result<MarketStatus> {
-        self.get(
-            &format!("/api/v1/markets/{market_id}/status"),
-            &[],
-            COST_DEFAULT,
-        )
-        .await
+        let id = encoded_segment(market_id, "market_id")?;
+        self.get(&format!("/api/v1/markets/{id}/status"), &[], COST_DEFAULT)
+            .await
     }
 
     /// ADL settlement events for a market, most recent first (v0.21). `limit`

@@ -358,3 +358,48 @@ async fn fetch_market_status_parses_halt_fields() {
     assert_eq!(st.halted_at, Some(1776033900000));
     assert_eq!(st.adl_event_count, 3);
 }
+
+#[tokio::test]
+async fn fetch_ticker_encodes_market_id_path_segment() {
+    // A market id with characters that must be escaped to stay one path
+    // segment (mirrors the account-path hardening in encoded_segment).
+    let server = MockServer::start().await;
+    let body = serde_json::json!({
+        "symbol": "a/b c", "timestamp": 1776033900000i64, "datetime": "2026-04-13T00:00:00Z",
+        "high": 1.0, "low": 1.0, "bid": null, "bidVolume": null, "ask": null,
+        "askVolume": null, "open": 1.0, "close": 1.0, "last": 1.0, "change": 0.0,
+        "percentage": 0.0, "baseVolume": 0.0, "quoteVolume": 0.0,
+        "markPrice": 1.0, "indexPrice": 1.0, "info": {}
+    });
+    Mock::given(method("GET"))
+        .and(path("/api/v1/markets/a%2Fb%20c/ticker"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .mount(&server)
+        .await;
+
+    let t = client(server.uri()).fetch_ticker("a/b c").await.unwrap();
+    assert_eq!(t.symbol, "a/b c");
+}
+
+#[tokio::test]
+async fn public_market_reads_reject_empty_market_id_locally() {
+    // An empty market id must be rejected before any I/O, so it can't collapse
+    // `/markets/{id}/status` into the parent collection route. Points at an
+    // unroutable address to prove no request is attempted.
+    use nexus_exchange::Error;
+    let c = client("http://127.0.0.1:1".to_string());
+    for err in [
+        c.fetch_ticker("").await.unwrap_err(),
+        c.fetch_order_book("").await.unwrap_err(),
+        c.fetch_trades("", None).await.unwrap_err(),
+        c.fetch_ohlcv("", None, None).await.unwrap_err(),
+        c.fetch_funding_rate_history("", None).await.unwrap_err(),
+        c.fetch_mark_price("").await.unwrap_err(),
+        c.fetch_market_status("").await.unwrap_err(),
+    ] {
+        assert!(matches!(
+            err,
+            Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+        ));
+    }
+}

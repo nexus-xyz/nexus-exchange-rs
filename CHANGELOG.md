@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.5.0...v0.5.1) - 2026-07-08
+
+### Added
+
+- *(rest)* route migrated endpoints to the /api/v1 direct surface (ENG-4947) ([#85](https://github.com/nexus-xyz/nexus-exchange-rs/pull/85))
+- add isolated-margin adjust method (ENG-4977) ([#84](https://github.com/nexus-xyz/nexus-exchange-rs/pull/84))
+
+### Fixed
+
+- *(rest)* encode market_id path segment in public market endpoints (ENG-4135) ([#87](https://github.com/nexus-xyz/nexus-exchange-rs/pull/87))
+
+### Other
+
+- bump dtolnay/rust-toolchain ([#82](https://github.com/nexus-xyz/nexus-exchange-rs/pull/82))
+- bump actions/upload-artifact from 4 to 7 ([#71](https://github.com/nexus-xyz/nexus-exchange-rs/pull/71))
+- bump actions/cache from 4 to 6 ([#70](https://github.com/nexus-xyz/nexus-exchange-rs/pull/70))
+- pin cargo-semver-checks so the break/infra classifier stays accurate (ENG-4136) ([#88](https://github.com/nexus-xyz/nexus-exchange-rs/pull/88))
+- *(spec)* bump .api-version to v0.6.2 ([#86](https://github.com/nexus-xyz/nexus-exchange-rs/pull/86))
+- bump backon in the cargo-minor group across 1 directory ([#40](https://github.com/nexus-xyz/nexus-exchange-rs/pull/40))
+- README no longer calls the SDK a skeleton; link examples + CLI ([#77](https://github.com/nexus-xyz/nexus-exchange-rs/pull/77))
+
 ### Changed
 
 - Migrated the market-data and account/trading endpoints to the direct-service

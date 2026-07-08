@@ -54,7 +54,7 @@ jobs:
 
       - name: Cache the pinned spec
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: openapi.pinned.json
           key: spec-${{ steps.pin.outputs.tag }}

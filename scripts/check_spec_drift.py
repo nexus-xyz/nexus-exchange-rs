@@ -28,6 +28,13 @@ Three independent invariants are enforced:
    endpoints.txt nor in CODE_ONLY_OPS, or (b) endpoints.txt lists an op that has
    no implementing method and is not in NON_REST_TARGETS.
 
+   The code parser reads the path *literal* passed inline to each helper call, so
+   it relies on an inline-literal convention (every helper call passes its path
+   as `"..."` / `&format!("...")` directly, never a path built into a local var
+   first). That convention is now ENFORCED with a loud failure — a call site
+   whose first argument is not an inline literal aborts the check — so a wrapper
+   can no longer silently undercount the implemented set (the #49 review nit).
+
 3. SDK models <-> spec schemas   (added by ENG-3377)
    Operations existing is necessary but not sufficient: the SDK can still drift
    on the *shape* of a payload. A representative set of serde models in
@@ -198,12 +205,33 @@ def spec_ops(spec):
     return ops
 
 
+# The parser derives implemented ops by reading the path *literal* passed inline
+# to each helper call, so it depends on an INLINE-LITERAL CONVENTION: every helper
+# call in src/rest.rs must pass its path as a bare `"..."` string literal or a
+# `&format!("...")` directly in the call — never a path built into a local first
+# (`let p = format!(...); self.get(&p, …)`). A non-inline path would be invisible
+# to `_CALL_RE` and silently *undercount* implemented ops (and could mis-flag an
+# endpoints.txt line as unimplemented). Rather than best-effort guessing at local
+# variables, we enforce the convention with a loud failure: `_CALL_SITE_RE` finds
+# every call site and `implemented_ops` asserts each one is followed by an inline
+# literal, exiting non-zero otherwise. See enforce below.
+
+# Matches a call site up to (but not into) the first argument: `self.<helper>(`
+# plus optional whitespace and an optional `&format!(` wrapper. Whatever follows
+# must be a `"..."` literal for the convention to hold.
+_HELPER_ALT = "|".join(sorted(HELPER_METHOD, key=len, reverse=True))
+_CALL_SITE_RE = re.compile(
+    r"self\.(" + _HELPER_ALT + r")"
+    r"\s*\(\s*"                   # open paren + optional whitespace
+    r"(?:&\s*format!\s*\(\s*)?"   # optional `&format!(` wrapper
+)
+
 # Each call is `self.<helper>(` followed (allowing whitespace/newlines, since
 # multi-line calls wrap the path onto the next line) by the path argument: either
 # a `"..."` literal or `&format!("...")`. We capture the helper name and the
 # first string literal that opens the argument list.
 _CALL_RE = re.compile(
-    r"self\.(" + "|".join(sorted(HELPER_METHOD, key=len, reverse=True)) + r")"
+    r"self\.(" + _HELPER_ALT + r")"
     r"\s*\(\s*"            # open paren + optional whitespace
     r"(?:&\s*format!\s*\(\s*)?"  # optional `&format!(` wrapper
     r'"([^"]+)"'           # the path string literal
@@ -212,11 +240,42 @@ _CALL_RE = re.compile(
 
 def implemented_ops(path=REST_RS):
     """Derive the set of (METHOD, normalized_path) the client implements from the
-    path-literal arguments to the REST helper calls in src/rest.rs."""
+    path-literal arguments to the REST helper calls in src/rest.rs.
+
+    Enforces the inline-literal convention (see `_CALL_SITE_RE` note): every
+    helper call must pass its path inline as `"..."` or `&format!("...")`. A call
+    whose first argument is not an inline literal (e.g. a path built into a local
+    variable first) would be silently missed by `_CALL_RE`, undercounting the
+    implemented set. We fail loudly on any such call so drift can never be
+    silently undercounted."""
     try:
         src = open(path).read()
     except OSError as e:
         sys.exit(f"ERROR: cannot read client source {path!r}: {e}")
+
+    # Every call site must be immediately followed by an inline path literal.
+    # `_CALL_SITE_RE` matches through the (optional) `&format!(` wrapper; the very
+    # next non-space character must open a string literal. If it does not, the
+    # path is not inline — reject it rather than silently dropping the op.
+    non_inline = []
+    for m in _CALL_SITE_RE.finditer(src):
+        rest_after = src[m.end():]
+        if not rest_after.lstrip().startswith('"'):
+            lineno = src.count("\n", 0, m.start()) + 1
+            snippet = src[m.start(): m.start() + 60].splitlines()[0]
+            non_inline.append((lineno, m.group(1), snippet))
+    if non_inline:
+        print(
+            f"\nERROR: {len(non_inline)} helper call(s) in {path} do not pass "
+            f"their path as an inline string literal. The drift parser only sees "
+            f"inline `\"...\"` / `&format!(\"...\")` paths; a path built into a "
+            f"local variable first would be silently uncounted, undercounting "
+            f"implemented ops. Inline the path literal at the call site:"
+        )
+        for lineno, helper, snippet in non_inline:
+            print(f"  - {path}:{lineno}: self.{helper}(...  ->  {snippet.strip()}")
+        sys.exit(1)
+
     ops = set()
     for m in _CALL_RE.finditer(src):
         helper, p = m.group(1), m.group(2)
@@ -225,6 +284,17 @@ def implemented_ops(path=REST_RS):
         sys.exit(
             f"ERROR: parsed zero REST calls from {path!r}; the helper call "
             f"pattern may have changed — update HELPER_METHOD / the parser."
+        )
+    # Every call site produced exactly one inline literal (checked above), so the
+    # two passes must agree in count. A mismatch means a literal was captured for
+    # a site that wasn't matched (or vice versa) — a parser bug; fail loudly.
+    n_sites = sum(1 for _ in _CALL_SITE_RE.finditer(src))
+    n_literals = sum(1 for _ in _CALL_RE.finditer(src))
+    if n_sites != n_literals:
+        sys.exit(
+            f"ERROR: parser inconsistency in {path}: {n_sites} helper call "
+            f"site(s) but {n_literals} inline path literal(s). The call/literal "
+            f"regexes have diverged — update the parser."
         )
     return ops
 
@@ -458,6 +528,98 @@ def check_models_vs_spec(spec):
     return errors
 
 
+# --- Invariant 4: LOGIN_MESSAGE constant <-> spec canonical value (ENG-3918) --
+
+# The SDK constant, e.g. `pub const LOGIN_MESSAGE: &str = "Sign in to Nexus
+# Exchange";`. Capture the string literal value. Kept simple: a single, plain
+# ASCII literal (no escapes / raw strings) — assert that assumption below.
+_LOGIN_MESSAGE_RE = re.compile(
+    r'\bconst\s+LOGIN_MESSAGE\s*:\s*&(?:\'\w+\s+)?str\s*=\s*"([^"\\]*)"\s*;'
+)
+
+
+def sdk_login_message(path=REST_RS):
+    """Extract the SDK's LOGIN_MESSAGE constant value from src/rest.rs. Fails
+    closed if the constant is missing or not a plain string literal."""
+    try:
+        src = open(path).read()
+    except OSError as e:
+        sys.exit(f"ERROR: cannot read client source {path!r}: {e}")
+    m = _LOGIN_MESSAGE_RE.search(src)
+    if not m:
+        # Distinguish "gone/renamed" from "shape changed" for a clearer failure.
+        if re.search(r"\bLOGIN_MESSAGE\b", src):
+            sys.exit(
+                f"ERROR: found LOGIN_MESSAGE in {path} but could not parse it as a "
+                f"plain `const LOGIN_MESSAGE: &str = \"...\";` (raw string, escape, "
+                f"or new shape?) — update _LOGIN_MESSAGE_RE."
+            )
+        sys.exit(
+            f"ERROR: LOGIN_MESSAGE constant not found in {path} (renamed/removed?) "
+            f"— it is a cross-repo contract; update the guard if it moved."
+        )
+    return m.group(1)
+
+
+def spec_login_message(spec):
+    """Extract the canonical login message from the pinned spec. Primary source
+    is the `/auth/login` request example's `message` field; falls back to the
+    LoginRequest.message description ('Must be exactly: \"...\"'). Fails closed if
+    neither is present so the guard can't silently no-op."""
+    # Primary: the request-body example on POST /auth/login.
+    try:
+        example = (
+            spec["paths"]["/auth/login"]["post"]["requestBody"]["content"]
+            ["application/json"]["example"]
+        )
+        if isinstance(example, dict) and isinstance(example.get("message"), str):
+            return example["message"]
+    except (KeyError, TypeError):
+        pass
+
+    # Fallback: LoginRequest.message description, e.g. Must be exactly: "...".
+    try:
+        desc = (
+            spec["components"]["schemas"]["LoginRequest"]
+            ["properties"]["message"]["description"]
+        )
+        m = re.search(r'exactly:\s*"([^"]+)"', desc)
+        if m:
+            return m.group(1)
+    except (KeyError, TypeError):
+        pass
+
+    sys.exit(
+        "ERROR: could not find the canonical login message in the pinned spec "
+        "(POST /auth/login request example `message`, nor LoginRequest.message "
+        "'Must be exactly: \"...\"' description). The spec shape changed — update "
+        "spec_login_message()."
+    )
+
+
+def check_login_message(spec):
+    """Invariant 4: the SDK's LOGIN_MESSAGE constant must equal the spec's
+    canonical login message. Returns the number of errors printed."""
+    sdk = sdk_login_message()
+    canonical = spec_login_message(spec)
+    if sdk != canonical:
+        print(
+            f"\nERROR: LOGIN_MESSAGE drift — the SDK constant does not match the "
+            f"pinned spec's canonical login message:\n"
+            f"  SDK  (src/rest.rs): {sdk!r}\n"
+            f"  spec (/auth/login): {canonical!r}\n"
+            f"These bytes are EIP-191 signed at login; a mismatch means every SDK "
+            f"login is rejected. Update LOGIN_MESSAGE to match the spec (and the "
+            f"server), or re-pin .api-version if the spec regressed."
+        )
+        return 1
+    print(
+        f"\nOK: SDK LOGIN_MESSAGE matches the pinned spec's canonical login "
+        f"message ({canonical!r})."
+    )
+    return 0
+
+
 def main():
     if len(sys.argv) != 2:
         sys.exit(f"usage: {sys.argv[0]} <openapi.json>")
@@ -493,6 +655,9 @@ def main():
 
     # Invariant 3: SDK models <-> spec schemas.
     failures += check_models_vs_spec(spec)
+
+    # Invariant 4: SDK LOGIN_MESSAGE constant <-> spec canonical value.
+    failures += check_login_message(spec)
 
     if failures:
         sys.exit(1)

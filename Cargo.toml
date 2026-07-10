@@ -29,7 +29,7 @@ serde_urlencoded = "0.7"
 rust_decimal = { version = "1", features = ["serde-with-str", "serde-with-float"] }
 hmac = "0.13"
 sha2 = "0.11"
-sha3 = "0.10"
+sha3 = "0.12"
 k256 = { version = "0.13", features = ["ecdsa"] }
 hex = "0.4"
 secrecy = { version = "0.10", features = ["serde"] }

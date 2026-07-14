@@ -36,6 +36,7 @@ double as the primary docs. Run one with `cargo run --example <name>`:
 | [`account_balances`](./examples/account_balances.rs) | yes | Balance, collateral, equity, margin |
 | [`positions`](./examples/positions.rs) | yes | Open positions with PnL and liquidation price |
 | [`ws_user_events`](./examples/ws_user_events.rs) | yes | Stream private per-account events (fills, orders) |
+| [`bridge_deposit`](./examples/bridge_deposit.rs) | yes | Bridge: list assets, get-or-create a deposit address, inspect deposits |
 
 Authenticated examples read `NEXUS_API_KEY` / `NEXUS_API_SECRET` from the
 environment and default to a non-production network where they mutate state.
@@ -43,6 +44,20 @@ environment and default to a non-production network where they mutate state.
 For a complete command-line application built on the SDK — every request goes
 through the crate's `Client`, with no transport of its own — see
 [`nexus-exchange-cli`](https://github.com/nexus-xyz/nexus-exchange-cli).
+
+## Bridge
+
+Deposit funds across chains via the `/bridge` surface (USDC/USDX in Phase A):
+
+- `fetch_bridge_assets()` — bridgeable chains and their deposit/withdraw assets
+- `create_bridge_deposit_address(chain)` — get-or-create the account's deposit
+  address (idempotent per account + chain)
+- `list_bridge_deposit_addresses()` — the account's deposit addresses
+- `fetch_bridge_deposits(..)` / `fetch_bridge_deposit(id)` — the deposit read
+  model, status `detected → confirming → credited | failed`
+
+Flow: get an address, send USDC/USDX to it, then poll a deposit until `status`
+is `Credited`. See [`bridge_deposit`](./examples/bridge_deposit.rs).
 
 ## API version
 

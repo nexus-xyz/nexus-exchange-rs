@@ -25,12 +25,14 @@ use std::collections::HashMap;
 
 use crate::auth::{AgentRegistration, EthSigner};
 use crate::types::{
-    AccountSummary, AdlEvent, AgentInfo, AgentRegistered, AmendOrder, ApiKeyInfo, CreatedApiKey,
-    CreditResult, Decimal, DepositResult, Fill, FundingPayment, FundingSample, HealthStatus,
-    LeverageUpdate, LoginResponse, MarginAdjustment, MarginDirection, MarginMode, MarginModeUpdate,
-    MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderRequest,
-    OrderResponse, OrderResult, Position, RateLimitStatus, SubAccount, Ticker, TierOverride, Trade,
-    Transfer, TransferRequest, Withdrawal, WsToken,
+    AccountSummary, AdlEvent, AgentInfo, AgentRegistered, AmendOrder, ApiKeyInfo,
+    BridgeAssetSymbol, BridgeAssetsResponse, BridgeDeposit, BridgeDepositAddress,
+    BridgeDepositStatus, CreateBridgeDepositAddressRequest, CreatedApiKey, CreditResult, Decimal,
+    DepositResult, Fill, FundingPayment, FundingSample, HealthStatus, LeverageUpdate,
+    LoginResponse, MarginAdjustment, MarginDirection, MarginMode, MarginModeUpdate, MarkPrice,
+    Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderRequest, OrderResponse,
+    OrderResult, Position, RateLimitStatus, SubAccount, Ticker, TierOverride, Trade, Transfer,
+    TransferRequest, Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
 
@@ -766,6 +768,64 @@ impl Client {
         registration: &AgentRegistration,
     ) -> Result<AgentRegistered> {
         self.post_unsigned("/agents/register", registration).await
+    }
+
+    // ── Bridge (deposits) ─────────────────────────────────────────────────
+
+    /// List bridgeable chains and their deposit/withdraw assets
+    /// (`GET /api/v1/bridge/assets`).
+    pub async fn fetch_bridge_assets(&self) -> Result<BridgeAssetsResponse> {
+        self.signed_get("/api/v1/bridge/assets", &[]).await
+    }
+
+    /// Get or create the account's deposit address on `chain`
+    /// (`POST /api/v1/bridge/deposit-addresses`). Idempotent per
+    /// `(account, chain)`: repeated calls return the same address.
+    pub async fn create_bridge_deposit_address(&self, chain: &str) -> Result<BridgeDepositAddress> {
+        let req = CreateBridgeDepositAddressRequest {
+            chain: chain.to_string(),
+        };
+        self.signed_post("/api/v1/bridge/deposit-addresses", &req)
+            .await
+    }
+
+    /// List the account's bridge deposit addresses
+    /// (`GET /api/v1/bridge/deposit-addresses`).
+    pub async fn list_bridge_deposit_addresses(&self) -> Result<Vec<BridgeDepositAddress>> {
+        self.signed_get("/api/v1/bridge/deposit-addresses", &[])
+            .await
+    }
+
+    /// List the account's bridge deposits (`GET /api/v1/bridge/deposits`). All
+    /// filters are optional; omit them to list every deposit.
+    pub async fn fetch_bridge_deposits(
+        &self,
+        limit: Option<u32>,
+        chain: Option<&str>,
+        asset: Option<BridgeAssetSymbol>,
+        status: Option<BridgeDepositStatus>,
+    ) -> Result<Vec<BridgeDeposit>> {
+        let mut query = Vec::new();
+        if let Some(limit) = limit {
+            query.push(("limit", limit.to_string()));
+        }
+        if let Some(chain) = chain {
+            query.push(("chain", chain.to_string()));
+        }
+        if let Some(asset) = asset {
+            query.push(("asset", asset.as_str().to_string()));
+        }
+        if let Some(status) = status {
+            query.push(("status", status.as_str().to_string()));
+        }
+        self.signed_get("/api/v1/bridge/deposits", &query).await
+    }
+
+    /// Fetch a single bridge deposit by id (`GET /api/v1/bridge/deposits/{id}`).
+    pub async fn fetch_bridge_deposit(&self, id: &str) -> Result<BridgeDeposit> {
+        let id = encoded_segment(id, "id")?;
+        self.signed_get(&format!("/api/v1/bridge/deposits/{id}"), &[])
+            .await
     }
 }
 

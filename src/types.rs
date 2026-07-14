@@ -1115,6 +1115,154 @@ pub struct AgentRegistered {
     pub expires_at: u64,
 }
 
+// ─── Bridge (deposits) ───────────────────────────────────────────────────────
+//
+// The public `/api/v1/bridge` Phase A surface: bridgeable chains/assets,
+// per-account deposit addresses, and the read model for the cross-chain
+// deposits the watcher tracks. Phase A covers USDC and USDX deposits only
+// (withdrawals, registered wallets, and webhooks are later phases). Amounts are
+// `Decimal` (string on the wire); timestamps are Unix epoch milliseconds.
+
+/// A bridgeable asset symbol. Phase A supports USDC and USDX only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum BridgeAssetSymbol {
+    /// USD Coin.
+    Usdc,
+    /// Nexus USD.
+    Usdx,
+}
+
+impl BridgeAssetSymbol {
+    /// The wire string for this symbol (`"USDC"` / `"USDX"`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Usdc => "USDC",
+            Self::Usdx => "USDX",
+        }
+    }
+}
+
+/// Lifecycle of a bridge deposit: `detected -> confirming -> credited | failed`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BridgeDepositStatus {
+    /// Seen on the source chain, not yet confirmed.
+    Detected,
+    /// Accumulating the required confirmations.
+    Confirming,
+    /// Confirmed and credited to the account.
+    Credited,
+    /// Terminal failure; funds were not credited.
+    Failed,
+}
+
+impl BridgeDepositStatus {
+    /// The wire string for this status.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Detected => "detected",
+            Self::Confirming => "confirming",
+            Self::Credited => "credited",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// A bridgeable asset on a specific chain.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BridgeAsset {
+    /// Asset symbol (USDC or USDX in Phase A).
+    pub symbol: BridgeAssetSymbol,
+    /// On-chain token decimals for this asset on this chain.
+    pub decimals: u32,
+    /// Minimum amount accepted for a single deposit.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub min_amount: Decimal,
+    /// Block confirmations required before a deposit is credited.
+    pub confirmations: u32,
+    /// Flat fee charged in units of the asset (may be `0`); absent if unset.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub fee: Option<Decimal>,
+    /// 0x token contract address on the chain; `None` for a chain-native asset.
+    pub contract_address: Option<String>,
+}
+
+/// Bridgeable assets for one chain.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BridgeChainAssets {
+    /// Chain identifier, e.g. `ethereum` or `base`.
+    pub chain: String,
+    /// EVM chain ID, when applicable.
+    pub chain_id: Option<i64>,
+    /// Assets that can be deposited from this chain.
+    pub deposit_assets: Vec<BridgeAsset>,
+    /// Assets that can be withdrawn to this chain (a later-phase capability).
+    pub withdraw_assets: Vec<BridgeAsset>,
+}
+
+/// Supported bridge chains and their assets (`GET /api/v1/bridge/assets`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct BridgeAssetsResponse {
+    /// Bridgeable chains.
+    pub chains: Vec<BridgeChainAssets>,
+}
+
+/// A per-account deposit address on a specific chain.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BridgeDepositAddress {
+    /// Deposit address; sending a supported asset here credits the account.
+    pub address: String,
+    /// Chain this address belongs to.
+    pub chain: String,
+    /// Assets creditable via this address.
+    pub accepts: Vec<BridgeAssetSymbol>,
+    /// 0x-prefixed Nexus account the address credits.
+    pub account_id: String,
+    /// Unix ms when the address was created.
+    pub created_at: i64,
+}
+
+/// A cross-chain deposit tracked by the watcher (read model).
+#[derive(Debug, Clone, Deserialize)]
+pub struct BridgeDeposit {
+    /// Opaque, stable deposit identifier.
+    pub id: String,
+    /// 0x-prefixed Nexus account being credited.
+    pub account_id: String,
+    /// Source chain.
+    pub chain: String,
+    /// Deposited asset.
+    pub asset: BridgeAssetSymbol,
+    /// Deposit amount in units of `asset`.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub amount: Decimal,
+    /// Deposit address the funds arrived at.
+    pub address: String,
+    /// Lifecycle status.
+    pub status: BridgeDepositStatus,
+    /// Confirmations observed so far; `None` before the tx is seen on chain.
+    pub confirmations: Option<u32>,
+    /// Confirmations required before crediting.
+    pub required_confirmations: Option<u32>,
+    /// Source-chain transaction hash; `None` until detected.
+    pub tx_hash: Option<String>,
+    /// Unix ms when credited; `None` until `status` is `credited`.
+    pub credited_at: Option<i64>,
+    /// Unix ms when the deposit was first recorded.
+    pub created_at: i64,
+    /// Unix ms of the last update.
+    pub updated_at: Option<i64>,
+}
+
+/// Request body for `POST /api/v1/bridge/deposit-addresses`.
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateBridgeDepositAddressRequest {
+    /// Chain to get-or-create a deposit address on. Idempotent per
+    /// `(account, chain)`: repeated calls return the same address.
+    pub chain: String,
+}
+
 #[cfg(test)]
 mod tests {
     use secrecy::ExposeSecret;

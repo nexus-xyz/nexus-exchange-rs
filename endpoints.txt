@@ -39,12 +39,16 @@ GET /api/v1/orders
 DELETE /api/v1/orders
 POST /api/v1/orders/batch
 DELETE /api/v1/orders/{order_id}
+POST /api/v1/bridge/deposit-addresses
+GET /api/v1/bridge/deposit-addresses
+GET /api/v1/bridge/assets
+GET /api/v1/bridge/deposits
+GET /api/v1/bridge/deposits/{id}
 
 # --- Legacy gateway surface (/api/exchange) — no /api/v1 variant yet ---
 GET /markets
 GET /markets/{market_id}/adl-events
 GET /account/{address}/adl-history
-GET /health
 GET /keys
 POST /keys
 DELETE /keys/{key_id}

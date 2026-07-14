@@ -103,6 +103,13 @@ CODE_ONLY_OPS = {
     ("GET", "/transfers"),               # fetch_transfers
     ("GET", "/sub-accounts"),            # fetch_sub_accounts
     ("POST", "/sub-accounts"),           # create_sub_account
+    # /health was REMOVED from the public spec in v0.7.0, which introduced a
+    # typed GET /status (fetchStatus -> ServiceHealth) instead. The indexer
+    # still serves /health, so health_check() keeps targeting it (non-breaking)
+    # and is kept OUT of endpoints.txt so the endpoints.txt<->spec check does
+    # not flag it. Migrating health_check() to the typed /status is a tracked
+    # follow-up; drop this entry when that lands.
+    ("GET", "/health"),                  # health_check (behind spec since v0.7.0)
 }
 
 # Listed in endpoints.txt but reached WITHOUT a REST helper call, so the code
@@ -148,6 +155,12 @@ MODEL_SCHEMA = {
     "LoginResponse": "LoginResponse",
     "AdlEvent": "AdlEventRecord",
     "AdlClosure": "AdlClosureRecord",
+    "BridgeAsset": "BridgeAsset",
+    "BridgeChainAssets": "BridgeChainAssets",
+    "BridgeAssetsResponse": "BridgeAssetsResponse",
+    "BridgeDepositAddress": "BridgeDepositAddress",
+    "BridgeDeposit": "BridgeDeposit",
+    "CreateBridgeDepositAddressRequest": "CreateBridgeDepositAddressRequest",
 }
 
 # (Rust struct, wire field) pairs the SDK reads/writes that are intentionally

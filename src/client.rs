@@ -556,7 +556,7 @@ mod tests {
         );
         // Legacy / not-yet-migrated routes stay on the gateway base.
         assert_eq!(
-            client.base_for("/health"),
+            client.base_for("/status"),
             "https://exchange.nexus.xyz/api/exchange"
         );
         assert_eq!(

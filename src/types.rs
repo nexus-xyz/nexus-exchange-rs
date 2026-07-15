@@ -270,6 +270,27 @@ pub enum OrderType {
     Limit,
     /// Executes immediately against resting liquidity at the best available price.
     Market,
+    /// Triggerable stop that becomes a limit order once `trigger_price` is
+    /// reached. Set [`OrderRequest::trigger_price`].
+    StopLimit,
+    /// Triggerable stop that becomes a market order once `trigger_price` is
+    /// reached. Set [`OrderRequest::trigger_price`].
+    StopMarket,
+    /// Take-profit that becomes a limit order once `trigger_price` is reached.
+    /// Set [`OrderRequest::trigger_price`].
+    TakeProfitLimit,
+    /// Take-profit that becomes a market order once `trigger_price` is reached.
+    /// Set [`OrderRequest::trigger_price`].
+    TakeProfitMarket,
+    /// Trailing stop whose trigger tracks the market by a fixed offset. Set
+    /// [`OrderRequest::trailing_offset_bps`].
+    TrailingStop,
+    /// Trailing stop that fires a *limit* order: the trigger tracks the market
+    /// by [`trailing_offset_bps`](OrderRequest::trailing_offset_bps) and the
+    /// fired limit price is offset from the trigger by
+    /// [`limit_offset_bps`](OrderRequest::limit_offset_bps). Both offsets are
+    /// required. Construct with [`OrderRequest::trailing_limit`].
+    TrailingLimit,
 }
 
 /// Time-in-force policy.
@@ -416,25 +437,28 @@ pub struct MarkPrice {
     pub mark_price: Decimal,
 }
 
-/// Indexer health/status snapshot (`GET /health`). Unknown fields are ignored,
-/// so this stays forward-compatible as the snapshot grows.
+/// Aggregate service health (`GET /status`), the public health snapshot for the
+/// indexer/engine/oracle/bots.
+///
+/// The v0.7.1 spec removed the old liveness `GET /health` / `GET /ready` probes;
+/// `GET /status` (schema `ServiceHealth`) is the public replacement, so
+/// [`Client::health_check`](crate::Client::health_check) now reads it. Rely on
+/// the top-level [`status`](Self::status); [`services`](Self::services) carries
+/// per-component detail that is informational and may evolve. Unknown fields are
+/// ignored, so this stays forward-compatible as the snapshot grows.
 #[derive(Debug, Clone, Deserialize)]
 pub struct HealthStatus {
-    /// Total events the indexer has received.
+    /// Worst-of health across all components: `ok`, `degraded`, `down`, or
+    /// `starting`. Defaults to empty if the server omits it.
     #[serde(default)]
-    pub events_received: u64,
-    /// Total fills the indexer has processed.
+    pub status: String,
+    /// Unix timestamp (ms) the snapshot was taken.
     #[serde(default)]
-    pub fills_total: u64,
-    /// Seconds since the indexer started.
+    pub timestamp_ms: i64,
+    /// Per-component status (indexer, engine, oracle, bots), left untyped as the
+    /// component detail is informational and may evolve. `Null` when absent.
     #[serde(default)]
-    pub uptime_seconds: u64,
-    /// Whether the indexer is currently connected to its upstream feed.
-    #[serde(default)]
-    pub connected: bool,
-    /// Coarse health state, when reported (e.g. `healthy`, `degraded`).
-    #[serde(default)]
-    pub health: Option<String>,
+    pub services: serde_json::Value,
 }
 
 /// An API key associated with the authenticated session (`GET /keys`).
@@ -615,6 +639,28 @@ pub struct OrderRequest {
     /// Omitted from the wire payload when `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_order_id: Option<String>,
+    /// Trigger threshold for the triggerable, non-trailing order types
+    /// ([`StopLimit`](OrderType::StopLimit), [`StopMarket`](OrderType::StopMarket),
+    /// [`TakeProfitLimit`](OrderType::TakeProfitLimit),
+    /// [`TakeProfitMarket`](OrderType::TakeProfitMarket)). Ignored for the other
+    /// types. Omitted from the wire payload when `None`.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub trigger_price: Option<Decimal>,
+    /// Trailing offset in basis points (1 bp = 0.01%). Required for
+    /// [`TrailingStop`](OrderType::TrailingStop) and
+    /// [`TrailingLimit`](OrderType::TrailingLimit); ignored otherwise. Omitted
+    /// from the wire payload when `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trailing_offset_bps: Option<u32>,
+    /// Offset in basis points for the fired limit price, for
+    /// [`TrailingLimit`](OrderType::TrailingLimit) only (required together with
+    /// [`trailing_offset_bps`](Self::trailing_offset_bps)). Omitted from the wire
+    /// payload when `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit_offset_bps: Option<u32>,
 }
 
 impl OrderRequest {
@@ -635,6 +681,9 @@ impl OrderRequest {
             time_in_force,
             reduce_only: None,
             client_order_id: None,
+            trigger_price: None,
+            trailing_offset_bps: None,
+            limit_offset_bps: None,
         }
     }
 
@@ -649,6 +698,36 @@ impl OrderRequest {
             time_in_force: TimeInForce::Ioc,
             reduce_only: None,
             client_order_id: None,
+            trigger_price: None,
+            trailing_offset_bps: None,
+            limit_offset_bps: None,
+        }
+    }
+
+    /// A [`TrailingLimit`](OrderType::TrailingLimit) order: the trigger trails
+    /// the market by `trailing_offset_bps` and, once fired, rests as a limit
+    /// order offset from the trigger by `limit_offset_bps` (both in basis
+    /// points, 1 bp = 0.01%).
+    pub fn trailing_limit(
+        market_id: impl Into<String>,
+        side: Side,
+        quantity: Decimal,
+        trailing_offset_bps: u32,
+        limit_offset_bps: u32,
+        time_in_force: TimeInForce,
+    ) -> Self {
+        Self {
+            market_id: market_id.into(),
+            side,
+            order_type: OrderType::TrailingLimit,
+            price: None,
+            quantity,
+            time_in_force,
+            reduce_only: None,
+            client_order_id: None,
+            trigger_price: None,
+            trailing_offset_bps: Some(trailing_offset_bps),
+            limit_offset_bps: Some(limit_offset_bps),
         }
     }
 
@@ -656,6 +735,30 @@ impl OrderRequest {
     /// so it chains off [`limit`](Self::limit) / [`market`](Self::market).
     pub fn with_client_order_id(mut self, client_order_id: impl Into<String>) -> Self {
         self.client_order_id = Some(client_order_id.into());
+        self
+    }
+
+    /// Set the trigger threshold for a triggerable, non-trailing order (stop /
+    /// take-profit), consuming and returning `self`.
+    pub fn with_trigger_price(mut self, trigger_price: Decimal) -> Self {
+        self.trigger_price = Some(trigger_price);
+        self
+    }
+
+    /// Set the trailing offset (basis points) for a
+    /// [`TrailingStop`](OrderType::TrailingStop) /
+    /// [`TrailingLimit`](OrderType::TrailingLimit) order, consuming and returning
+    /// `self`.
+    pub fn with_trailing_offset_bps(mut self, trailing_offset_bps: u32) -> Self {
+        self.trailing_offset_bps = Some(trailing_offset_bps);
+        self
+    }
+
+    /// Set the fired-limit-price offset (basis points) for a
+    /// [`TrailingLimit`](OrderType::TrailingLimit) order, consuming and returning
+    /// `self`.
+    pub fn with_limit_offset_bps(mut self, limit_offset_bps: u32) -> Self {
+        self.limit_offset_bps = Some(limit_offset_bps);
         self
     }
 }
@@ -1113,6 +1216,133 @@ pub struct AgentRegistered {
     pub agent_address: String,
     /// Expiry as Unix milliseconds.
     pub expires_at: u64,
+}
+
+/// Cancel-on-disconnect (COD) status for the authenticated account
+/// (`GET /api/v1/account/cancel-on-disconnect`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct CancelOnDisconnectStatus {
+    /// The account's own COD opt-in setting.
+    pub enabled: bool,
+    /// Whether COD will actually fire: the account opt-in AND the exchange-side
+    /// feature switch. When `enabled` is true but `active` is false, the exchange
+    /// has the feature switched off and no cancel fires on disconnect.
+    pub active: bool,
+    /// Seconds the exchange waits after the last `/ws` disconnect before
+    /// cancelling; a reconnect within the window disarms the cancel. `None` when
+    /// the feature is unavailable on this deployment.
+    #[serde(default)]
+    pub grace_secs: Option<i64>,
+}
+
+/// A bridgeable asset on a specific chain (part of [`BridgeChainAssets`]).
+#[derive(Debug, Clone, Deserialize)]
+pub struct BridgeAsset {
+    /// Asset symbol; Phase A supports `USDC` and `USDX` only.
+    pub symbol: String,
+    /// On-chain token decimals for this asset on this chain.
+    pub decimals: u32,
+    /// Minimum amount accepted for a single deposit.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub min_amount: Decimal,
+    /// Block confirmations required before a deposit is credited.
+    pub confirmations: u32,
+    /// Flat fee charged in units of the asset (may be `"0"`); `None` when the
+    /// spec omits it.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub fee: Option<Decimal>,
+    /// `0x` token contract address on the chain; `None` for a chain-native
+    /// representation.
+    #[serde(default)]
+    pub contract_address: Option<String>,
+}
+
+/// Bridgeable assets for one chain (part of [`BridgeAssetsResponse`]).
+#[derive(Debug, Clone, Deserialize)]
+pub struct BridgeChainAssets {
+    /// Chain identifier, e.g. `ethereum` or `base`.
+    pub chain: String,
+    /// EVM chain ID, when applicable.
+    #[serde(default)]
+    pub chain_id: Option<i64>,
+    /// Assets that can be deposited from this chain.
+    #[serde(default)]
+    pub deposit_assets: Vec<BridgeAsset>,
+    /// Assets that can be withdrawn to this chain (withdrawal endpoints are a
+    /// later phase; this lists the eventual capability).
+    #[serde(default)]
+    pub withdraw_assets: Vec<BridgeAsset>,
+}
+
+/// Supported bridge chains and their deposit/withdraw assets
+/// (`GET /api/v1/bridge/assets`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct BridgeAssetsResponse {
+    /// One entry per supported chain.
+    #[serde(default)]
+    pub chains: Vec<BridgeChainAssets>,
+}
+
+/// A per-account deposit address on a specific chain
+/// (`GET`/`POST /api/v1/bridge/deposit-addresses`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct BridgeDepositAddress {
+    /// Deposit address on `chain` for the authenticated account. Sending a
+    /// supported asset here credits the account.
+    pub address: String,
+    /// Chain this address belongs to.
+    pub chain: String,
+    /// Assets creditable via this address.
+    #[serde(default)]
+    pub accepts: Vec<String>,
+    /// `0x`-prefixed Nexus account the address credits.
+    #[serde(default)]
+    pub account_id: String,
+    /// Unix timestamp (ms) the address was created.
+    #[serde(default)]
+    pub created_at: i64,
+}
+
+/// A cross-chain deposit tracked by the watcher
+/// (`GET /api/v1/bridge/deposits`, `GET /api/v1/bridge/deposits/{id}`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct BridgeDeposit {
+    /// Opaque, stable deposit identifier.
+    pub id: String,
+    /// `0x`-prefixed Nexus account being credited.
+    #[serde(default)]
+    pub account_id: String,
+    /// Source chain.
+    pub chain: String,
+    /// Deposited asset (`USDC` or `USDX`).
+    pub asset: String,
+    /// Deposit amount in units of `asset`.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub amount: Decimal,
+    /// Deposit address the funds arrived at.
+    #[serde(default)]
+    pub address: String,
+    /// Lifecycle: `detected` → `confirming` → `credited` | `failed`.
+    pub status: String,
+    /// Confirmations observed so far; `None` before the tx is seen on chain.
+    #[serde(default)]
+    pub confirmations: Option<u32>,
+    /// Confirmations required before crediting.
+    #[serde(default)]
+    pub required_confirmations: Option<u32>,
+    /// Source-chain transaction hash; `None` until detected.
+    #[serde(default)]
+    pub tx_hash: Option<String>,
+    /// Unix timestamp (ms) the deposit was first tracked.
+    #[serde(default)]
+    pub created_at: i64,
+    /// Unix timestamp (ms) the deposit was last updated.
+    #[serde(default)]
+    pub updated_at: i64,
+    /// Unix timestamp (ms) the deposit was credited; `None` until `status` is
+    /// `credited`.
+    #[serde(default)]
+    pub credited_at: Option<i64>,
 }
 
 #[cfg(test)]

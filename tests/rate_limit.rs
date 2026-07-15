@@ -28,24 +28,23 @@ async fn retries_on_429_then_succeeds() {
 
     // Registered first => lower precedence: serves once the 429 mock is spent.
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path("/status"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "events_received": 1, "fills_total": 2, "uptime_seconds": 3, "connected": true
+            "status": "ok", "timestamp_ms": 1_700_000_000_000i64, "services": {}
         })))
         .mount(&server)
         .await;
 
     // Registered last => higher precedence, but only good for one response.
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path("/status"))
         .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "0"))
         .up_to_n_times(1)
         .mount(&server)
         .await;
 
     let health = client(server.uri(), 3).health_check().await.unwrap();
-    assert_eq!(health.events_received, 1);
-    assert!(health.connected);
+    assert_eq!(health.status, "ok");
 }
 
 #[tokio::test]

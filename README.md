@@ -48,7 +48,7 @@ through the crate's `Client`, with no transport of its own — see
 
 <!-- api-version-sync:start -->
 
-Currently targets Exchange API spec **`v0.6.2`**.
+Currently targets Exchange API spec **`v0.7.0`**.
 
 <!-- api-version-sync:end -->
 
@@ -64,7 +64,7 @@ in-development SDK series) are bot-managed; the historical rows are left as-is.
 
 | SDK version | API spec |
 |---|---|
-| `0.3.x` | `v0.6.2` |
+| `0.3.x` | `v0.7.0` |
 | `0.1.x`–`0.2.x` | `v0.3.5` |
 
 ## License

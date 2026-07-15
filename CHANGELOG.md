@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(client)* send an `X-Nexus-Api-Version` header on every request, sourced from
+  the pinned `.api-version` spec tag (currently `v0.6.2`) so it never drifts,
+  and confirm the `User-Agent` is `nexus-exchange-rs/<crate version>`, for
+  edge usage metering (ENG-4804, ENG-5954). Both headers also ride the WebSocket
+  upgrade. Additive default headers only — no API change and not breaking.
+
 ## [0.5.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.5.0...v0.5.1) - 2026-07-08
 
 ### Added

@@ -2,7 +2,7 @@
 """Check the SDK's targeted endpoints against the pinned OpenAPI spec AND the
 Rust client code.
 
-Three independent invariants are enforced:
+Five independent invariants are enforced:
 
 1. endpoints.txt <-> spec
    Every endpoint the SDK targets (endpoints.txt) must exist in the pinned
@@ -60,6 +60,50 @@ Three independent invariants are enforced:
    spec-required fields to `Option` for forward-compat (see CONTRIBUTING), so a
    stricter comparison would be all false positives.
 
+4. SDK LOGIN_MESSAGE constant <-> spec canonical value   (added by ENG-3918)
+   The exact bytes the SDK signs (EIP-191) at login must equal the spec's
+   canonical `/auth/login` message; a mismatch silently rejects every login.
+   Documented at check_login_message() below.
+
+5. SDK enums <-> spec enums   (added by ENG-5474)
+   Invariant 3 compares which *fields* a payload has, but not the *values* an
+   enum field may take. An upstream enum can gain a member (PostOnly time-in-
+   force, ENG-5058) or the WS protocol a channel (Liquidations, ENG-4646) while
+   the name-level checks above stay green — leaving a typed client silently
+   unable to express or receive it. Two enum sources are diffed against the
+   released spec:
+
+     5a. A representative set of hand-written serde enums in src/types.rs
+         (ENUM_SCHEMA) whose *wire* member names (after applying `rename_all` +
+         per-variant `rename`; deserialize-only `alias`es are not canonical wire
+         values and are excluded) are diffed against the `enum` array of the
+         corresponding spec schema property.
+     5b. The WebSocket channel set: the wire names the `Channel` enum emits
+         (src/ws/protocol.rs `Channel::name`) diffed against the channels the
+         spec documents in the `GET /ws` description. WS channels are the one
+         enum the spec carries as prose, not a machine-readable `enum` array, so
+         5b extracts them from two fixed marker lines and fails LOUDLY (never
+         silently skips) if those markers move — see spec_ws_channels().
+
+   Unlike Invariant 3's field check, the enum comparison is BIDIRECTIONAL: BOTH
+   a spec member the SDK omits AND an SDK member the spec lacks are failures. A
+   spec-only member means the client cannot express/receive a value the API
+   defines (the exact PostOnly/Liquidations class); an SDK-only member means the
+   client would emit a value the API rejects. (Contrast Invariant 3, where a
+   spec field the SDK omits is merely forward-compatible: serde drops unknown
+   fields, but it CANNOT invent an enum variant at runtime.)
+
+   Modulo two documented allowlists, mirroring MODEL_FIELDS_AHEAD_OF_SPEC:
+
+     * ENUM_MEMBERS_AHEAD_OF_SPEC   — (enum, wire_member) pairs the SDK models
+                            ahead of the pinned spec (5a).
+     * WS_CHANNELS_AHEAD_OF_SPEC    — channel names the SDK models ahead of the
+                            pinned spec (5b).
+
+   Both allowlists carry the stale-entry check the other allowlists have: an
+   entry the spec now defines, or one the SDK no longer models, is flagged so
+   the list can't rot.
+
 Usage: check_spec_drift.py <openapi.json>
 """
 import json
@@ -71,6 +115,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 REST_RS = os.path.join(REPO, "src", "rest.rs")
 TYPES_RS = os.path.join(REPO, "src", "types.rs")
+WS_PROTOCOL_RS = os.path.join(REPO, "src", "ws", "protocol.rs")
 
 # Map each REST helper on `Client` (defined in src/client.rs) to the HTTP method
 # it issues. The path is always the first argument: a bare "..." string literal
@@ -162,6 +207,36 @@ MODEL_FIELDS_AHEAD_OF_SPEC = {
     ("Order", "client_order_id"),
     ("OrderRequest", "client_order_id"),
 }
+
+
+# --- Invariant 5: SDK enums <-> spec enums (ENG-5474) ------------------------
+
+# 5a. Representative hand-written serde enums in src/types.rs, mapped to the spec
+# schema PROPERTY whose `enum` array they mirror: rust_enum -> (schema, property).
+# The property is chosen so its casing matches the enum's *canonical* serialized
+# form — e.g. `Side` is mapped to OrderRequest.side (`Buy`/`Sell`), the form it
+# serializes, not Trade.side (`buy`/`sell`), which it only accepts via `alias` on
+# deserialize. Like MODEL_SCHEMA this is a curated sample, not every enum: enums
+# with no spec counterpart (e.g. `MarginMode`, whose margin-mode endpoint is
+# still a CODE_ONLY_OP ahead of spec) are intentionally omitted.
+ENUM_SCHEMA = {
+    "Side": ("OrderRequest", "side"),
+    "OrderType": ("OrderRequest", "order_type"),
+    "TimeInForce": ("OrderRequest", "time_in_force"),
+}
+
+# (rust_enum, wire_member) pairs the SDK models AHEAD OF the pinned spec — the
+# enum-level analogue of MODEL_FIELDS_AHEAD_OF_SPEC. Without this an SDK-only
+# member would (correctly) trip the bidirectional check until the spec ships it.
+# Move an entry out once the pinned spec's enum defines the member; a stale entry
+# (member now in the spec, or no longer modeled by the SDK) is flagged so the
+# list can't rot. Empty today: the SDK's enum members all match the pinned spec.
+ENUM_MEMBERS_AHEAD_OF_SPEC = set()
+
+# 5b. WS channel names the SDK's `Channel` enum emits but the pinned spec's
+# `GET /ws` description does not yet list — the WS analogue of the allowlist
+# above. Same stale-entry check applies.
+WS_CHANNELS_AHEAD_OF_SPEC = set()
 
 
 def normalize_path(p):
@@ -620,6 +695,332 @@ def check_login_message(spec):
     return 0
 
 
+# --- Invariant 5: SDK enums <-> spec enums (ENG-5474) ------------------------
+
+# A single enum variant: an optional leading attribute block (same linear
+# `[^\]]*` form as _FIELD_RE, so no catastrophic backtracking) then the variant
+# identifier, then its terminator. The body is scanned with a trailing "," (see
+# parse_enum_members) so every variant — including the last — ends in one of
+# these, letting us tell a plain unit variant (`Gtc,`) from a struct/tuple
+# variant (`Placed {` / `Wrapped(`), which this string-enum check does not model.
+_ENUM_VARIANT_RE = re.compile(
+    r"((?:#\[[^\]]*\]\s*)*)"       # leading attribute block (possibly empty)
+    r"([A-Za-z_]\w*)"             # variant identifier
+    r"\s*([,{(=])"                # terminator: , (unit) | { ( (data) | = (discriminant)
+)
+# A `Channel::name()` match arm's wire literal: `... => "trades",`.
+_WS_ARM_RE = re.compile(r"=>\s*\"([^\"]+)\"")
+
+
+def _strip_line_comments(s):
+    """Remove `//`-to-end-of-line comments that are NOT inside a string literal.
+    Enum variants carry no keyword like a struct field's `pub`, so doc/line
+    comment prose (`/// returns a tuple (x, y)`) would otherwise be mis-scanned as
+    variants. String contents are preserved so serde `rename = "..."` survives."""
+    out = []
+    i, n = 0, len(s)
+    in_str = False
+    while i < n:
+        c = s[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:  # keep escaped char (e.g. \") intact
+                out.append(s[i + 1])
+                i += 2
+                continue
+            if c == '"':
+                in_str = False
+            i += 1
+        elif c == '"':
+            in_str = True
+            out.append(c)
+            i += 1
+        elif c == "/" and i + 1 < n and s[i + 1] == "/":
+            while i < n and s[i] != "\n":  # drop to end of line
+                i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def _enum_body(src, rust_name):
+    """Return (body, rename_all) for `enum <rust_name>` in `src`, or exit (fail
+    closed) if it is not found. `body` is the text between the enum's braces with
+    line comments stripped; `rename_all` is the container serde rule or None."""
+    em = re.search(
+        r"(?m)^(?:pub(?:\([^)]*\))? )?enum " + re.escape(rust_name) + r"\b", src
+    )
+    if not em:
+        sys.exit(
+            f"ERROR: enum {rust_name!r} (in ENUM_SCHEMA) not found in the SDK "
+            f"sources; was it renamed or made a struct? Update ENUM_SCHEMA / the parser."
+        )
+
+    # Container `rename_all`: walk upward over this enum's own attribute/doc lines
+    # only, stopping at the first line that is neither (so a preceding item's
+    # rename_all can't leak in) — same approach as parse_model_fields().
+    rename_all = None
+    for line in reversed(src[: em.start()].splitlines()):
+        s = line.strip()
+        if s.startswith(("#[", "///", "//")) or s == "":
+            m = _RENAME_ALL_RE.search(s)
+            if m:
+                rename_all = m.group(1)
+        else:
+            break
+
+    open_brace = src.index("{", em.start())
+    depth = 0
+    body = None
+    for j in range(open_brace, len(src)):
+        if src[j] == "{":
+            depth += 1
+        elif src[j] == "}":
+            depth -= 1
+            if depth == 0:
+                body = src[open_brace + 1 : j]
+                break
+    if body is None:
+        sys.exit(f"ERROR: unterminated enum body for {rust_name!r} in the SDK sources.")
+    return _strip_line_comments(body), rename_all
+
+
+def parse_enum_members(src, rust_name):
+    """Return the set of serde *wire* member names a unit-only serde enum in
+    src/types.rs serializes to: per-variant `rename` wins, else the container
+    `rename_all` maps the identifier; deserialize-only `alias`es are excluded.
+    Exits (fail closed) if the enum is missing, has a non-unit (struct/tuple)
+    variant this check does not model, or parses to zero members — a
+    renamed/restructured enum must be a loud failure, never a silent skip."""
+    body, rename_all = _enum_body(src, rust_name)
+    members = set()
+    # Trailing "," so the final variant is terminated like the rest.
+    for attrs, ident, term in _ENUM_VARIANT_RE.findall(body + ","):
+        if term in "{(":
+            sys.exit(
+                f"ERROR: enum {rust_name!r} has a non-unit variant {ident!r} "
+                f"(struct/tuple); the enum-member check only models plain unit "
+                f"enums. Remove it from ENUM_SCHEMA or extend parse_enum_members()."
+            )
+        rn = _RENAME_RE.search(attrs)
+        members.add(rn.group(1) if rn else _apply_rename_all(ident, rename_all))
+    if not members:
+        sys.exit(
+            f"ERROR: parsed zero members from enum {rust_name!r}; the variant "
+            f"pattern may have changed — update parse_enum_members()."
+        )
+    return members
+
+
+def parse_ws_channel_names(path=WS_PROTOCOL_RS):
+    """Return the set of WS channel wire names the `Channel` enum emits, read from
+    its `name()` match arms in src/ws/protocol.rs. Uses name() (the actual wire
+    source) rather than the variant identifiers, since Channel's wire names are
+    hand-mapped, not serde-derived. Exits (fail closed) if the method or its arms
+    can't be found."""
+    try:
+        src = open(path).read()
+    except OSError as e:
+        sys.exit(f"ERROR: cannot read WS protocol source {path!r}: {e}")
+    fn = re.search(r"fn name\(&self\)\s*->\s*&'static str\s*\{", src)
+    if not fn:
+        sys.exit(
+            f"ERROR: could not find `Channel::name()` in {path!r}; the WS channel "
+            f"wire-name source may have changed — update parse_ws_channel_names()."
+        )
+    open_brace = src.index("{", fn.start())
+    depth = 0
+    block = None
+    for j in range(open_brace, len(src)):
+        if src[j] == "{":
+            depth += 1
+        elif src[j] == "}":
+            depth -= 1
+            if depth == 0:
+                block = src[open_brace + 1 : j]
+                break
+    if block is None:
+        sys.exit(f"ERROR: unterminated `Channel::name()` body in {path!r}.")
+    names = set(_WS_ARM_RE.findall(block))
+    if not names:
+        sys.exit(
+            f"ERROR: parsed zero channel names from `Channel::name()` in {path!r}; "
+            f"the match-arm pattern may have changed — update parse_ws_channel_names()."
+        )
+    return names
+
+
+def spec_ws_channels(spec):
+    """Return the set of WS channel names the spec documents in its `GET /ws`
+    description. WS channels are the one enum the spec carries as prose rather
+    than a machine-readable `enum` array, so we extract them from the two fixed
+    marker lines ("**Public channels** ...: `a`, `b`" / "**Per-account channels**
+    ...: `c`, `d`"). This couples the check to that phrasing on purpose: it fails
+    LOUDLY if a marker moves (so a maintainer re-derives it at spec-pin time)
+    rather than silently passing on an empty set. Exits (fail closed) on either."""
+    try:
+        desc = spec["paths"]["/ws"]["get"]["description"]
+    except (KeyError, TypeError):
+        sys.exit(
+            "ERROR: spec has no `GET /ws` description to read WS channels from; "
+            "the WebSocket documentation shape changed — update spec_ws_channels()."
+        )
+    channels = set()
+    for marker in ("Public channels", "Per-account channels"):
+        m = re.search(r"\*\*" + marker + r"\*\*[^:]*:(.*)", desc)
+        if not m:
+            sys.exit(
+                f"ERROR: could not find the '{marker}' line in the spec `GET /ws` "
+                f"description; the WS channel documentation was reworded — update "
+                f"spec_ws_channels() (and re-check the `Channel` enum by hand)."
+            )
+        # Only the leading list, before any trailing prose ("— each requires a
+        # `market` field"), is the channel set; `market` et al. must not leak in.
+        # Cut at an em-dash, a spaced hyphen, or a sentence break, whichever the
+        # phrasing uses.
+        segment = re.split(r"\s—\s|\s-\s|\.\s", m.group(1))[0]
+        channels |= set(re.findall(r"`([a-z_]+)`", segment))
+    if not channels:
+        sys.exit(
+            "ERROR: parsed zero WS channels from the spec `GET /ws` description; "
+            "its formatting changed — update spec_ws_channels()."
+        )
+    return channels
+
+
+def _report_enum_delta(label, sdk_members, spec_members, ahead, ahead_desc):
+    """Shared bidirectional enum diff + reporting for 5a/5b. Returns error count.
+    `ahead` is the SDK-ahead-of-spec allowlist (members expected in the SDK but
+    not the spec); `ahead_desc` names it for the stale-entry messages."""
+    # Spec defines a member the SDK does not model -> FAIL. serde cannot invent a
+    # variant at runtime, so (unlike a missing struct field) this is real breakage
+    # — the client can neither send nor decode the value. This is the PostOnly /
+    # Liquidations regression class.
+    missing_from_sdk = sorted(spec_members - sdk_members)
+    # SDK models a member the spec does not define (and it is not allowlisted) ->
+    # FAIL: the client would emit a value the API rejects.
+    extra_in_sdk = sorted(sdk_members - spec_members - ahead)
+    # Stale allowlist (FAIL): a member the spec now defines...
+    landed = sorted(ahead & spec_members)
+    # ...or one the SDK no longer models (so the entry protects nothing).
+    stale_unmodeled = sorted(ahead - sdk_members)
+
+    errors = 0
+    if missing_from_sdk:
+        errors += len(missing_from_sdk)
+        print(
+            f"\nERROR: {label} is missing {len(missing_from_sdk)} member(s) the "
+            f"pinned spec defines (add the variant(s) to the SDK enum):"
+        )
+        for m in missing_from_sdk:
+            print(f"  - {m}")
+    if extra_in_sdk:
+        errors += len(extra_in_sdk)
+        print(
+            f"\nERROR: {label} models {len(extra_in_sdk)} member(s) absent from "
+            f"the pinned spec (spec renamed/removed them, or add to {ahead_desc} "
+            f"if intentionally ahead of spec):"
+        )
+        for m in extra_in_sdk:
+            print(f"  - {m}")
+    if landed:
+        errors += len(landed)
+        print(
+            f"\nERROR: {len(landed)} {ahead_desc} entr(ies) for {label} are now "
+            f"defined by the pinned spec; remove them (no longer ahead of spec):"
+        )
+        for m in landed:
+            print(f"  - {m}")
+    if stale_unmodeled:
+        errors += len(stale_unmodeled)
+        print(
+            f"\nERROR: {len(stale_unmodeled)} {ahead_desc} entr(ies) for {label} "
+            f"are no longer modeled by the SDK; remove them from the allowlist:"
+        )
+        for m in stale_unmodeled:
+            print(f"  - {m}")
+    return errors
+
+
+def check_enums_vs_spec(spec):
+    """Invariant 5a: a representative set of src/types.rs serde enums must model
+    exactly the member set of their spec schema property's `enum` array (modulo
+    ENUM_MEMBERS_AHEAD_OF_SPEC). Returns the number of errors printed."""
+    schemas = spec.get("components", {}).get("schemas", {})
+    try:
+        src = open(TYPES_RS).read()
+    except OSError as e:
+        sys.exit(f"ERROR: cannot read model source {TYPES_RS!r}: {e}")
+
+    errors = 0
+    for rust_name, (schema_name, prop) in sorted(ENUM_SCHEMA.items()):
+        schema = schemas.get(schema_name)
+        if schema is None:
+            errors += 1
+            print(
+                f"\nERROR: spec schema {schema_name!r} (carrying the enum modeled "
+                f"by SDK `{rust_name}`) is absent from the pinned spec (renamed/removed?)."
+            )
+            continue
+        prop_schema = schema.get("properties", {}).get(prop)
+        if prop_schema is None:
+            errors += 1
+            print(
+                f"\nERROR: spec schema {schema_name!r} has no property {prop!r} "
+                f"(the enum modeled by SDK `{rust_name}`); it was renamed/removed "
+                f"— update ENUM_SCHEMA."
+            )
+            continue
+        spec_members = prop_schema.get("enum")
+        if not spec_members:
+            errors += 1
+            print(
+                f"\nERROR: spec {schema_name!r}.{prop} is no longer an `enum` "
+                f"(the member set modeled by SDK `{rust_name}` can't be compared) "
+                f"— update ENUM_SCHEMA / the check."
+            )
+            continue
+
+        sdk_members = parse_enum_members(src, rust_name)
+        ahead = {m for (r, m) in ENUM_MEMBERS_AHEAD_OF_SPEC if r == rust_name}
+        errors += _report_enum_delta(
+            f"SDK enum `{rust_name}` (spec {schema_name!r}.{prop})",
+            sdk_members,
+            set(spec_members),
+            ahead,
+            "ENUM_MEMBERS_AHEAD_OF_SPEC",
+        )
+
+    if not errors:
+        print(
+            f"\nOK: all {len(ENUM_SCHEMA)} representative SDK enum(s) model exactly "
+            f"the pinned spec's member set (or members in ENUM_MEMBERS_AHEAD_OF_SPEC)."
+        )
+    return errors
+
+
+def check_ws_channels_vs_spec(spec):
+    """Invariant 5b: the WS `Channel` enum must emit exactly the channels the spec
+    documents in `GET /ws` (modulo WS_CHANNELS_AHEAD_OF_SPEC). Returns error count."""
+    sdk_channels = parse_ws_channel_names()
+    spec_channels = spec_ws_channels(spec)
+    errors = _report_enum_delta(
+        "WS `Channel` enum (spec `GET /ws`)",
+        sdk_channels,
+        spec_channels,
+        set(WS_CHANNELS_AHEAD_OF_SPEC),
+        "WS_CHANNELS_AHEAD_OF_SPEC",
+    )
+    if not errors:
+        print(
+            f"\nOK: the WS `Channel` enum emits exactly the {len(spec_channels)} "
+            f"channel(s) the pinned spec documents (or channels in "
+            f"WS_CHANNELS_AHEAD_OF_SPEC)."
+        )
+    return errors
+
+
 def main():
     if len(sys.argv) != 2:
         sys.exit(f"usage: {sys.argv[0]} <openapi.json>")
@@ -658,6 +1059,10 @@ def main():
 
     # Invariant 4: SDK LOGIN_MESSAGE constant <-> spec canonical value.
     failures += check_login_message(spec)
+
+    # Invariant 5: SDK enums <-> spec enums (5a serde enums, 5b WS channels).
+    failures += check_enums_vs_spec(spec)
+    failures += check_ws_channels_vs_spec(spec)
 
     if failures:
         sys.exit(1)

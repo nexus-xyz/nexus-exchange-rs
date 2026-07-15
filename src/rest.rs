@@ -638,12 +638,14 @@ impl Client {
     /// Only the fields set on `amend` change; the rest of the order is left as
     /// is. An amend that would change nothing is rejected locally (no request is
     /// sent) so a stray no-op can't silently churn the order's queue priority.
+    /// A successful PATCH returns the replacement [`Order`] directly (unlike
+    /// `POST /orders`, which wraps its order and fills in [`OrderResponse`]).
     pub async fn amend_order(
         &self,
         order_id: &str,
         market_id: &str,
         amend: &AmendOrder,
-    ) -> Result<OrderResponse> {
+    ) -> Result<Order> {
         require_non_empty(market_id, "market_id")?;
         if !amend.has_changes() {
             return Err(Error::invalid_request(

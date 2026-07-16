@@ -9,8 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Pinned the API spec to `v0.7.1` (ENG-6035) and modeled the new surface so the
+  `spec-drift` gate stays green:
+  - **Triggerable & trailing order types.** `OrderType` gains `StopLimit`,
+    `StopMarket`, `TakeProfitLimit`, `TakeProfitMarket`, `TrailingStop`, and
+    `TrailingLimit`. `OrderRequest` gains `trigger_price` (stop / take-profit),
+    `trailing_offset_bps` (trailing) and `limit_offset_bps` (`TrailingLimit`),
+    with the `OrderRequest::trailing_limit` constructor and `with_trigger_price`
+    / `with_trailing_offset_bps` / `with_limit_offset_bps` builders.
+  - **Cancel-on-disconnect.** `fetch_cancel_on_disconnect` /
+    `set_cancel_on_disconnect` (`GET`/`PUT /api/v1/account/cancel-on-disconnect`)
+    returning `CancelOnDisconnectStatus`.
+  - **Bridge Phase A (deposits).** `fetch_bridge_assets` (public),
+    `create_bridge_deposit_address`, `fetch_bridge_deposit_addresses`,
+    `fetch_bridge_deposits`, and `fetch_bridge_deposit` over the host-root
+    `/api/v1/bridge/*` surface, with `BridgeAssetsResponse`, `BridgeChainAssets`,
+    `BridgeAsset`, `BridgeDepositAddress`, and `BridgeDeposit`.
 - *(client)* send an `X-Nexus-Api-Version` header on every request, sourced from
-  the pinned `.api-version` spec tag (currently `v0.6.2`) so it never drifts,
+  the pinned `.api-version` spec tag (currently `v0.7.1`) so it never drifts,
   and confirm the `User-Agent` is `nexus-exchange-rs/<crate version>`, for
   edge usage metering (ENG-4804, ENG-5954). Both headers also ride the WebSocket
   upgrade. Additive default headers only — no API change and not breaking.
@@ -28,6 +44,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale-entry check), mirroring `MODEL_FIELDS_AHEAD_OF_SPEC`. A stdlib
   regression test (`scripts/test_check_spec_drift.py`) runs in the same gate.
   No library API change.
+
+### Changed
+
+- [**breaking**] `GET /health` and `GET /ready` were removed upstream in
+  `v0.7.1`; `Client::health_check` now reads the public `GET /status` aggregate
+  and `HealthStatus` is remodeled to match its `ServiceHealth` shape — `status`
+  (`ok`/`degraded`/`down`/`starting`), `timestamp_ms`, and an opaque `services`
+  — replacing the previous indexer-snapshot fields (`events_received`,
+  `fills_total`, `uptime_seconds`, `connected`, `health`).
+- [**breaking**] New `OrderType` variants and new public `OrderRequest` fields
+  (above) widen those types; downstream exhaustive `match`es on `OrderType` and
+  struct literals of `OrderRequest` must be updated.
 
 ## [0.5.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.5.0...v0.5.1) - 2026-07-08
 

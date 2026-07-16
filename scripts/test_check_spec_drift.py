@@ -28,7 +28,16 @@ def _quiet(fn, *args, **kwargs):
 
 # Member sets that match the current SDK enums / WS channels exactly.
 SDK_SIDE = ["Buy", "Sell"]
-SDK_ORDER_TYPE = ["Limit", "Market"]
+SDK_ORDER_TYPE = [
+    "Limit",
+    "Market",
+    "StopLimit",
+    "StopMarket",
+    "TakeProfitLimit",
+    "TakeProfitMarket",
+    "TrailingStop",
+    "TrailingLimit",
+]
 SDK_TIF = ["GTC", "IOC", "FOK", "PostOnly"]
 SDK_PUBLIC_CHANNELS = ["trades", "book", "candles"]
 SDK_PRIVATE_CHANNELS = ["orders", "fills", "positions", "balances"]
@@ -83,7 +92,17 @@ class TestEnumParser(unittest.TestCase):
         # PascalCase canonical form; the lowercase `alias`es are not wire values.
         self.assertEqual(csd.parse_enum_members(self.src, "Side"), {"Buy", "Sell"})
         self.assertEqual(
-            csd.parse_enum_members(self.src, "OrderType"), {"Limit", "Market"}
+            csd.parse_enum_members(self.src, "OrderType"),
+            {
+                "Limit",
+                "Market",
+                "StopLimit",
+                "StopMarket",
+                "TakeProfitLimit",
+                "TakeProfitMarket",
+                "TrailingStop",
+                "TrailingLimit",
+            },
         )
 
     def test_lowercase_rename_all(self):

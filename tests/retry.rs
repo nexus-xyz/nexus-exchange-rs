@@ -26,7 +26,8 @@ fn client(uri: String, retry: RetryConfig) -> Client {
 
 fn health_body() -> serde_json::Value {
     serde_json::json!({
-        "events_received": 1, "fills_total": 2, "uptime_seconds": 3, "connected": true
+        "status": "ok", "timestamp_ms": 1_700_000_000_000i64,
+        "services": { "indexer": "ok", "engine": "ok" }
     })
 }
 
@@ -38,14 +39,14 @@ async fn retries_transient_5xx_then_succeeds() {
     // 503 mock serves its 2 allotted responses and the next request falls
     // through to the priority-2 200 mock.
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path("/status"))
         .respond_with(ResponseTemplate::new(503))
         .up_to_n_times(2)
         .with_priority(1)
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path("/status"))
         .respond_with(ResponseTemplate::new(200).set_body_json(health_body()))
         .with_priority(2)
         .mount(&server)
@@ -55,7 +56,7 @@ async fn retries_transient_5xx_then_succeeds() {
         .health_check()
         .await
         .expect("should recover after transient 503s");
-    assert_eq!(health.events_received, 1);
+    assert_eq!(health.status, "ok");
 }
 
 #[tokio::test]
@@ -64,14 +65,14 @@ async fn retries_transient_408_then_succeeds() {
     // 408 (Request Timeout) is transient: the first two attempts get a 408,
     // then the request falls through to the 200.
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path("/status"))
         .respond_with(ResponseTemplate::new(408))
         .up_to_n_times(2)
         .with_priority(1)
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path("/status"))
         .respond_with(ResponseTemplate::new(200).set_body_json(health_body()))
         .with_priority(2)
         .mount(&server)
@@ -81,7 +82,7 @@ async fn retries_transient_408_then_succeeds() {
         .health_check()
         .await
         .expect("should recover after transient 408s");
-    assert_eq!(health.events_received, 1);
+    assert_eq!(health.status, "ok");
 }
 
 #[tokio::test]
@@ -91,14 +92,14 @@ async fn per_attempt_timeout_is_transient_and_retried() {
     // it surfaces as a transient timeout and is retried; the next attempt falls
     // through to the fast 200.
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path("/status"))
         .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(10)))
         .up_to_n_times(1)
         .with_priority(1)
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path("/status"))
         .respond_with(ResponseTemplate::new(200).set_body_json(health_body()))
         .with_priority(2)
         .mount(&server)
@@ -111,7 +112,7 @@ async fn per_attempt_timeout_is_transient_and_retried() {
         .health_check()
         .await
         .expect("should recover after a timed-out attempt");
-    assert_eq!(health.events_received, 1);
+    assert_eq!(health.status, "ok");
 }
 
 #[tokio::test]
@@ -119,7 +120,7 @@ async fn retries_exhaust_then_surface_last_error() {
     let server = MockServer::start().await;
     // 1 initial attempt + 3 retries = 4 calls, all 503.
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path("/status"))
         .respond_with(ResponseTemplate::new(503).set_body_json(serde_json::json!({
             "code": "unavailable", "message": "try later"
         })))
@@ -148,7 +149,7 @@ async fn does_not_retry_non_transient_4xx() {
     let server = MockServer::start().await;
     // A 400 is deterministic: it must be tried exactly once, never retried.
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path("/status"))
         .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
             "code": "bad_request", "message": "nope"
         })))
@@ -176,7 +177,7 @@ async fn does_not_retry_429_owned_by_rate_limit_layer() {
     // generic transient-retry layer does not *also* back off on it (otherwise
     // we'd see extra attempts).
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path("/status"))
         .respond_with(ResponseTemplate::new(429).set_body_json(serde_json::json!({
             "code": "rate_limited", "message": "slow down"
         })))
@@ -198,7 +199,7 @@ async fn does_not_retry_429_owned_by_rate_limit_layer() {
 async fn disabled_retry_makes_a_single_attempt() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/health"))
+        .and(path("/status"))
         .respond_with(ResponseTemplate::new(503))
         .expect(1)
         .mount(&server)

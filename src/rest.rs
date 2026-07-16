@@ -25,12 +25,13 @@ use std::collections::HashMap;
 
 use crate::auth::{AgentRegistration, EthSigner};
 use crate::types::{
-    AccountSummary, AdlEvent, AgentInfo, AgentRegistered, AmendOrder, ApiKeyInfo, CreatedApiKey,
-    CreditResult, Decimal, DepositResult, Fill, FundingPayment, FundingSample, HealthStatus,
-    LeverageUpdate, LoginResponse, MarginAdjustment, MarginDirection, MarginMode, MarginModeUpdate,
-    MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderRequest,
-    OrderResponse, OrderResult, Position, RateLimitStatus, SubAccount, Ticker, TierOverride, Trade,
-    Transfer, TransferRequest, Withdrawal, WsToken,
+    AccountSummary, AdlEvent, AgentInfo, AgentRegistered, AmendOrder, ApiKeyInfo,
+    BridgeAssetsResponse, BridgeDeposit, BridgeDepositAddress, CancelOnDisconnectStatus,
+    CreatedApiKey, CreditResult, Decimal, DepositResult, Fill, FundingPayment, FundingSample,
+    HealthStatus, LeverageUpdate, LoginResponse, MarginAdjustment, MarginDirection, MarginMode,
+    MarginModeUpdate, MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook,
+    OrderRequest, OrderResponse, OrderResult, Position, RateLimitStatus, SubAccount, Ticker,
+    TierOverride, Trade, Transfer, TransferRequest, Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
 
@@ -248,9 +249,14 @@ impl Client {
             .await
     }
 
-    /// Indexer health/status snapshot. Unauthenticated.
+    /// Aggregate service health (`GET /status`). Unauthenticated.
+    ///
+    /// The v0.7.1 spec removed the old liveness `GET /health` / `GET /ready`
+    /// probes; `GET /status` is the public health snapshot for the
+    /// indexer/engine/oracle/bots. Rely on
+    /// [`HealthStatus::status`](crate::types::HealthStatus::status).
     pub async fn health_check(&self) -> Result<HealthStatus> {
-        self.get("/health", &[], COST_DEFAULT).await
+        self.get("/status", &[], COST_DEFAULT).await
     }
 
     /// Fetch the caller's current rate-limit status (tier, ceiling, remaining,
@@ -766,6 +772,78 @@ impl Client {
         registration: &AgentRegistration,
     ) -> Result<AgentRegistered> {
         self.post_unsigned("/agents/register", registration).await
+    }
+
+    // --- Cancel-on-disconnect (COD) --------------------------------------------
+
+    /// Fetch the account's cancel-on-disconnect status
+    /// (`GET /api/v1/account/cancel-on-disconnect`). Requires credentials.
+    ///
+    /// When enabled and active, the exchange cancels the account's resting orders
+    /// if the `/ws` connection drops and is not re-established within the grace
+    /// window (see [`CancelOnDisconnectStatus`]).
+    pub async fn fetch_cancel_on_disconnect(&self) -> Result<CancelOnDisconnectStatus> {
+        self.signed_get("/api/v1/account/cancel-on-disconnect", &[])
+            .await
+    }
+
+    /// Enable or disable cancel-on-disconnect for the account
+    /// (`PUT /api/v1/account/cancel-on-disconnect`). Requires credentials.
+    ///
+    /// Returns the resulting [`CancelOnDisconnectStatus`]; note `active` may stay
+    /// false if the exchange has the feature switched off deployment-wide even
+    /// when `enabled` is set true.
+    pub async fn set_cancel_on_disconnect(
+        &self,
+        enabled: bool,
+    ) -> Result<CancelOnDisconnectStatus> {
+        self.signed_put(
+            "/api/v1/account/cancel-on-disconnect",
+            &serde_json::json!({ "enabled": enabled }),
+        )
+        .await
+    }
+
+    // --- Bridge (Phase A: deposits) --------------------------------------------
+
+    /// List the supported bridge chains and their deposit/withdraw assets
+    /// (`GET /api/v1/bridge/assets`). Unauthenticated.
+    pub async fn fetch_bridge_assets(&self) -> Result<BridgeAssetsResponse> {
+        self.get("/api/v1/bridge/assets", &[], COST_DEFAULT).await
+    }
+
+    /// Get-or-create the account's deposit address on `chain`
+    /// (`POST /api/v1/bridge/deposit-addresses`). Requires credentials.
+    ///
+    /// Idempotent per `(account, chain)`: repeated calls return the same address.
+    pub async fn create_bridge_deposit_address(&self, chain: &str) -> Result<BridgeDepositAddress> {
+        require_non_empty(chain, "chain")?;
+        self.signed_post(
+            "/api/v1/bridge/deposit-addresses",
+            &serde_json::json!({ "chain": chain }),
+        )
+        .await
+    }
+
+    /// List the account's bridge deposit addresses
+    /// (`GET /api/v1/bridge/deposit-addresses`). Requires credentials.
+    pub async fn fetch_bridge_deposit_addresses(&self) -> Result<Vec<BridgeDepositAddress>> {
+        self.signed_get("/api/v1/bridge/deposit-addresses", &[])
+            .await
+    }
+
+    /// List the account's tracked cross-chain deposits
+    /// (`GET /api/v1/bridge/deposits`). Requires credentials.
+    pub async fn fetch_bridge_deposits(&self) -> Result<Vec<BridgeDeposit>> {
+        self.signed_get("/api/v1/bridge/deposits", &[]).await
+    }
+
+    /// Fetch a single tracked bridge deposit by id
+    /// (`GET /api/v1/bridge/deposits/{id}`). Requires credentials.
+    pub async fn fetch_bridge_deposit(&self, id: &str) -> Result<BridgeDeposit> {
+        let id = encoded_segment(id, "id")?;
+        self.signed_get(&format!("/api/v1/bridge/deposits/{id}"), &[])
+            .await
     }
 }
 

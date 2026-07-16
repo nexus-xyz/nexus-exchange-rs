@@ -797,6 +797,12 @@ pub struct Order {
     /// placed. The spec marks it optional, so it defaults to `None` when absent.
     #[serde(default)]
     pub client_order_id: Option<String>,
+    /// Fired-limit-price offset in basis points for a
+    /// [`TrailingLimit`](OrderType::TrailingLimit) order (mirrors
+    /// [`OrderRequest::limit_offset_bps`]). `None` for order types that don't
+    /// carry one, or when the API omits it.
+    #[serde(default)]
+    pub limit_offset_bps: Option<u32>,
     /// Unix timestamp (ms) when the order was created.
     #[serde(default)]
     pub created_at: i64,

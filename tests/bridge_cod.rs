@@ -2,7 +2,7 @@
 //! triggerable/trailing order types. Covers wire (de)serialization, request
 //! signing, path-segment encoding, and the local validation guard.
 
-use nexus_exchange::types::{OrderRequest, OrderType, Side, TimeInForce};
+use nexus_exchange::types::{Order, OrderRequest, OrderType, Side, TimeInForce};
 use nexus_exchange::{Client, Config, Error};
 use wiremock::matchers::{body_json, header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -170,6 +170,33 @@ fn trailing_limit_serializes_offsets_and_wire_type() {
     assert_eq!(v["limit_offset_bps"], 10);
     // No trigger_price on a trailing order; not serialized.
     assert!(v.get("trigger_price").is_none());
+}
+
+#[test]
+fn order_readback_surfaces_limit_offset_bps() {
+    // The spec's Order response schema carries limit_offset_bps, so a read-back
+    // TrailingLimit order must preserve it rather than silently drop the offset.
+    let order: Order = serde_json::from_str(
+        r#"{
+            "id": "o1", "market_id": "BTC-USDX-PERP", "side": "Buy",
+            "order_type": "TrailingLimit", "quantity": "1", "filled_qty": "0",
+            "status": "Open", "time_in_force": "GTC", "limit_offset_bps": 10
+        }"#,
+    )
+    .unwrap();
+    assert_eq!(order.order_type, OrderType::TrailingLimit);
+    assert_eq!(order.limit_offset_bps, Some(10));
+
+    // Absent on non-trailing types (and older payloads): defaults to None.
+    let limit: Order = serde_json::from_str(
+        r#"{
+            "id": "o2", "market_id": "BTC-USDX-PERP", "side": "Sell",
+            "order_type": "Limit", "price": "100", "quantity": "1",
+            "filled_qty": "0", "status": "Open", "time_in_force": "GTC"
+        }"#,
+    )
+    .unwrap();
+    assert_eq!(limit.limit_offset_bps, None);
 }
 
 #[test]

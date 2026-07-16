@@ -14,6 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and confirm the `User-Agent` is `nexus-exchange-rs/<crate version>`, for
   edge usage metering (ENG-4804, ENG-5954). Both headers also ride the WebSocket
   upgrade. Additive default headers only — no API change and not breaking.
+- Extended the `spec-drift` CI gate to validate **enum members**, not just
+  schema/endpoint and struct-field names (ENG-5474). A new invariant diffs a
+  representative set of hand-written enums against the released spec,
+  bidirectionally: it fails when the spec defines an enum value the SDK does not
+  model (the class that let `PostOnly` time-in-force, ENG-5058, and the WS
+  `Channel::Liquidations` variant, ENG-4646, slip through) **and** when the SDK
+  models a value the spec lacks. Covers the serde enums in `src/types.rs`
+  (against each spec schema property's `enum` array) and the WebSocket `Channel`
+  enum in `src/ws/protocol.rs` (against the channels the spec documents for
+  `GET /ws`). Intentional divergence is documented via the
+  `ENUM_MEMBERS_AHEAD_OF_SPEC` / `WS_CHANNELS_AHEAD_OF_SPEC` allowlists (with a
+  stale-entry check), mirroring `MODEL_FIELDS_AHEAD_OF_SPEC`. A stdlib
+  regression test (`scripts/test_check_spec_drift.py`) runs in the same gate.
+  No library API change.
 
 ## [0.5.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.5.0...v0.5.1) - 2026-07-08
 

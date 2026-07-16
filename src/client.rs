@@ -6,8 +6,10 @@ use std::time::Duration;
 use backon::BackoffBuilder;
 use serde::{de::DeserializeOwned, Serialize};
 
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+
 use crate::auth::SigningContext;
-use crate::config::DEFAULT_USER_AGENT;
+use crate::config::{API_VERSION_HEADER, API_VERSION_RAW, DEFAULT_USER_AGENT};
 use crate::ratelimit::{RateLimiter, ThrottleInfo};
 use crate::types::RateLimitStatus;
 use crate::{Config, Error, Result};
@@ -43,15 +45,35 @@ const API_V1_PREFIX: &str = "/api/v1/";
 /// condition under which [`reqwest::Client::new`] itself panics — so this keeps
 /// [`Client::new`] infallible without hiding that class of error.
 fn build_http(user_agent: &str) -> reqwest::Client {
+    let default_headers = default_headers();
     reqwest::Client::builder()
         .user_agent(user_agent)
+        .default_headers(default_headers.clone())
         .build()
         .or_else(|_| {
             reqwest::Client::builder()
                 .user_agent(DEFAULT_USER_AGENT)
+                .default_headers(default_headers)
                 .build()
         })
         .expect("failed to initialize HTTP client (TLS/resolver init)")
+}
+
+/// Headers sent by default on every REST request. Currently just the pinned
+/// spec tag ([`API_VERSION_HEADER`]: [`API_VERSION_RAW`], trimmed), which lets
+/// the server-side request indexer meter edge usage per spec version
+/// (ENG-4804). The tag is wired in from existing pinned state — no new
+/// [`Config`] field. A `vX.Y.Z` tag is always a valid header value, but if
+/// parsing ever failed we skip the header rather than panic during client init.
+fn default_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    if let (Ok(name), Ok(value)) = (
+        HeaderName::from_bytes(API_VERSION_HEADER.as_bytes()),
+        HeaderValue::from_str(API_VERSION_RAW.trim()),
+    ) {
+        headers.insert(name, value);
+    }
+    headers
 }
 
 /// Entry point for the Nexus Exchange API.
@@ -495,6 +517,24 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/x"))
             .and(header("user-agent", DEFAULT_USER_AGENT))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = Client::new(Config::with_base_url(server.uri()));
+        let _: serde_json::Value = client.get("/x", &[], 0.0).await.unwrap();
+    }
+
+    /// Every request carries the pinned spec tag as `X-Nexus-Api-Version`,
+    /// sourced from the repo-root `.api-version` file, so the server can meter
+    /// edge usage per spec version (ENG-4804). Capture it off a normal request.
+    #[tokio::test]
+    async fn sends_api_version_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/x"))
+            .and(header("x-nexus-api-version", API_VERSION_RAW.trim()))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&server)

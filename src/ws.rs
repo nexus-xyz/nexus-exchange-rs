@@ -84,7 +84,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::handshake::client::Request as HandshakeRequest;
-use tokio_tungstenite::tungstenite::http::header::{HeaderValue, USER_AGENT};
+use tokio_tungstenite::tungstenite::http::header::{HeaderName, HeaderValue, USER_AGENT};
 use tokio_tungstenite::tungstenite::Message;
 
 /// Capacity of the (rarely-used) command channel from a [`Subscription`] to
@@ -443,14 +443,15 @@ async fn wait_backoff(
 }
 
 /// Build the WebSocket upgrade request for `url`, carrying the configured
-/// `User-Agent`.
+/// `User-Agent` and the pinned spec tag (`X-Nexus-Api-Version`).
 ///
 /// `tokio_tungstenite` sends no `User-Agent` of its own, so without this the WS
 /// half of a consumer's traffic shows up unattributed to the server-side
-/// request indexer (REST already sends the header via the `reqwest` client).
+/// request indexer (REST already sends both headers via the `reqwest` client).
 /// The UA is normalized to a valid header value at [`Config`](crate::Config)
-/// construction, so the insert can't realistically fail; if it somehow did we
-/// connect without the header rather than refuse to stream.
+/// construction and the spec tag is an ASCII `vX.Y.Z` string, so neither insert
+/// can realistically fail; if one somehow did we connect without that header
+/// rather than refuse to stream.
 fn handshake_request(
     url: &str,
     user_agent: &str,
@@ -458,6 +459,12 @@ fn handshake_request(
     let mut request = url.into_client_request()?;
     if let Ok(value) = HeaderValue::from_str(user_agent) {
         request.headers_mut().insert(USER_AGENT, value);
+    }
+    if let (Ok(name), Ok(value)) = (
+        HeaderName::from_bytes(crate::config::API_VERSION_HEADER.as_bytes()),
+        HeaderValue::from_str(crate::config::API_VERSION_RAW.trim()),
+    ) {
+        request.headers_mut().insert(name, value);
     }
     Ok(request)
 }
@@ -761,6 +768,18 @@ mod tests {
     fn handshake_request_sets_user_agent() {
         let request = handshake_request("ws://ws.example/ws", "nexus-cli/1.0").unwrap();
         assert_eq!(request.headers().get(USER_AGENT).unwrap(), "nexus-cli/1.0");
+    }
+
+    #[test]
+    fn handshake_request_sets_api_version() {
+        let request = handshake_request("ws://ws.example/ws", "nexus-cli/1.0").unwrap();
+        assert_eq!(
+            request
+                .headers()
+                .get(crate::config::API_VERSION_HEADER)
+                .unwrap(),
+            crate::config::API_VERSION_RAW.trim()
+        );
     }
 
     /// End-to-end: a loopback server reads the raw HTTP upgrade request the

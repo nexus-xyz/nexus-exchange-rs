@@ -298,6 +298,19 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const DEFAULT_USER_AGENT: &str =
     concat!("nexus-exchange-rs/", env!("CARGO_PKG_VERSION"));
 
+/// Raw contents of the repo-root `.api-version` file — the spec tag this crate
+/// is pinned to (e.g. `v0.6.2\n`). Embedded at compile time so it tracks the
+/// pin and never drifts (the same file the spec-drift gate reads); the path is
+/// relative to this source file, so `../.api-version` resolves to the repo
+/// root. The trailing newline is trimmed at the point the header value is built
+/// (`trim` is not `const`).
+pub(crate) const API_VERSION_RAW: &str = include_str!("../.api-version");
+
+/// Name of the header carrying the pinned spec tag ([`API_VERSION_RAW`]) on
+/// every request, so the server-side request indexer can meter edge usage per
+/// spec version (ENG-4804). HTTP header names are case-insensitive.
+pub(crate) const API_VERSION_HEADER: &str = "X-Nexus-Api-Version";
+
 /// Derive the direct-service base (host root) for the `/api/v1` surface from a
 /// gateway-style base URL, by stripping a single trailing `/api/exchange`
 /// gateway segment (and any trailing slash). A base that carries no such segment

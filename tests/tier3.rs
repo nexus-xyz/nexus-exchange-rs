@@ -169,11 +169,8 @@ async fn amend_order_puts_only_changed_fields() {
             serde_json::json!({ "price": "50500", "quantity": "0.2" }),
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "order": {
-                "id": "o1", "market_id": "BTC-USDX-PERP", "side": "Buy", "order_type": "Limit",
-                "price": "50500", "quantity": "0.2", "time_in_force": "GTC", "status": "Open"
-            },
-            "fills": []
+            "id": "o2", "market_id": "BTC-USDX-PERP", "side": "Buy", "order_type": "Limit",
+            "price": "50500", "quantity": "0.2", "time_in_force": "GTC", "status": "Open"
         })))
         .mount(&server)
         .await;
@@ -182,8 +179,9 @@ async fn amend_order_puts_only_changed_fields() {
         .amend_order("o1", "BTC-USDX-PERP", &amend)
         .await
         .unwrap();
-    assert_eq!(resp.order.price, Some(dec("50500")));
-    assert_eq!(resp.order.quantity, dec("0.2"));
+    assert_eq!(resp.id, "o2");
+    assert_eq!(resp.price, Some(dec("50500")));
+    assert_eq!(resp.quantity, dec("0.2"));
 }
 
 #[tokio::test]
@@ -202,11 +200,8 @@ async fn amend_order_serializes_tif_and_client_order_id() {
             serde_json::json!({ "time_in_force": "IOC", "client_order_id": "replacement-1" }),
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "order": {
-                "id": "o1", "market_id": "BTC-USDX-PERP", "side": "Buy", "order_type": "Limit",
-                "time_in_force": "IOC", "status": "Open", "client_order_id": "replacement-1"
-            },
-            "fills": []
+            "id": "o2", "market_id": "BTC-USDX-PERP", "side": "Buy", "order_type": "Limit",
+            "time_in_force": "IOC", "status": "Open", "client_order_id": "replacement-1"
         })))
         .mount(&server)
         .await;
@@ -217,8 +212,9 @@ async fn amend_order_serializes_tif_and_client_order_id() {
         .amend_order("o1", "BTC-USDX-PERP", &amend)
         .await
         .unwrap();
-    assert_eq!(resp.order.time_in_force, TimeInForce::Ioc);
-    assert_eq!(resp.order.client_order_id.as_deref(), Some("replacement-1"));
+    assert_eq!(resp.id, "o2");
+    assert_eq!(resp.time_in_force, TimeInForce::Ioc);
+    assert_eq!(resp.client_order_id.as_deref(), Some("replacement-1"));
 }
 
 #[tokio::test]

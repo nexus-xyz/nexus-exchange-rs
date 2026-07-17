@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.5.1...v0.6.0) - 2026-07-17
+
+### Added
+
+- [**breaking**] bump API spec to v0.7.1 and model the new surface (ENG-6035) ([#99](https://github.com/nexus-xyz/nexus-exchange-rs/pull/99))
+- *(client)* send X-Nexus-Api-Version header + confirm normalized User-Agent (ENG-5954) ([#98](https://github.com/nexus-xyz/nexus-exchange-rs/pull/98))
+- *(spec-drift)* validate enum members, not just names (ENG-5474) ([#97](https://github.com/nexus-xyz/nexus-exchange-rs/pull/97))
+
+### Fixed
+
+- *(sdk)* decode amend response as bare order (ENG-5947) ([#96](https://github.com/nexus-xyz/nexus-exchange-rs/pull/96))
+
+### Other
+
+- harden spec-drift check: enforce inline-literal paths + guard LOGIN_MESSAGE ([#91](https://github.com/nexus-xyz/nexus-exchange-rs/pull/91))
+- bump sha3 from 0.10.9 to 0.12.0 ([#92](https://github.com/nexus-xyz/nexus-exchange-rs/pull/92))
+- add AGENTS.md with merge-safety guardrails (ENG-5319) ([#89](https://github.com/nexus-xyz/nexus-exchange-rs/pull/89))
+
 ### Added
 
 - Pinned the API spec to `v0.7.1` (ENG-6035) and modeled the new surface so the

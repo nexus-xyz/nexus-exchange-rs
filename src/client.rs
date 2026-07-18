@@ -420,7 +420,15 @@ impl Client {
         } else {
             format!("{}{}?{}", self.base_for(path), path, qs)
         };
+        let is_post = method == reqwest::Method::POST;
         let mut req = self.http.request(method, url).timeout(self.config.timeout);
+        // An empty POST still needs an explicit zero-length payload on the
+        // wire. Some HTTP gateways (including the staging Cloud Run frontend)
+        // reject POST requests without either Content-Length or
+        // Transfer-Encoding before they reach the API service.
+        if is_post {
+            req = req.header(reqwest::header::CONTENT_LENGTH, "0");
+        }
         for (name, value) in &headers {
             req = req.header(*name, value);
         }

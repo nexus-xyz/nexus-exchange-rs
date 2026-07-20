@@ -197,6 +197,19 @@ fn order_readback_surfaces_limit_offset_bps() {
     )
     .unwrap();
     assert_eq!(limit.limit_offset_bps, None);
+
+    // Explicit JSON null (the spec types the field `integer | null`) also
+    // deserializes to None, same as when the key is absent.
+    let explicit_null: Order = serde_json::from_str(
+        r#"{
+            "id": "o3", "market_id": "BTC-USDX-PERP", "side": "Sell",
+            "order_type": "Limit", "price": "100", "quantity": "1",
+            "filled_qty": "0", "status": "Open", "time_in_force": "GTC",
+            "limit_offset_bps": null
+        }"#,
+    )
+    .unwrap();
+    assert_eq!(explicit_null.limit_offset_bps, None);
 }
 
 #[test]

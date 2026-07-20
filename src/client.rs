@@ -420,13 +420,16 @@ impl Client {
         } else {
             format!("{}{}?{}", self.base_for(path), path, qs)
         };
-        let is_post = method == reqwest::Method::POST;
+        // These methods semantically carry a payload even when that payload is
+        // empty. Set `Content-Length: 0` explicitly; reqwest does not emit the
+        // header for `body(Vec::new())` here, while strict gateways reject
+        // the request before it reaches the API. DELETE remains bodyless.
+        let needs_explicit_empty_body = matches!(
+            method,
+            reqwest::Method::POST | reqwest::Method::PUT | reqwest::Method::PATCH
+        );
         let mut req = self.http.request(method, url).timeout(self.config.timeout);
-        // An empty POST still needs an explicit zero-length payload on the
-        // wire. Some HTTP gateways (including the staging Cloud Run frontend)
-        // reject POST requests without either Content-Length or
-        // Transfer-Encoding before they reach the API service.
-        if is_post {
+        if needs_explicit_empty_body {
             req = req.header(reqwest::header::CONTENT_LENGTH, "0");
         }
         for (name, value) in &headers {

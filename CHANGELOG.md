@@ -80,6 +80,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [**breaking**] New `OrderType` variants and new public `OrderRequest` fields
   (above) widen those types; downstream exhaustive `match`es on `OrderType` and
   struct literals of `OrderRequest` must be updated.
+- [**breaking**] *(orders)* surface `Order.limit_offset_bps` on the order-read
+  path (ENG-6035 follow-up), mirroring `OrderRequest::limit_offset_bps`, so a
+  read-back `TrailingLimit` order no longer drops its fired-limit-price offset.
+  The spec's `Order` response schema already carried the field; it is now modeled
+  (the `spec-drift` informational note for `Order` clears). `Order` is an
+  externally-constructible struct, so adding a public field is a breaking change
+  (struct literals must now set it) — matching how the sibling `OrderRequest`
+  field additions were classified in #99.
 
 ## [0.5.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.5.0...v0.5.1) - 2026-07-08
 

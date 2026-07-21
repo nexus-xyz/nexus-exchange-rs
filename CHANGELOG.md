@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.6.1...v0.7.0) - 2026-07-21
+
+### Added
+
+- *(orders)* [**breaking**] surface Order.limit_offset_bps on read-back (ENG-6035) ([#101](https://github.com/nexus-xyz/nexus-exchange-rs/pull/101))
+
 ## [0.6.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.6.0...v0.6.1) - 2026-07-21
 
 ### Fixed

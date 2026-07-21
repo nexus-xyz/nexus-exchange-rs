@@ -420,7 +420,18 @@ impl Client {
         } else {
             format!("{}{}?{}", self.base_for(path), path, qs)
         };
+        // These methods semantically carry a payload even when that payload is
+        // empty. Set `Content-Length: 0` explicitly; reqwest does not emit the
+        // header for `body(Vec::new())` here, while strict gateways reject
+        // the request before it reaches the API. DELETE remains bodyless.
+        let needs_explicit_empty_body = matches!(
+            method,
+            reqwest::Method::POST | reqwest::Method::PUT | reqwest::Method::PATCH
+        );
         let mut req = self.http.request(method, url).timeout(self.config.timeout);
+        if needs_explicit_empty_body {
+            req = req.header(reqwest::header::CONTENT_LENGTH, "0");
+        }
         for (name, value) in &headers {
             req = req.header(*name, value);
         }

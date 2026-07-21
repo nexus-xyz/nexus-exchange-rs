@@ -1,6 +1,6 @@
 use nexus_exchange::types::Decimal;
 use nexus_exchange::{Client, Config, Error, Network, TerminalError};
-use wiremock::matchers::{body_json, body_string, header_exists, method, path};
+use wiremock::matchers::{body_json, body_string, header, header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const SECRET: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
@@ -124,8 +124,10 @@ async fn mint_ws_token_parses() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/ws/token"))
-        // signs an empty body and sends none — verify no body is transmitted.
+        // The empty body is signed as-is, while its zero length is explicit on
+        // the wire so HTTP gateways accept the POST.
         .and(body_string(""))
+        .and(header("content-length", "0"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(serde_json::json!({ "token": "abc123" })),
         )

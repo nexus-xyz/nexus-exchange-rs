@@ -35,7 +35,7 @@ hex = "0.4"
 secrecy = { version = "0.10", features = ["serde"] }
 zeroize = "1"
 thiserror = "2"
-tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"] }

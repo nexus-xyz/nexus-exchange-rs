@@ -77,7 +77,10 @@ Five independent invariants are enforced:
          (ENUM_SCHEMA) whose *wire* member names (after applying `rename_all` +
          per-variant `rename`; deserialize-only `alias`es are not canonical wire
          values and are excluded) are diffed against the `enum` array of the
-         corresponding spec schema property.
+         corresponding spec schema property. That property may hold its `enum`
+         inline or reach it through a `$ref` / single-branch `allOf` wrapper (the
+         idiom for attaching a `default` to a `$ref`); resolve_enum() follows both
+         so a factored-out enum is checked, not silently skipped.
      5b. The WebSocket channel set: the wire names the `Channel` enum emits
          (src/ws/protocol.rs `Channel::name`) diffed against the channels the
          spec documents in the `GET /ws` description. WS channels are the one
@@ -174,6 +177,13 @@ NON_REST_TARGETS = {
 # auth-critical payloads are prioritized. Add a model here when it gains an
 # importance that warrants drift protection; it is intentionally a sample, not an
 # exhaustive enumeration of every type.
+#
+# Intentionally absent: `FeeDiscount`. The spec declares it as a bare
+# `additionalProperties: true` object with NO properties (its shape finalizes with
+# the fee model), so the field-level comparison has nothing to compare and would
+# trip the "no inline properties" guard below. The SDK matches that by keeping the
+# payload as a raw map rather than freezing a shape. Add it here once the spec
+# gives it real properties.
 MODEL_SCHEMA = {
     "Market": "Market",
     "MarketSummary": "MarketSummary",
@@ -184,6 +194,11 @@ MODEL_SCHEMA = {
     "FundingSample": "FundingSample",
     "RateLimitStatus": "RateLimitStatus",
     "AccountSummary": "AccountSummary",
+    "AccountPortfolioSummary": "AccountPortfolioSummary",
+    "AccountState": "AccountState",
+    "AccountFees": "AccountFees",
+    "PortfolioHistory": "PortfolioHistory",
+    "PortfolioPoint": "PortfolioPoint",
     "Position": "Position",
     "Fill": "Fill",
     "Order": "Order",
@@ -219,10 +234,14 @@ MODEL_FIELDS_AHEAD_OF_SPEC = {
 # deserialize. Like MODEL_SCHEMA this is a curated sample, not every enum: enums
 # with no spec counterpart (e.g. `MarginMode`, whose margin-mode endpoint is
 # still a CODE_ONLY_OP ahead of spec) are intentionally omitted.
+# The property may carry its `enum` inline OR reach it through a `$ref` / a
+# single-branch `allOf` wrapper (see resolve_enum below) — the spec uses the
+# latter for `PortfolioHistory.window`, so a `default` can sit alongside the ref.
 ENUM_SCHEMA = {
     "Side": ("OrderRequest", "side"),
     "OrderType": ("OrderRequest", "order_type"),
     "TimeInForce": ("OrderRequest", "time_in_force"),
+    "PortfolioWindow": ("PortfolioHistory", "window"),
 }
 
 # (rust_enum, wire_member) pairs the SDK models AHEAD OF the pinned spec — the
@@ -943,6 +962,53 @@ def _report_enum_delta(label, sdk_members, spec_members, ahead, ahead_desc):
     return errors
 
 
+# Maximum `$ref` hops followed when resolving a property to its `enum` array. The
+# bound makes a malformed spec with a `$ref` cycle fail as "unresolvable" instead
+# of spinning forever; real specs need one or two hops.
+_MAX_REF_HOPS = 8
+
+# Only component schemas are resolvable targets; a `$ref` pointing anywhere else
+# (an external file, a `#/components/parameters/...`) is out of scope here.
+_SCHEMA_REF_PREFIX = "#/components/schemas/"
+
+
+def resolve_enum(schemas, node):
+    """Return the `enum` member list a property schema resolves to, or None if it
+    carries none.
+
+    Enum-valued properties are not always inline: the spec composes some by
+    reference — `PortfolioHistory.window` is `allOf: [{$ref: PortfolioWindow}]`,
+    the idiom for attaching a sibling `default`/`description` to a `$ref`. Without
+    resolution such a property looks like "not an enum" and its members would go
+    unchecked, silently losing the Invariant-5 protection for exactly the enums the
+    spec factors out. Follows a direct `$ref` and a single-branch `allOf`, bounded
+    by _MAX_REF_HOPS and guarded against a `$ref` cycle."""
+    seen = set()
+    for _ in range(_MAX_REF_HOPS):
+        if not isinstance(node, dict):
+            return None
+        if node.get("enum"):
+            return node["enum"]
+        ref = node.get("$ref")
+        if ref is None:
+            # A one-branch `allOf` is the compose-with-a-`default` idiom. Two or
+            # more branches is a real intersection this check has no basis to
+            # collapse into one member set, so leave it unresolved and let the
+            # caller report it loudly rather than guess.
+            branches = node.get("allOf")
+            if not isinstance(branches, list) or len(branches) != 1:
+                return None
+            node = branches[0]
+            continue
+        if not isinstance(ref, str) or not ref.startswith(_SCHEMA_REF_PREFIX):
+            return None
+        if ref in seen:  # cycle
+            return None
+        seen.add(ref)
+        node = schemas.get(ref[len(_SCHEMA_REF_PREFIX):])
+    return None
+
+
 def check_enums_vs_spec(spec):
     """Invariant 5a: a representative set of src/types.rs serde enums must model
     exactly the member set of their spec schema property's `enum` array (modulo
@@ -972,13 +1038,14 @@ def check_enums_vs_spec(spec):
                 f"— update ENUM_SCHEMA."
             )
             continue
-        spec_members = prop_schema.get("enum")
+        spec_members = resolve_enum(schemas, prop_schema)
         if not spec_members:
             errors += 1
             print(
-                f"\nERROR: spec {schema_name!r}.{prop} is no longer an `enum` "
-                f"(the member set modeled by SDK `{rust_name}` can't be compared) "
-                f"— update ENUM_SCHEMA / the check."
+                f"\nERROR: spec {schema_name!r}.{prop} does not resolve to an "
+                f"`enum` (the member set modeled by SDK `{rust_name}` can't be "
+                f"compared); it is no longer an enum, or is composed in a way "
+                f"resolve_enum() does not follow — update ENUM_SCHEMA / the check."
             )
             continue
 

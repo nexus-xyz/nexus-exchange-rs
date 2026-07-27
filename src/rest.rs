@@ -25,12 +25,13 @@ use std::collections::HashMap;
 
 use crate::auth::{AgentRegistration, EthSigner};
 use crate::types::{
-    AccountSummary, AdlEvent, AgentInfo, AgentRegistered, AmendOrder, ApiKeyInfo,
-    BridgeAssetsResponse, BridgeDeposit, BridgeDepositAddress, CancelOnDisconnectStatus,
-    CreatedApiKey, CreditResult, Decimal, DepositResult, Fill, FundingPayment, FundingSample,
-    HealthStatus, LeverageUpdate, LoginResponse, MarginAdjustment, MarginDirection, MarginMode,
-    MarginModeUpdate, MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook,
-    OrderRequest, OrderResponse, OrderResult, Position, RateLimitStatus, SubAccount, Ticker,
+    AccountFees, AccountPortfolioSummary, AccountState, AccountSummary, AdlEvent, AgentInfo,
+    AgentRegistered, AmendOrder, ApiKeyInfo, BridgeAssetsResponse, BridgeDeposit,
+    BridgeDepositAddress, CancelOnDisconnectStatus, CreatedApiKey, CreditResult, Decimal,
+    DepositResult, Fill, FundingPayment, FundingSample, HealthStatus, LeverageUpdate,
+    LoginResponse, MarginAdjustment, MarginDirection, MarginMode, MarginModeUpdate, MarkPrice,
+    Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderRequest, OrderResponse,
+    OrderResult, PortfolioHistory, PortfolioWindow, Position, RateLimitStatus, SubAccount, Ticker,
     TierOverride, Trade, Transfer, TransferRequest, Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
@@ -345,8 +346,85 @@ impl Client {
     }
 
     /// Open positions for the authenticated account. Requires credentials.
+    ///
+    /// Each [`Position`] carries the enriched per-position risk detail
+    /// (leverage, notional value, ROE, margin used, max leverage, funding paid);
+    /// see [`Position`] for why a risk field can be `None` and why its
+    /// companion `*_error` matters.
     pub async fn fetch_positions(&self) -> Result<Vec<Position>> {
         self.signed_get("/api/v1/positions", &[]).await
+    }
+
+    /// Aggregate portfolio summary for the authenticated account
+    /// (`GET /api/v1/account/summary`) — equity, PnL, volume, open counts, and
+    /// [`withdrawable`](AccountPortfolioSummary::withdrawable). Requires
+    /// credentials.
+    ///
+    /// To get this together with the account's positions from a single coherent
+    /// read, use [`fetch_account_state`](Self::fetch_account_state) instead.
+    pub async fn fetch_account_summary(&self) -> Result<AccountPortfolioSummary> {
+        self.signed_get("/api/v1/account/summary", &[]).await
+    }
+
+    /// Consolidated account snapshot (`GET /api/v1/account/state`) — the
+    /// portfolio summary **and** every open position from one server-side read.
+    /// Requires credentials.
+    ///
+    /// Prefer this over calling
+    /// [`fetch_account_summary`](Self::fetch_account_summary) and
+    /// [`fetch_positions`](Self::fetch_positions) separately: those are two
+    /// independent requests, so a fill landing between them returns an
+    /// internally inconsistent pair (an aggregate that disagrees with the
+    /// position list). Here both halves are guaranteed consistent — see
+    /// [`AccountState`].
+    pub async fn fetch_account_state(&self) -> Result<AccountState> {
+        self.signed_get("/api/v1/account/state", &[]).await
+    }
+
+    /// The authenticated account's effective fee schedule
+    /// (`GET /api/v1/account/fees`). Requires credentials.
+    ///
+    /// Returns the forward-looking schedule rate, not a realized per-fill
+    /// average. Note [`AccountFees::maker_fee_bps`] is signed — a negative value
+    /// is a maker *rebate* — and [`AccountFees::schedule`] scopes which
+    /// per-market schedule the rate belongs to.
+    pub async fn fetch_account_fees(&self) -> Result<AccountFees> {
+        self.signed_get("/api/v1/account/fees", &[]).await
+    }
+
+    /// Portfolio time series for the authenticated account
+    /// (`GET /api/v1/account/portfolio-history`) — equity, cumulative PnL, and
+    /// cumulative volume, oldest first. Requires credentials.
+    ///
+    /// `window` selects the span *and* the server-side downsample cadence and
+    /// point capacity (see [`PortfolioWindow`]); `None` takes the server's `day`
+    /// default. Read the served window back from
+    /// [`PortfolioHistory::window`] rather than assuming the requested value.
+    ///
+    /// `limit` caps the number of points returned. It is only an upper bound:
+    /// the server clamps a value above the window's capacity (day 288, week 168,
+    /// month 120, all 366) rather than rejecting it, so the SDK passes it
+    /// through unclamped instead of second-guessing the server's caps. A
+    /// `limit` of `0` violates the spec's `minimum: 1` and would be rejected
+    /// server-side, so it is rejected locally before the request is signed or
+    /// sent. Pass `None` for the full window.
+    pub async fn fetch_portfolio_history(
+        &self,
+        window: Option<PortfolioWindow>,
+        limit: Option<u32>,
+    ) -> Result<PortfolioHistory> {
+        let mut query = Vec::new();
+        if let Some(window) = window {
+            query.push(("window", window.as_str().to_string()));
+        }
+        if let Some(limit) = limit {
+            if limit == 0 {
+                return Err(Error::invalid_request("limit must be at least 1"));
+            }
+            query.push(("limit", limit.to_string()));
+        }
+        self.signed_get("/api/v1/account/portfolio-history", &query)
+            .await
     }
 
     /// Recent fills (private trade executions) for the authenticated account.

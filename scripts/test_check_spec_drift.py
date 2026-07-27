@@ -39,11 +39,12 @@ SDK_ORDER_TYPE = [
     "TrailingLimit",
 ]
 SDK_TIF = ["GTC", "IOC", "FOK", "PostOnly"]
+SDK_WINDOW = ["day", "week", "month", "all"]
 SDK_PUBLIC_CHANNELS = ["trades", "book", "candles"]
 SDK_PRIVATE_CHANNELS = ["orders", "fills", "positions", "balances"]
 
 
-def enum_spec(side=SDK_SIDE, order_type=SDK_ORDER_TYPE, tif=SDK_TIF):
+def enum_spec(side=SDK_SIDE, order_type=SDK_ORDER_TYPE, tif=SDK_TIF, window=SDK_WINDOW):
     return {
         "components": {
             "schemas": {
@@ -53,7 +54,23 @@ def enum_spec(side=SDK_SIDE, order_type=SDK_ORDER_TYPE, tif=SDK_TIF):
                         "order_type": {"enum": list(order_type)},
                         "time_in_force": {"enum": list(tif)},
                     }
-                }
+                },
+                # `window` is composed BY REFERENCE, exactly as the real spec does
+                # it (a single-branch `allOf` so a sibling `default` can sit beside
+                # the `$ref`) rather than inlining the members. So this fixture
+                # also exercises resolve_enum's ref-following: before that existed,
+                # this property read as "not an enum" and went unchecked.
+                "PortfolioHistory": {
+                    "properties": {
+                        "window": {
+                            "allOf": [
+                                {"$ref": "#/components/schemas/PortfolioWindow"}
+                            ],
+                            "default": "day",
+                        }
+                    }
+                },
+                "PortfolioWindow": {"type": "string", "enum": list(window)},
             }
         }
     }
@@ -158,6 +175,74 @@ class TestEnumsVsSpec(unittest.TestCase):
         spec = enum_spec()
         del spec["components"]["schemas"]["OrderRequest"]["properties"]["time_in_force"]
         self.assertGreater(_quiet(csd.check_enums_vs_spec, spec), 0)
+
+    def test_ref_composed_enum_member_delta_fails(self):
+        # PortfolioWindow reaches its members through `allOf`/`$ref`. Prove the
+        # invariant actually bites there too: a spec-side member the SDK cannot
+        # express must fail, not pass because the property looked non-enum.
+        errs = _quiet(csd.check_enums_vs_spec, enum_spec(window=SDK_WINDOW + ["quarter"]))
+        self.assertGreater(errs, 0)
+
+    def test_ref_composed_enum_unresolvable_fails_closed(self):
+        # If the referenced schema goes missing, the ref no longer resolves; that
+        # must be a loud failure rather than a silently skipped check.
+        spec = enum_spec()
+        del spec["components"]["schemas"]["PortfolioWindow"]
+        self.assertGreater(_quiet(csd.check_enums_vs_spec, spec), 0)
+
+
+class TestResolveEnum(unittest.TestCase):
+    """resolve_enum: how a property reaches its `enum` array."""
+
+    SCHEMAS = {
+        "Window": {"enum": ["day", "all"]},
+        "Alias": {"$ref": "#/components/schemas/Window"},
+        "SelfRef": {"$ref": "#/components/schemas/SelfRef"},
+        "Ping": {"$ref": "#/components/schemas/Pong"},
+        "Pong": {"$ref": "#/components/schemas/Ping"},
+    }
+
+    def _resolve(self, node):
+        return csd.resolve_enum(self.SCHEMAS, node)
+
+    def test_inline(self):
+        self.assertEqual(self._resolve({"enum": ["a", "b"]}), ["a", "b"])
+
+    def test_direct_ref(self):
+        self.assertEqual(
+            self._resolve({"$ref": "#/components/schemas/Window"}), ["day", "all"]
+        )
+
+    def test_all_of_wrapper(self):
+        # The real spec shape: a `default` alongside a single-branch `allOf`.
+        node = {"allOf": [{"$ref": "#/components/schemas/Window"}], "default": "day"}
+        self.assertEqual(self._resolve(node), ["day", "all"])
+
+    def test_chained_ref(self):
+        self.assertEqual(
+            self._resolve({"$ref": "#/components/schemas/Alias"}), ["day", "all"]
+        )
+
+    def test_multi_branch_all_of_unresolved(self):
+        # A real intersection: no basis to pick one member set, so don't guess.
+        node = {"allOf": [{"$ref": "#/components/schemas/Window"}, {"enum": ["x"]}]}
+        self.assertIsNone(self._resolve(node))
+
+    def test_self_referential_ref_terminates(self):
+        self.assertIsNone(self._resolve({"$ref": "#/components/schemas/SelfRef"}))
+
+    def test_mutually_recursive_refs_terminate(self):
+        self.assertIsNone(self._resolve({"$ref": "#/components/schemas/Ping"}))
+
+    def test_missing_target_and_non_schema_ref(self):
+        self.assertIsNone(self._resolve({"$ref": "#/components/schemas/Nope"}))
+        self.assertIsNone(self._resolve({"$ref": "other.json#/Window"}))
+
+    def test_no_enum_anywhere(self):
+        self.assertIsNone(self._resolve({"type": "string"}))
+        self.assertIsNone(self._resolve(None))
+        # An empty `enum` is treated as "no members", same as absent.
+        self.assertIsNone(self._resolve({"enum": []}))
 
 
 class TestWsChannelParser(unittest.TestCase):

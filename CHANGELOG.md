@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Pinned the API spec to `v0.7.2` and exposed the **portfolio-parity** surface
+  (ENG-6457). The bump is purely additive over `v0.7.1` — no operation, schema,
+  field, or enum member was removed — so it carries no spec-side breakage.
+  - **Portfolio time series.** `fetch_portfolio_history` (`GET
+    /api/v1/account/portfolio-history`) returning `PortfolioHistory` /
+    `PortfolioPoint` — equity, cumulative PnL (deposit-neutral), and cumulative
+    volume, oldest first — selected by the new `PortfolioWindow`
+    (`day`/`week`/`month`/`all`), which also fixes the server-side downsample
+    cadence and point capacity. `limit` is passed through unclamped (the server
+    clamps rather than rejecting an over-capacity value); a `limit` of `0`
+    violates the spec minimum and is rejected locally before signing.
+  - **Consolidated account state.** `fetch_account_state` (`GET
+    /api/v1/account/state`) returning `AccountState` — the portfolio summary
+    **and** all open positions from one coherent server-side read, so the
+    aggregates cannot tear against the position list the way separate
+    summary/positions calls can.
+  - **`withdrawable` + portfolio summary.** `fetch_account_summary` (`GET
+    /api/v1/account/summary`) returning the new `AccountPortfolioSummary`, whose
+    `withdrawable` is the engine-authoritative free margin floored at zero —
+    prefer it over `available_margin` when deciding what may leave the account.
+  - **Account fees.** `fetch_account_fees` (`GET /api/v1/account/fees`)
+    returning `AccountFees` — effective maker/taker rate in bps (**signed**: a
+    negative maker fee is a rebate), fee tier, rate `schedule` scope, rolling
+    30-day volume with a `volume_30d_estimated` undercount flag, and
+    `discounts`. `FeeDiscount` keeps the server's object verbatim because the
+    spec has not fixed its shape yet.
+- Extended the `spec-drift` gate's enum invariant to resolve enum-valued
+  properties composed by `$ref` / single-branch `allOf`, not just inline `enum`
+  arrays. `PortfolioHistory.window` is composed that way, so without this its
+  members would have gone unchecked — silently losing the protection the
+  invariant exists for. `PortfolioWindow` is now covered.
+
+### Changed
+
+- [**breaking**] *(positions)* `Position` gains the enriched per-position risk
+  fields: `leverage`, `notional_value`, `roe`, `margin_used`, `max_leverage`,
+  `funding_paid`, plus a companion `*_error` for each derived field. `Position`
+  is an externally-constructible struct (all-public fields, no
+  `#[non_exhaustive]`), so cargo-semver-checks flags the additions via
+  `constructible_struct_adds_field`; downstream struct literals of `Position`
+  must be updated. Every new field is `Option` and defaulted, so positions from a
+  server that omits them still decode. A `None` risk field never means zero —
+  the server declines to fabricate a value it cannot derive and reports the
+  reason in the matching `*_error`; read the pair together.
+
 ## [0.6.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.6.0...v0.6.1) - 2026-07-21
 
 ### Fixed

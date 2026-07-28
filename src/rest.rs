@@ -47,6 +47,13 @@ pub const LOGIN_MESSAGE: &str = "Sign in to Nexus Exchange";
 /// free `/account/rate-limit` poll is one of them.)
 const COST_DEFAULT: f64 = 1.0;
 
+/// Largest `limit` the portfolio-history request schema permits (`maximum: 366`,
+/// the capacity of the widest window). Enforced locally by
+/// [`Client::fetch_portfolio_history`] so a request that violates the schema is
+/// never signed or sent; kept public so callers can clamp their own input to the
+/// same bound instead of hard-coding it.
+pub const MAX_PORTFOLIO_HISTORY_LIMIT: u32 = 366;
+
 /// Percent-encode a single path segment so a caller-supplied identifier (e.g. a
 /// client order id) cannot break out of its position in the request path.
 /// Everything outside the RFC 3986 *unreserved* set is escaped, so `/`, `?`,
@@ -362,6 +369,15 @@ impl Client {
     ///
     /// To get this together with the account's positions from a single coherent
     /// read, use [`fetch_account_state`](Self::fetch_account_state) instead.
+    ///
+    /// # Fails closed, so an `Err` is not an empty account
+    ///
+    /// This endpoint derives `withdrawable` from the engine-authoritative margin
+    /// view, and returns `502` with
+    /// [`code`](Error::code) `authoritative_margin_unavailable` when that view is
+    /// temporarily down rather than reporting a locally-estimated figure. Retry
+    /// after a short delay; **do not** read the error as a flat or zero-balance
+    /// account.
     pub async fn fetch_account_summary(&self) -> Result<AccountPortfolioSummary> {
         self.signed_get("/api/v1/account/summary", &[]).await
     }
@@ -377,6 +393,14 @@ impl Client {
     /// internally inconsistent pair (an aggregate that disagrees with the
     /// position list). Here both halves are guaranteed consistent — see
     /// [`AccountState`].
+    ///
+    /// # Fails closed, so an `Err` is not an empty account
+    ///
+    /// Like [`fetch_account_summary`](Self::fetch_account_summary), this returns
+    /// `502` with [`code`](Error::code) `authoritative_margin_unavailable` when
+    /// the engine-authoritative margin view is temporarily unavailable, rather
+    /// than serving a locally-estimated balance. Retry after a short delay;
+    /// **do not** read the error as an account with no positions.
     pub async fn fetch_account_state(&self) -> Result<AccountState> {
         self.signed_get("/api/v1/account/state", &[]).await
     }
@@ -401,13 +425,21 @@ impl Client {
     /// default. Read the served window back from
     /// [`PortfolioHistory::window`] rather than assuming the requested value.
     ///
-    /// `limit` caps the number of points returned. It is only an upper bound:
-    /// the server clamps a value above the window's capacity (day 288, week 168,
-    /// month 120, all 366) rather than rejecting it, so the SDK passes it
-    /// through unclamped instead of second-guessing the server's caps. A
-    /// `limit` of `0` violates the spec's `minimum: 1` and would be rejected
-    /// server-side, so it is rejected locally before the request is signed or
-    /// sent. Pass `None` for the full window.
+    /// `limit` caps the number of points returned; pass `None` for the full
+    /// window. The spec's request schema is `minimum: 1, maximum: 366`, and both
+    /// bounds are enforced locally — before the request is signed or sent — so a
+    /// value the schema forbids is never transmitted. The parameter's prose notes
+    /// that the server *clamps* an over-capacity value rather than rejecting it,
+    /// but that describes server tolerance of non-conforming input, not licence
+    /// for a client to exceed the schema; the sibling Python SDK and MCP server
+    /// bound it the same way.
+    ///
+    /// `limit` is only an upper bound in either direction: the server still
+    /// clamps to the selected window's own capacity (day 288, week 168, month
+    /// 120, all 366), which is below `366` for every window but
+    /// [`All`](PortfolioWindow::All). Read
+    /// [`points`](PortfolioHistory::points)`.len()` rather than assuming the
+    /// requested count.
     pub async fn fetch_portfolio_history(
         &self,
         window: Option<PortfolioWindow>,
@@ -418,8 +450,10 @@ impl Client {
             query.push(("window", window.as_str().to_string()));
         }
         if let Some(limit) = limit {
-            if limit == 0 {
-                return Err(Error::invalid_request("limit must be at least 1"));
+            if limit == 0 || limit > MAX_PORTFOLIO_HISTORY_LIMIT {
+                return Err(Error::invalid_request(format!(
+                    "limit must be between 1 and {MAX_PORTFOLIO_HISTORY_LIMIT}"
+                )));
             }
             query.push(("limit", limit.to_string()));
         }

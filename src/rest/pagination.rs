@@ -435,6 +435,7 @@ mod tests {
                 } else {
                     Err(crate::TransientError::Unavailable {
                         status: 500,
+                        code: "STORAGE_ERROR".into(),
                         message: "kaboom".into(),
                     }
                     .into())

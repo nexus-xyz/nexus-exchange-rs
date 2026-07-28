@@ -572,7 +572,13 @@ pub struct AccountSummary {
 /// Every enriched field is `Option` and defaulted, so a position from a server
 /// that predates them (or one that omits them entirely) still decodes rather
 /// than failing the whole positions/balance/account-state read.
+///
+/// `#[non_exhaustive]`: the spec marks none of these properties required and is
+/// openly planning more of them, so this is expected to keep gaining fields.
+/// Match with a `..` rest pattern and read fields off a returned value rather
+/// than constructing one with a struct literal.
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct Position {
     /// Market identifier, e.g. `BTC-USDX-PERP`.
     pub market_id: String,
@@ -668,35 +674,52 @@ pub struct Position {
 ///
 /// Distinct from [`AccountSummary`], which is the balance/collateral view from
 /// `GET /api/v1/account` and embeds the account's positions.
+///
+/// # Every field is optional
+///
+/// The spec gives this schema **no `required` array**, so the server may
+/// legitimately omit any property. Each field is therefore `Option` and
+/// defaulted: an absent `collateral` yields `None` for that one field instead of
+/// failing the entire `/account/summary` or `/account/state` decode. `None` means
+/// "not reported", never zero — do not substitute `0` for a missing aggregate, or
+/// an underwater account reads as flat. In practice a current server sends all of
+/// them.
+///
+/// `#[non_exhaustive]`: read fields off a returned value rather than constructing
+/// one with a struct literal, so a future spec addition isn't a breaking change.
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct AccountPortfolioSummary {
     /// Collateral posted to the account.
-    #[serde(with = "rust_decimal::serde::str")]
-    pub collateral: Decimal,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub collateral: Option<Decimal>,
     /// Total account equity (collateral plus unrealized PnL).
-    #[serde(with = "rust_decimal::serde::str")]
-    pub total_equity: Decimal,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub total_equity: Option<Decimal>,
     /// Total unrealized PnL across all open positions.
-    #[serde(with = "rust_decimal::serde::str")]
-    pub total_unrealized_pnl: Decimal,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub total_unrealized_pnl: Option<Decimal>,
     /// Realized PnL booked over the last 24 hours.
-    #[serde(with = "rust_decimal::serde::str")]
-    pub total_realized_pnl_24h: Decimal,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub total_realized_pnl_24h: Option<Decimal>,
     /// Traded notional over the last 24 hours.
-    #[serde(with = "rust_decimal::serde::str")]
-    pub total_volume_24h: Decimal,
-    /// Number of open positions.
-    pub open_positions_count: u32,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub total_volume_24h: Option<Decimal>,
+    /// Number of open positions. When present on an [`AccountState`] read this
+    /// equals `positions.len()`.
+    #[serde(default)]
+    pub open_positions_count: Option<u32>,
     /// Number of resting open orders.
-    pub open_orders_count: u32,
+    #[serde(default)]
+    pub open_orders_count: Option<u32>,
     /// Margin currently held against open positions.
-    #[serde(with = "rust_decimal::serde::str")]
-    pub margin_used: Decimal,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub margin_used: Option<Decimal>,
     /// Margin available to open new positions. May be negative for an
     /// underwater account; see [`withdrawable`](Self::withdrawable) for the
     /// floored, actually-withdrawable figure.
-    #[serde(with = "rust_decimal::serde::str")]
-    pub available_margin: Decimal,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub available_margin: Option<Decimal>,
     /// Wallet-withdrawable balance: engine-authoritative free margin floored at
     /// zero (`max(0, available_margin)`).
     ///
@@ -706,11 +729,14 @@ pub struct AccountPortfolioSummary {
     /// `0` and never surfaced negative. The server derives it from the
     /// authoritative margin view and fails closed with `502` rather than
     /// reporting a local estimate when that view is unavailable — so a value
-    /// here is authoritative, never an approximation.
+    /// here is authoritative, never an approximation. That 502 surfaces as
+    /// [`TransientError::Unavailable`](crate::TransientError::Unavailable) with
+    /// [`code`](crate::Error::code) `authoritative_margin_unavailable`: retry the
+    /// read, and do not read the failure as a zero balance.
     ///
-    /// `None` only when talking to a server that predates the field; prefer it
-    /// over [`available_margin`](Self::available_margin) when deciding how much
-    /// a user may withdraw.
+    /// `None` when the server did not report it (e.g. one predating the field);
+    /// prefer it over [`available_margin`](Self::available_margin) when deciding
+    /// how much a user may withdraw.
     #[serde(default, with = "rust_decimal::serde::str_option")]
     pub withdrawable: Option<Decimal>,
     /// Whether the account is allowed through the early-access gate. `None`
@@ -723,14 +749,15 @@ pub struct AccountPortfolioSummary {
 /// portfolio summary plus every open position.
 ///
 /// Both halves come from **one coherent server-side read**, so they cannot tear
-/// against each other: `summary.open_positions_count` always equals
-/// `positions.len()`, and `summary` is the same value the standalone
+/// against each other: `summary.open_positions_count` (when reported) always
+/// equals `positions.len()`, and `summary` is the same value the standalone
 /// [`Client::fetch_account_summary`](crate::Client::fetch_account_summary)
 /// returns. Fetching this is therefore strictly safer than issuing
 /// `fetch_account_summary` and
 /// [`fetch_positions`](crate::Client::fetch_positions) concurrently, where a
 /// fill landing between the two responses yields a mismatched pair.
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct AccountState {
     /// Aggregate portfolio summary for the account.
     pub summary: AccountPortfolioSummary,
@@ -751,8 +778,11 @@ pub struct AccountState {
 /// | [`All`](Self::All) | 1 d | 366 | ~1 y |
 ///
 /// Serializes lowercase (`day` / `week` / `month` / `all`), as the `window`
-/// query parameter expects, and deserializes case-insensitively so the value
-/// echoed back in [`PortfolioHistory::window`] decodes in any casing.
+/// query parameter expects. Deserialization additionally accepts the Titlecase
+/// and UPPERCASE spellings (`Day`, `DAY`), so a value echoed back in one of
+/// those still decodes; mixed casing such as `dAy` does not. A value outside the
+/// set entirely — a window added to a future spec — decodes as
+/// [`PortfolioHistory::window`] `None` rather than failing the whole response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PortfolioWindow {
@@ -789,8 +819,30 @@ impl fmt::Display for PortfolioWindow {
     }
 }
 
+/// Deserialize a [`PortfolioWindow`] leniently: an unrecognized wire value
+/// becomes `None` instead of failing its enclosing response.
+///
+/// The window a response echoes is *metadata* about a time series whose points
+/// are the actual payload. Rejecting the whole [`PortfolioHistory`] because the
+/// server named a window this SDK version doesn't know would discard good data
+/// over a label — so an unknown value degrades to "not reported" (never a
+/// fabricated default; guessing `Day` would misreport the span the points
+/// cover). The `spec-drift` gate fails loudly the moment the spec adds a member,
+/// which is the signal to add the variant here.
+fn lenient_window<'de, D>(de: D) -> std::result::Result<Option<PortfolioWindow>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Land in an untyped `Value` first so an unknown string can't abort the
+    // enclosing struct's decode. `null` and an absent field both mean "not
+    // reported", same as an unrecognized value.
+    let raw = Option::<Value>::deserialize(de)?;
+    Ok(raw.and_then(|v| serde_json::from_value(v).ok()))
+}
+
 /// One downsampled sample from the portfolio time series.
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct PortfolioPoint {
     /// Sample time, Unix ms.
     pub timestamp_ms: i64,
@@ -816,11 +868,18 @@ pub struct PortfolioPoint {
 /// (`GET /api/v1/account/portfolio-history`): equity, cumulative PnL, and
 /// cumulative volume over the requested window.
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct PortfolioHistory {
     /// The window actually served — echoes the requested
     /// [`PortfolioWindow`], or the server's `day` default when none was sent.
     /// Read this rather than assuming the request's value.
-    pub window: PortfolioWindow,
+    ///
+    /// `None` when the server served a window this SDK version cannot name (a
+    /// spec addition) or omitted the field. The [`points`](Self::points) are
+    /// still valid; use [`cadence_ms`](Self::cadence_ms) for the sample interval
+    /// and upgrade the SDK to get the variant.
+    #[serde(default, deserialize_with = "lenient_window")]
+    pub window: Option<PortfolioWindow>,
     /// Downsample interval between adjacent points, in milliseconds (e.g.
     /// `300000` for [`PortfolioWindow::Day`]).
     pub cadence_ms: i64,
@@ -836,7 +895,12 @@ pub struct PortfolioHistory {
 ///
 /// Reports the **forward-looking schedule rate**, not a realized per-fill
 /// average.
+///
+/// Unlike [`AccountPortfolioSummary`], the spec marks every field here required,
+/// so they are non-`Option`: an omission is a contract violation and fails the
+/// decode loudly rather than being silently defaulted.
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct AccountFees {
     /// Effective maker fee, in basis points. **Negative means the maker is paid
     /// a rebate** — e.g. `-2` is a 0.02% rebate — so this is deliberately

@@ -17,9 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `PortfolioPoint` — equity, cumulative PnL (deposit-neutral), and cumulative
     volume, oldest first — selected by the new `PortfolioWindow`
     (`day`/`week`/`month`/`all`), which also fixes the server-side downsample
-    cadence and point capacity. `limit` is passed through unclamped (the server
-    clamps rather than rejecting an over-capacity value); a `limit` of `0`
-    violates the spec minimum and is rejected locally before signing.
+    cadence and point capacity. Both of the request schema's `limit` bounds
+    (`minimum: 1`, `maximum: 366`, exposed as `rest::MAX_PORTFOLIO_HISTORY_LIMIT`)
+    are enforced locally, so a value the schema forbids is rejected before the
+    request is signed or sent — matching the Python SDK and MCP server. The
+    parameter's prose note that an over-capacity value is "clamped, not rejected"
+    describes server tolerance of non-conforming input, not licence for a client
+    to exceed the schema.
   - **Consolidated account state.** `fetch_account_state` (`GET
     /api/v1/account/state`) returning `AccountState` — the portfolio summary
     **and** all open positions from one coherent server-side read, so the
@@ -29,6 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     /api/v1/account/summary`) returning the new `AccountPortfolioSummary`, whose
     `withdrawable` is the engine-authoritative free margin floored at zero —
     prefer it over `available_margin` when deciding what may leave the account.
+    Every field on it is `Option` and defaulted: the spec gives the schema no
+    `required` array, so an absent aggregate nulls that one field instead of
+    failing the whole `/account/summary` or `/account/state` decode. `None` means
+    "not reported", never zero.
+  - **Fail-closed reads are distinguishable.** `/account/state` and
+    `/account/summary` answer `502 authoritative_margin_unavailable` when the
+    engine-authoritative margin view is down, rather than serving a
+    locally-estimated balance. That code now survives into the error (see
+    *Changed*), and both methods' docs say plainly that such an `Err` means
+    "retry the read", **not** "the account is flat".
   - **Account fees.** `fetch_account_fees` (`GET /api/v1/account/fees`)
     returning `AccountFees` — effective maker/taker rate in bps (**signed**: a
     negative maker fee is a rebate), fee tier, rate `schedule` scope, rolling
@@ -43,16 +57,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- [**breaking**] *(positions)* `Position` gains the enriched per-position risk
-  fields: `leverage`, `notional_value`, `roe`, `margin_used`, `max_leverage`,
-  `funding_paid`, plus a companion `*_error` for each derived field. `Position`
-  is an externally-constructible struct (all-public fields, no
+- [**breaking**] *(account, positions)* `Position` gains the enriched
+  per-position risk fields: `leverage`, `notional_value`, `roe`, `margin_used`,
+  `max_leverage` — each with a companion `*_error` — plus `funding_paid`, which
+  has **no** `*_error` companion (the spec defines none: the server always sends
+  a value, `"0"` when nothing has accrued). Every new field is `Option` and
+  defaulted, so positions from a server that omits them still decode. A `None`
+  risk field never means zero — the server declines to fabricate a value it
+  cannot derive and reports the reason in the matching `*_error`; read the pair
+  together.
+
+  `Position` was an externally-constructible struct (all-public fields, no
   `#[non_exhaustive]`), so cargo-semver-checks flags the additions via
   `constructible_struct_adds_field`; downstream struct literals of `Position`
-  must be updated. Every new field is `Option` and defaulted, so positions from a
-  server that omits them still decode. A `None` risk field never means zero —
-  the server declines to fabricate a value it cannot derive and reports the
-  reason in the matching `*_error`; read the pair together.
+  must be updated. **`AccountSummary` (`GET /api/v1/account`) embeds
+  `Vec<Position>` and so inherits this change transitively** — code that
+  constructs the positions inside an `AccountSummary` literal needs the same
+  update. Read-back only: no request shape changed.
+- [**breaking**] *(account, positions)* Added `#[non_exhaustive]` to `Position`
+  and to the new `AccountPortfolioSummary`, `AccountState`, `AccountFees`,
+  `PortfolioHistory` and `PortfolioPoint`, per the `#[non_exhaustive]` policy in
+  CONTRIBUTING. Read these off returned values instead of building them with
+  struct literals. Taken **now**, inside a bump that is already breaking, because
+  the spec marks almost none of these properties required and is openly planning
+  more of them (`tier`/`schedule` are open strings, `FeeDiscount` finalizes with
+  the fee model, per-market fee rates are a planned follow-up) — every such
+  addition would otherwise be another break, and adding the attribute later is
+  itself one. `FeeDiscount` is deliberately excluded: it is a transparent wrapper
+  over the raw object, which callers may reasonably construct.
+- [**breaking**] *(errors)* `TransientError::Unavailable` gains a `code` field
+  carrying the server's machine-readable error code, and `Error::code()` now
+  returns it for any failure that came from an API response with one. Previously
+  every 5xx dropped the parsed code, and since the API's 5xx bodies carry a `code`
+  and no `message`, the whole surface for a fail-closed
+  `502 authoritative_margin_unavailable` was `service unavailable [502]: ` — a
+  caller could not tell it from a deploy blip, though the correct responses differ
+  (retry the read vs. treat balances as unknown). Matches the TypeScript and
+  Python SDKs, which both preserve the code. Patterns that destructure
+  `Unavailable { status, message }` need a `..`; the `Display` text now includes
+  the code.
+- [**breaking**] *(account)* `PortfolioHistory::window` is
+  `Option<PortfolioWindow>` rather than `PortfolioWindow`. A served window this
+  SDK version cannot name — a window added to a later spec — decodes as `None`
+  instead of failing the entire response: the points are the payload and stay
+  valid, while guessing a default would misreport the span they cover. The
+  `PortfolioWindow` enum itself stays closed, and the `spec-drift` gate fails
+  loudly the moment the spec adds a member.
+
+### Notes
+
+- The `v0.7.2` spec also added `cursor` pagination (and the `X-Next-Cursor`
+  response header) to five list endpoints, one of which this SDK already
+  implements (`/account/equity-history`); the others are `/fills`,
+  `/orders/history`, `/positions/closed` and `/markets/{market_id}/trades`. None
+  of it is exposed here — this PR is scoped to the portfolio-parity surface, and
+  the drift gate does not check parameters, so nothing failed to flag it. Tracked
+  as a fleet-wide follow-up (no SDK exposes it yet).
 
 ## [0.6.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.6.0...v0.6.1) - 2026-07-21
 

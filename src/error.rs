@@ -125,11 +125,25 @@ pub enum TransientError {
 
     /// The gateway is reachable but not serving — HTTP 502/503/504 or 5xx
     /// (deploy, overload, storage blip).
-    #[error("service unavailable [{status}]: {message}")]
+    ///
+    /// Not every 5xx is an anonymous blip: some carry a machine-readable `code`
+    /// that changes the correct response. A 502 with code
+    /// `authoritative_margin_unavailable` (from `/account/state`,
+    /// `/account/summary`) means the engine-authoritative margin view is
+    /// temporarily down and the endpoint **failed closed** rather than
+    /// reporting a locally-estimated balance — so retry the read, and do *not*
+    /// read the error as a flat or empty account. Match on `code` (or
+    /// [`Error::code`]) to tell the two apart.
+    #[error("service unavailable [{status} {code}]: {message}")]
     Unavailable {
         /// HTTP status code.
         status: u16,
-        /// Human-readable detail from the server (may be empty).
+        /// Machine-readable code from the server's `{ code, message }`
+        /// envelope, e.g. `authoritative_margin_unavailable`. Falls back to the
+        /// HTTP status when the body isn't that envelope.
+        code: String,
+        /// Human-readable detail from the server (may be empty — the API's 5xx
+        /// bodies carry a `code` and often no `message`).
         message: String,
     },
 
@@ -250,9 +264,14 @@ impl Error {
             S::NOT_IMPLEMENTED | S::HTTP_VERSION_NOT_SUPPORTED => {}
             _ if status.is_server_error() => {
                 // Other 5xx (500/502/503/504, …) — server-side, a retry may
-                // succeed.
+                // succeed. Keep the machine-readable `code`: a 5xx is not
+                // always an anonymous blip (see `Unavailable`), and dropping it
+                // would leave a caller unable to distinguish a fail-closed
+                // `authoritative_margin_unavailable` from a deploy hiccup —
+                // conditions whose correct handling differs.
                 return TransientError::Unavailable {
                     status: status.as_u16(),
+                    code,
                     message,
                 }
                 .into();
@@ -273,6 +292,42 @@ impl Error {
             TerminalError::InvalidOrder { code, message }.into()
         } else {
             TerminalError::BadRequest { code, message }.into()
+        }
+    }
+
+    /// The server's machine-readable error code, for the variants that carry one
+    /// — [`TerminalError::BadRequest`], [`TerminalError::Auth`],
+    /// [`TerminalError::InvalidOrder`] and
+    /// [`TransientError::Unavailable`]. Saves callers from matching each of them
+    /// individually just to branch on the code.
+    ///
+    /// `None` for everything else: local validation, transport, timeouts, rate
+    /// limiting, decode failures and WebSocket errors have no server code, and
+    /// [`TerminalError::InsufficientFunds`] deliberately models the *condition*
+    /// rather than the code (match the variant itself for that one).
+    ///
+    /// ```no_run
+    /// # async fn f(client: &nexus_exchange::Client) -> nexus_exchange::Result<()> {
+    /// match client.fetch_account_state().await {
+    ///     Ok(state) => { /* … */ }
+    ///     // The margin view is down and the endpoint failed closed: retry.
+    ///     // This is NOT a flat account.
+    ///     Err(e) if e.code() == Some("authoritative_margin_unavailable") => {
+    ///         /* back off and re-read */
+    ///     }
+    ///     Err(e) => return Err(e),
+    /// }
+    /// # Ok(()) }
+    /// ```
+    pub fn code(&self) -> Option<&str> {
+        match self {
+            Error::Terminal(
+                TerminalError::InvalidOrder { code, .. }
+                | TerminalError::Auth { code, .. }
+                | TerminalError::BadRequest { code, .. },
+            )
+            | Error::Transient(TransientError::Unavailable { code, .. }) => Some(code),
+            _ => None,
         }
     }
 
@@ -373,6 +428,57 @@ mod tests {
                 Error::Transient(TransientError::Unavailable { .. })
             ));
         }
+    }
+
+    #[test]
+    fn five_xx_preserves_the_machine_readable_code() {
+        // A 5xx is not always an anonymous blip: `/account/state` and
+        // `/account/summary` fail closed with `502
+        // authoritative_margin_unavailable` when the authoritative margin view
+        // is down. That must stay distinguishable from a deploy hiccup — retry
+        // the read vs. treat balances as unknown are different responses.
+        let e = classify(502, "authoritative_margin_unavailable");
+        assert_eq!(e.code(), Some("authoritative_margin_unavailable"));
+        assert!(e.is_retryable());
+        let Error::Transient(TransientError::Unavailable { status, code, .. }) = e else {
+            panic!("expected Unavailable");
+        };
+        assert_eq!(status, 502);
+        assert_eq!(code, "authoritative_margin_unavailable");
+        // An ordinary gateway blip carries its own code and is not mistaken for
+        // the fail-closed condition.
+        assert_eq!(classify(503, "STORAGE_ERROR").code(), Some("STORAGE_ERROR"));
+    }
+
+    #[test]
+    fn code_is_exposed_for_server_codes_and_absent_for_local_failures() {
+        assert_eq!(
+            classify(400, "InvalidTickSize").code(),
+            Some("InvalidTickSize")
+        );
+        assert_eq!(classify(401, "UNAUTHORIZED").code(), Some("UNAUTHORIZED"));
+        assert_eq!(classify(400, "NOT_FOUND").code(), Some("NOT_FOUND"));
+        // No server code to report for these.
+        assert_eq!(Error::credentials("missing credentials").code(), None);
+        assert_eq!(
+            Error::invalid_request("limit must be at least 1").code(),
+            None
+        );
+        assert_eq!(classify(429, "RATE_LIMITED").code(), None);
+        assert_eq!(classify(408, "REQUEST_TIMEOUT").code(), None);
+        // `InsufficientFunds` models the condition, not the code, so it carries
+        // no code to surface.
+        assert_eq!(classify(400, "INSUFFICIENT_BALANCE").code(), None);
+    }
+
+    #[test]
+    fn unavailable_display_includes_status_and_code() {
+        let e = classify(502, "authoritative_margin_unavailable");
+        let rendered = e.to_string();
+        assert!(
+            rendered.contains("502") && rendered.contains("authoritative_margin_unavailable"),
+            "unhelpful rendering: {rendered}"
+        );
     }
 
     #[test]

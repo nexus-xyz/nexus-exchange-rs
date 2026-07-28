@@ -19,6 +19,14 @@ fn show<T: std::fmt::Display>(value: Option<T>, reason: Option<&str>) -> String 
     }
 }
 
+/// Render an aggregate the server may not report. Every `AccountPortfolioSummary`
+/// field is optional (the spec marks none required), and `None` means "not
+/// reported" — printing `0` for a missing figure would make an underwater
+/// account look flat.
+fn agg<T: std::fmt::Display>(value: Option<T>) -> String {
+    show(value, None)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new(Config::new(Network::Stable).api_key(
@@ -29,17 +37,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // One call for the aggregates AND the positions: both halves come from a
     // single server-side read, so they cannot disagree the way separate
     // `fetch_account_summary` + `fetch_positions` calls can.
-    let state = client.fetch_account_state().await?;
+    let state = match client.fetch_account_state().await {
+        Ok(state) => state,
+        // The endpoint FAILS CLOSED: when the engine-authoritative margin view is
+        // down it errors rather than serving a locally-estimated balance. Retry
+        // shortly — this is emphatically not a flat or empty account, so never
+        // let it fall through to logic that treats balances as zero.
+        Err(e) if e.code() == Some("authoritative_margin_unavailable") => {
+            eprintln!("margin view temporarily unavailable — retry shortly.");
+            eprintln!("balances are UNKNOWN here, not zero.");
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
+    };
     let s = &state.summary;
 
     println!("== account ==");
-    println!("equity          {}", s.total_equity);
-    println!("collateral      {}", s.collateral);
-    println!("unrealized PnL  {}", s.total_unrealized_pnl);
-    println!("realized PnL 24h {}", s.total_realized_pnl_24h);
-    println!("volume 24h      {}", s.total_volume_24h);
-    println!("margin used     {}", s.margin_used);
-    println!("free margin     {}", s.available_margin);
+    println!("equity          {}", agg(s.total_equity));
+    println!("collateral      {}", agg(s.collateral));
+    println!("unrealized PnL  {}", agg(s.total_unrealized_pnl));
+    println!("realized PnL 24h {}", agg(s.total_realized_pnl_24h));
+    println!("volume 24h      {}", agg(s.total_volume_24h));
+    println!("margin used     {}", agg(s.margin_used));
+    println!("free margin     {}", agg(s.available_margin));
     // Gate a withdrawal on `withdrawable`, not `available_margin`: it is the
     // engine-authoritative figure, floored at zero. `None` only when the server
     // predates the field — fall back rather than reporting a wrong number.
@@ -47,8 +67,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(w) => println!("withdrawable    {w}"),
         None => println!("withdrawable    n/a (not reported by this server)"),
     }
-    println!("open positions  {}", s.open_positions_count);
-    println!("open orders     {}", s.open_orders_count);
+    println!("open positions  {}", agg(s.open_positions_count));
+    println!("open orders     {}", agg(s.open_orders_count));
 
     println!("\n== positions ==");
     if state.positions.is_empty() {
@@ -98,9 +118,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let history = client
         .fetch_portfolio_history(Some(PortfolioWindow::Week), None)
         .await?;
+    // A served window this SDK version cannot name decodes as `None` rather than
+    // failing the read — the points are still good, so report the label as
+    // unknown and carry on.
     println!(
         "window {} | cadence {}ms | {} point(s), oldest first",
-        history.window,
+        agg(history.window),
         history.cadence_ms,
         history.points.len()
     );

@@ -2,16 +2,31 @@
 //! `Position` risk fields, `withdrawable` + consolidated account state, and
 //! `/account/fees`.
 
+use nexus_exchange::rest::MAX_PORTFOLIO_HISTORY_LIMIT;
 use nexus_exchange::types::PortfolioWindow;
-use nexus_exchange::{Client, Config};
+use nexus_exchange::{Client, Config, RetryConfig};
 use wiremock::matchers::{header, method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-fn authed(uri: String) -> Client {
-    Client::new(Config::with_base_url(uri).api_key(
+fn authed_config(uri: String) -> Config {
+    Config::with_base_url(uri).api_key(
         "nx_test",
         "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
-    ))
+    )
+}
+
+fn authed(uri: String) -> Client {
+    Client::new(authed_config(uri))
+}
+
+/// An authenticated client that does not retry, for the error-path tests: the
+/// assertion is about how a status is *classified*, and retrying a mock that
+/// always fails only adds backoff sleeps.
+fn authed_no_retry(uri: String) -> Client {
+    Client::new(authed_config(uri).with_retry(RetryConfig {
+        max_retries: 0,
+        ..RetryConfig::default()
+    }))
 }
 
 /// A position payload carrying every enriched risk field populated.
@@ -73,7 +88,7 @@ async fn fetch_portfolio_history_parses_and_sends_window_and_limit() {
         .await
         .unwrap();
 
-    assert_eq!(history.window, PortfolioWindow::Week);
+    assert_eq!(history.window, Some(PortfolioWindow::Week));
     assert_eq!(history.cadence_ms, 3_600_000);
     assert_eq!(history.points.len(), 2);
     // Oldest first, and the monetary fields are exact decimal strings.
@@ -102,36 +117,46 @@ async fn fetch_portfolio_history_omits_unset_params() {
         .await
         .unwrap();
 
-    assert_eq!(history.window, PortfolioWindow::Day);
+    assert_eq!(history.window, Some(PortfolioWindow::Day));
     assert!(history.points.is_empty());
 }
 
 #[tokio::test]
-async fn fetch_portfolio_history_rejects_zero_limit_locally() {
-    // The spec's `limit` minimum is 1. A 0 must be rejected before the request is
-    // signed or sent — the mock server mounts no route, so any request 404s and
-    // would surface as a different error than the local invalid-request one.
+async fn fetch_portfolio_history_rejects_out_of_schema_limits_locally() {
+    // The spec's request schema is `minimum: 1, maximum: 366`. BOTH bounds are
+    // enforced before signing, so a value the schema forbids never leaves the
+    // client — the server's documented tolerance for an over-capacity value is
+    // about server robustness, not licence for a client to exceed the schema.
+    // The mock server mounts no route, so a transmitted request would 404 and
+    // surface as a different error than the local invalid-request one.
     let server = MockServer::start().await;
-    let err = authed(server.uri())
-        .fetch_portfolio_history(Some(PortfolioWindow::Day), Some(0))
-        .await
-        .unwrap_err();
-    assert!(
-        err.to_string().to_lowercase().contains("limit"),
-        "expected a local limit rejection, got: {err}"
-    );
-    // Nothing left the client.
+    let client = authed(server.uri());
+
+    for bad in [0, MAX_PORTFOLIO_HISTORY_LIMIT + 1, 5000, u32::MAX] {
+        let err = client
+            .fetch_portfolio_history(Some(PortfolioWindow::Day), Some(bad))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("limit"),
+            "limit {bad}: expected a local limit rejection, got: {err}"
+        );
+        // Local validation, so no server code and not worth retrying as-is.
+        assert!(!err.is_retryable(), "limit {bad} should not be retryable");
+        assert_eq!(err.code(), None, "limit {bad} carries no server code");
+    }
+    // Nothing left the client for any of them.
     assert!(server.received_requests().await.unwrap().is_empty());
 }
 
 #[tokio::test]
-async fn fetch_portfolio_history_passes_oversized_limit_through() {
-    // Above the window capacity the server CLAMPS rather than rejecting, so the
-    // SDK must forward the value instead of second-guessing the cap.
+async fn fetch_portfolio_history_sends_the_schema_maximum() {
+    // The boundary itself is valid and must be forwarded — the guard rejects
+    // `> 366`, not `>= 366`.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/v1/account/portfolio-history"))
-        .and(query_param("limit", "5000"))
+        .and(query_param("limit", "366"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "window": "all", "cadence_ms": 86400000i64, "points": []
         })))
@@ -139,11 +164,14 @@ async fn fetch_portfolio_history_passes_oversized_limit_through() {
         .await;
 
     let history = authed(server.uri())
-        .fetch_portfolio_history(Some(PortfolioWindow::All), Some(5000))
+        .fetch_portfolio_history(
+            Some(PortfolioWindow::All),
+            Some(MAX_PORTFOLIO_HISTORY_LIMIT),
+        )
         .await
         .unwrap();
     // The served window is read back from the response, not assumed.
-    assert_eq!(history.window, PortfolioWindow::All);
+    assert_eq!(history.window, Some(PortfolioWindow::All));
 }
 
 #[tokio::test]
@@ -155,24 +183,93 @@ async fn portfolio_window_wire_values_and_case_insensitive_decode() {
     assert_eq!(PortfolioWindow::default(), PortfolioWindow::Day);
     assert_eq!(PortfolioWindow::Month.to_string(), "month");
 
-    // Canonical lowercase plus the aliases, so an echoed value in any casing
-    // decodes rather than failing the whole response.
+    // Canonical lowercase plus the Titlecase / UPPERCASE aliases — exactly the
+    // spellings documented, no more.
     for (wire, want) in [
         ("day", PortfolioWindow::Day),
         ("Week", PortfolioWindow::Week),
         ("MONTH", PortfolioWindow::Month),
         ("all", PortfolioWindow::All),
+        ("Day", PortfolioWindow::Day),
+        ("WEEK", PortfolioWindow::Week),
+        ("Month", PortfolioWindow::Month),
+        ("ALL", PortfolioWindow::All),
     ] {
         let got: PortfolioWindow = serde_json::from_value(serde_json::json!(wire)).expect(wire);
         assert_eq!(got, want, "{wire}");
+    }
+    // Mixed casing is NOT covered — the doc claims the three spellings above, not
+    // arbitrary casing. Pinned so the claim and the code can't drift apart.
+    for wire in ["dAy", "wEEk", "aLL"] {
+        assert!(
+            serde_json::from_value::<PortfolioWindow>(serde_json::json!(wire)).is_err(),
+            "{wire} is not one of the documented spellings"
+        );
     }
     // Serializes back to the canonical lowercase form.
     assert_eq!(
         serde_json::to_value(PortfolioWindow::Week).unwrap(),
         serde_json::json!("week")
     );
-    // An unknown window is a decode error, not a silent fallback to `day`.
+    // The enum itself stays closed: an unknown member is a decode error, never a
+    // silent fallback to `day`. (Tolerance lives on `PortfolioHistory::window`,
+    // which degrades to `None` — see the test below.)
     assert!(serde_json::from_value::<PortfolioWindow>(serde_json::json!("quarter")).is_err());
+}
+
+#[tokio::test]
+async fn unknown_served_window_degrades_to_none_and_keeps_the_points() {
+    // If a later spec adds a window and the server serves it, the response's
+    // `window` is a label this SDK version can't name — but the points are the
+    // payload and are still valid. Failing the whole read over metadata would
+    // discard good data; guessing `day` would misreport the span. So: `None`.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/account/portfolio-history"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "window": "quarter",
+            "cadence_ms": 21600000i64,
+            "points": [
+                { "timestamp_ms": 1776033900000i64, "equity": "10000.00",
+                  "pnl": "0", "volume": "0" }
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let history = authed(server.uri())
+        .fetch_portfolio_history(None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(history.window, None);
+    // The data survived, and the cadence is still readable for the real interval.
+    assert_eq!(history.cadence_ms, 21_600_000);
+    assert_eq!(history.points.len(), 1);
+    assert_eq!(history.points[0].equity.to_string(), "10000.00");
+}
+
+#[tokio::test]
+async fn absent_or_null_served_window_decodes_as_none() {
+    // Same treatment for a server that omits the field or sends an explicit null:
+    // "not reported", not a fabricated default.
+    for body in [
+        serde_json::json!({ "cadence_ms": 300000i64, "points": [] }),
+        serde_json::json!({ "window": null, "cadence_ms": 300000i64, "points": [] }),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/account/portfolio-history"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body.clone()))
+            .mount(&server)
+            .await;
+
+        let history = authed(server.uri())
+            .fetch_portfolio_history(None, None)
+            .await
+            .unwrap_or_else(|e| panic!("{body} should decode, got: {e}"));
+        assert_eq!(history.window, None, "{body}");
+    }
 }
 
 // --- Consolidated account state + withdrawable -----------------------------
@@ -193,11 +290,11 @@ async fn fetch_account_state_parses_summary_and_positions() {
     let state = authed(server.uri()).fetch_account_state().await.unwrap();
 
     assert_eq!(state.summary.withdrawable.unwrap().to_string(), "7511.73");
-    assert_eq!(state.summary.total_equity.to_string(), "10012.34");
-    assert_eq!(state.summary.open_orders_count, 2);
+    assert_eq!(state.summary.total_equity.unwrap().to_string(), "10012.34");
+    assert_eq!(state.summary.open_orders_count, Some(2));
     // The server builds both halves from one read, so these agree by contract.
     assert_eq!(
-        state.summary.open_positions_count as usize,
+        state.summary.open_positions_count.unwrap() as usize,
         state.positions.len()
     );
     assert_eq!(state.positions[0].market_id, "BTC-USDX-PERP");
@@ -215,15 +312,20 @@ async fn fetch_account_summary_parses_withdrawable() {
 
     let summary = authed(server.uri()).fetch_account_summary().await.unwrap();
     assert_eq!(summary.withdrawable.unwrap().to_string(), "7511.73");
-    assert_eq!(summary.margin_used.to_string(), "2500.61");
+    assert_eq!(summary.margin_used.unwrap().to_string(), "2500.61");
     // Absent unless the early-access gate is active.
     assert!(summary.early_access_allowed.is_none());
 }
 
 #[tokio::test]
 async fn account_summary_tolerates_absent_and_null_withdrawable() {
-    // A server predating `withdrawable` omits it; the spec also allows an explicit
-    // null. Neither may fail the whole summary decode.
+    // A server predating `withdrawable` omits it. The spec types it as a
+    // non-nullable Decimal and documents the endpoint failing closed with 502
+    // rather than sending a null, so an explicit null is not a shape the contract
+    // grants — tolerated defensively anyway, since decoding it as `None` costs
+    // nothing and hard-failing a whole account read over it would not.
+    // (Contrast the enriched `Position` risk fields, where null vs. absent IS a
+    // real spec distinction.)
     let server = MockServer::start().await;
     let mut absent = summary_json();
     absent.as_object_mut().unwrap().remove("withdrawable");
@@ -240,7 +342,7 @@ async fn account_summary_tolerates_absent_and_null_withdrawable() {
     let summary = client.fetch_account_summary().await.unwrap();
     assert!(summary.withdrawable.is_none());
     // Available margin still decodes, so the caller isn't left with nothing.
-    assert_eq!(summary.available_margin.to_string(), "7511.73");
+    assert_eq!(summary.available_margin.unwrap().to_string(), "7511.73");
 
     let server2 = MockServer::start().await;
     Mock::given(method("GET"))
@@ -268,8 +370,97 @@ async fn withdrawable_is_never_negative_even_when_margin_is() {
         .await;
 
     let summary = authed(server.uri()).fetch_account_summary().await.unwrap();
-    assert!(summary.available_margin.is_sign_negative());
+    assert!(summary.available_margin.unwrap().is_sign_negative());
     assert!(summary.withdrawable.unwrap().is_zero());
+}
+
+#[tokio::test]
+async fn account_summary_tolerates_every_field_being_absent() {
+    // The spec gives `AccountPortfolioSummary` NO `required` array, so any
+    // property may legitimately be absent. An omitted aggregate must null that
+    // one field, never fail the whole `/account/summary` or `/account/state`
+    // read — the same rationale that makes `withdrawable` optional.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/account/summary"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .mount(&server)
+        .await;
+
+    let summary = authed(server.uri()).fetch_account_summary().await.unwrap();
+    // Every field reads as "not reported" — crucially NOT as zero, which would
+    // make an underwater account look flat.
+    assert!(summary.collateral.is_none());
+    assert!(summary.total_equity.is_none());
+    assert!(summary.total_unrealized_pnl.is_none());
+    assert!(summary.total_realized_pnl_24h.is_none());
+    assert!(summary.total_volume_24h.is_none());
+    assert!(summary.open_positions_count.is_none());
+    assert!(summary.open_orders_count.is_none());
+    assert!(summary.margin_used.is_none());
+    assert!(summary.available_margin.is_none());
+    assert!(summary.withdrawable.is_none());
+    assert!(summary.early_access_allowed.is_none());
+}
+
+#[tokio::test]
+async fn partial_summary_keeps_the_fields_the_server_did_send() {
+    // A partial payload must not lose the fields that ARE present.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/account/state"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "summary": { "total_equity": "42.50", "withdrawable": "10.00" },
+            "positions": []
+        })))
+        .mount(&server)
+        .await;
+
+    let state = authed(server.uri()).fetch_account_state().await.unwrap();
+    assert_eq!(state.summary.total_equity.unwrap().to_string(), "42.50");
+    assert_eq!(state.summary.withdrawable.unwrap().to_string(), "10.00");
+    assert!(state.summary.collateral.is_none());
+    assert!(state.positions.is_empty());
+}
+
+#[tokio::test]
+async fn authoritative_margin_unavailable_is_retryable_and_keeps_its_code() {
+    // `/account/state` and `/account/summary` FAIL CLOSED with 502 when the
+    // engine-authoritative margin view is down, rather than serving a
+    // locally-estimated balance. The spec's body is `{"code": ...}` with no
+    // `message`, so the code is the only signal there is — a caller must be able
+    // to tell this from an ordinary gateway blip, because the correct responses
+    // differ (retry the read vs. treat balances as unknown).
+    for route in ["/api/v1/account/state", "/api/v1/account/summary"] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(502).set_body_json(serde_json::json!({
+                "code": "authoritative_margin_unavailable"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = authed_no_retry(server.uri());
+        let err = if route.ends_with("state") {
+            client.fetch_account_state().await.unwrap_err()
+        } else {
+            client.fetch_account_summary().await.unwrap_err()
+        };
+
+        assert_eq!(
+            err.code(),
+            Some("authoritative_margin_unavailable"),
+            "{route}: the machine-readable code must survive"
+        );
+        // Transient: the whole point of failing closed is that a retry may work.
+        assert!(err.is_retryable(), "{route} should be retryable");
+        // And the rendering says something actionable rather than a bare status.
+        assert!(
+            err.to_string().contains("authoritative_margin_unavailable"),
+            "{route}: unhelpful rendering: {err}"
+        );
+    }
 }
 
 // --- Enriched Position risk fields -----------------------------------------

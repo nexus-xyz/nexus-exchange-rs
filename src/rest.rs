@@ -25,12 +25,13 @@ use std::collections::HashMap;
 
 use crate::auth::{AgentRegistration, EthSigner};
 use crate::types::{
-    AccountSummary, AdlEvent, AgentInfo, AgentRegistered, AmendOrder, ApiKeyInfo,
-    BridgeAssetsResponse, BridgeDeposit, BridgeDepositAddress, CancelOnDisconnectStatus,
-    CreatedApiKey, CreditResult, Decimal, DepositResult, Fill, FundingPayment, FundingSample,
-    HealthStatus, LeverageUpdate, LoginResponse, MarginAdjustment, MarginDirection, MarginMode,
-    MarginModeUpdate, MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook,
-    OrderRequest, OrderResponse, OrderResult, Position, RateLimitStatus, SubAccount, Ticker,
+    AccountFees, AccountPortfolioSummary, AccountState, AccountSummary, AdlEvent, AgentInfo,
+    AgentRegistered, AmendOrder, ApiKeyInfo, BridgeAssetsResponse, BridgeDeposit,
+    BridgeDepositAddress, CancelOnDisconnectStatus, CreatedApiKey, CreditResult, Decimal,
+    DepositResult, Fill, FundingPayment, FundingSample, HealthStatus, LeverageUpdate,
+    LoginResponse, MarginAdjustment, MarginDirection, MarginMode, MarginModeUpdate, MarkPrice,
+    Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderRequest, OrderResponse,
+    OrderResult, PortfolioHistory, PortfolioWindow, Position, RateLimitStatus, SubAccount, Ticker,
     TierOverride, Trade, Transfer, TransferRequest, Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
@@ -45,6 +46,13 @@ pub const LOGIN_MESSAGE: &str = "Sign in to Nexus Exchange";
 /// endpoints go through the auth path, which isn't proactively metered; the
 /// free `/account/rate-limit` poll is one of them.)
 const COST_DEFAULT: f64 = 1.0;
+
+/// Largest `limit` the portfolio-history request schema permits (`maximum: 366`,
+/// the capacity of the widest window). Enforced locally by
+/// [`Client::fetch_portfolio_history`] so a request that violates the schema is
+/// never signed or sent; kept public so callers can clamp their own input to the
+/// same bound instead of hard-coding it.
+pub const MAX_PORTFOLIO_HISTORY_LIMIT: u32 = 366;
 
 /// Percent-encode a single path segment so a caller-supplied identifier (e.g. a
 /// client order id) cannot break out of its position in the request path.
@@ -345,8 +353,113 @@ impl Client {
     }
 
     /// Open positions for the authenticated account. Requires credentials.
+    ///
+    /// Each [`Position`] carries the enriched per-position risk detail
+    /// (leverage, notional value, ROE, margin used, max leverage, funding paid);
+    /// see [`Position`] for why a risk field can be `None` and why its
+    /// companion `*_error` matters.
     pub async fn fetch_positions(&self) -> Result<Vec<Position>> {
         self.signed_get("/api/v1/positions", &[]).await
+    }
+
+    /// Aggregate portfolio summary for the authenticated account
+    /// (`GET /api/v1/account/summary`) — equity, PnL, volume, open counts, and
+    /// [`withdrawable`](AccountPortfolioSummary::withdrawable). Requires
+    /// credentials.
+    ///
+    /// To get this together with the account's positions from a single coherent
+    /// read, use [`fetch_account_state`](Self::fetch_account_state) instead.
+    ///
+    /// # Fails closed, so an `Err` is not an empty account
+    ///
+    /// This endpoint derives `withdrawable` from the engine-authoritative margin
+    /// view, and returns `502` with
+    /// [`code`](Error::code) `authoritative_margin_unavailable` when that view is
+    /// temporarily down rather than reporting a locally-estimated figure. Retry
+    /// after a short delay; **do not** read the error as a flat or zero-balance
+    /// account.
+    pub async fn fetch_account_summary(&self) -> Result<AccountPortfolioSummary> {
+        self.signed_get("/api/v1/account/summary", &[]).await
+    }
+
+    /// Consolidated account snapshot (`GET /api/v1/account/state`) — the
+    /// portfolio summary **and** every open position from one server-side read.
+    /// Requires credentials.
+    ///
+    /// Prefer this over calling
+    /// [`fetch_account_summary`](Self::fetch_account_summary) and
+    /// [`fetch_positions`](Self::fetch_positions) separately: those are two
+    /// independent requests, so a fill landing between them returns an
+    /// internally inconsistent pair (an aggregate that disagrees with the
+    /// position list). Here both halves are guaranteed consistent — see
+    /// [`AccountState`].
+    ///
+    /// # Fails closed, so an `Err` is not an empty account
+    ///
+    /// Like [`fetch_account_summary`](Self::fetch_account_summary), this returns
+    /// `502` with [`code`](Error::code) `authoritative_margin_unavailable` when
+    /// the engine-authoritative margin view is temporarily unavailable, rather
+    /// than serving a locally-estimated balance. Retry after a short delay;
+    /// **do not** read the error as an account with no positions.
+    pub async fn fetch_account_state(&self) -> Result<AccountState> {
+        self.signed_get("/api/v1/account/state", &[]).await
+    }
+
+    /// The authenticated account's effective fee schedule
+    /// (`GET /api/v1/account/fees`). Requires credentials.
+    ///
+    /// Returns the forward-looking schedule rate, not a realized per-fill
+    /// average. Note [`AccountFees::maker_fee_bps`] is signed — a negative value
+    /// is a maker *rebate* — and [`AccountFees::schedule`] scopes which
+    /// per-market schedule the rate belongs to.
+    pub async fn fetch_account_fees(&self) -> Result<AccountFees> {
+        self.signed_get("/api/v1/account/fees", &[]).await
+    }
+
+    /// Portfolio time series for the authenticated account
+    /// (`GET /api/v1/account/portfolio-history`) — equity, cumulative PnL, and
+    /// cumulative volume, oldest first. Requires credentials.
+    ///
+    /// `window` selects the span *and* the server-side downsample cadence and
+    /// point capacity (see [`PortfolioWindow`]); `None` takes the server's `day`
+    /// default. Read the served window back from
+    /// [`PortfolioHistory::window`] — an open string, so a window added to a later
+    /// spec still decodes — rather than assuming the requested value.
+    ///
+    /// `limit` caps the number of points returned; pass `None` for the full
+    /// window. The spec's request schema is `minimum: 1, maximum: 366`, and both
+    /// bounds are enforced locally — before the request is signed or sent — so a
+    /// value the schema forbids is never transmitted. The parameter's prose notes
+    /// that the server *clamps* an over-capacity value rather than rejecting it,
+    /// but that describes server tolerance of non-conforming input, not licence
+    /// for a client to exceed the schema; the sibling Python SDK and MCP server
+    /// bound it the same way.
+    ///
+    /// `limit` is only an upper bound in either direction: the server still
+    /// clamps to the selected window's own capacity (day 288, week 168, month
+    /// 120, all 366), which is below `366` for every window but
+    /// [`All`](PortfolioWindow::All). Read
+    /// [`points`](PortfolioHistory::points)`.len()` rather than assuming the
+    /// requested count.
+    pub async fn fetch_portfolio_history(
+        &self,
+        window: Option<PortfolioWindow>,
+        limit: Option<u32>,
+    ) -> Result<PortfolioHistory> {
+        let mut query = Vec::new();
+        if let Some(window) = window {
+            query.push(("window", window.as_str().to_string()));
+        }
+        if let Some(limit) = limit {
+            if limit == 0 || limit > MAX_PORTFOLIO_HISTORY_LIMIT {
+                return Err(Error::invalid_request(format!(
+                    "limit must be between 1 and {MAX_PORTFOLIO_HISTORY_LIMIT}"
+                )));
+            }
+            query.push(("limit", limit.to_string()));
+        }
+        self.signed_get("/api/v1/account/portfolio-history", &query)
+            .await
     }
 
     /// Recent fills (private trade executions) for the authenticated account.

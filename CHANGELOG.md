@@ -7,6 +7,129 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Pinned the API spec to `v0.7.2` and exposed the **portfolio-parity** surface
+  (ENG-6457). The bump is purely additive over `v0.7.1` — no operation, schema,
+  field, or enum member was removed — so it carries no spec-side breakage.
+  - **Portfolio time series.** `fetch_portfolio_history` (`GET
+    /api/v1/account/portfolio-history`) returning `PortfolioHistory` /
+    `PortfolioPoint` — equity, cumulative PnL (deposit-neutral), and cumulative
+    volume, oldest first — selected by the new `PortfolioWindow`
+    (`day`/`week`/`month`/`all`), which also fixes the server-side downsample
+    cadence and point capacity. Both of the request schema's `limit` bounds
+    (`minimum: 1`, `maximum: 366`, exposed as `rest::MAX_PORTFOLIO_HISTORY_LIMIT`)
+    are enforced locally, so a value the schema forbids is rejected before the
+    request is signed or sent — matching the Python SDK and MCP server. The
+    parameter's prose note that an over-capacity value is "clamped, not rejected"
+    describes server tolerance of non-conforming input, not licence for a client
+    to exceed the schema.
+
+    All three `PortfolioHistory` fields are spec-`required` and decode strictly:
+    an absent or `null` `window`, `cadence_ms` or `points` fails the decode rather
+    than being defaulted. Defaulting any of them would report a figure the server
+    never sent — an empty `points` reads as "no history" and charts a flat line, a
+    `0` cadence divides by zero in caller arithmetic, and a substituted window
+    misstates the span the points cover. Matches the Python SDK's failure modes.
+
+    `window` is typed as an open `String` rather than the `PortfolioWindow` enum,
+    so a window added to a later spec still decodes instead of making the whole
+    response unreadable, and the served label stays *reportable* — a caller can
+    log or display `"quarter"` instead of losing it. `PortfolioWindow::from_wire`
+    (or `PortfolioHistory::window_parsed`) maps it onto the enum, returning `None`
+    for a value this SDK version cannot name. The request side stays typed and
+    closed, and the `spec-drift` gate fails loudly the moment the spec adds a
+    member.
+  - **Consolidated account state.** `fetch_account_state` (`GET
+    /api/v1/account/state`) returning `AccountState` — the portfolio summary
+    **and** all open positions from one coherent server-side read, so the
+    aggregates cannot tear against the position list the way separate
+    summary/positions calls can.
+  - **`withdrawable` + portfolio summary.** `fetch_account_summary` (`GET
+    /api/v1/account/summary`) returning the new `AccountPortfolioSummary`, whose
+    `withdrawable` is the engine-authoritative free margin floored at zero —
+    prefer it over `available_margin` when deciding what may leave the account.
+    Every field on it is `Option` and defaulted: the spec gives the schema no
+    `required` array, so an absent aggregate nulls that one field instead of
+    failing the whole `/account/summary` or `/account/state` decode. `None` means
+    "not reported", never zero.
+  - **Fail-closed reads are distinguishable.** `/account/state` and
+    `/account/summary` answer `502 authoritative_margin_unavailable` when the
+    engine-authoritative margin view is down, rather than serving a
+    locally-estimated balance. That code now survives into the error (see
+    *Changed*), and both methods' docs say plainly that such an `Err` means
+    "retry the read", **not** "the account is flat".
+  - **Account fees.** `fetch_account_fees` (`GET /api/v1/account/fees`)
+    returning `AccountFees` — effective maker/taker rate in bps (**signed**: a
+    negative maker fee is a rebate), fee tier, rate `schedule` scope, rolling
+    30-day volume with a `volume_30d_estimated` undercount flag, and
+    `discounts`. `FeeDiscount` keeps the server's object verbatim because the
+    spec has not fixed its shape yet. The rates and volume decode strictly: all
+    are spec-`required`, and a defaulted fee would read as "trading is free" or a
+    defaulted `volume_30d` as "no volume" — figures the server never reported.
+    `discounts` is the single documented exception, defaulting to `[]` when absent:
+    unlike a time series or a position list, a dropped discount cannot distort a
+    figure the caller computes, and matching the Python SDK here means an absent
+    `discounts` reports the same way in both. A malformed (non-object) entry still
+    fails the decode.
+- Extended the `spec-drift` gate's enum invariant to resolve enum-valued
+  properties composed by `$ref` / single-branch `allOf`, not just inline `enum`
+  arrays. `PortfolioHistory.window` is composed that way, so without this its
+  members would have gone unchecked — silently losing the protection the
+  invariant exists for. `PortfolioWindow` is now covered.
+
+### Changed
+
+- [**breaking**] *(account, positions)* `Position` gains the enriched
+  per-position risk fields: `leverage`, `notional_value`, `roe`, `margin_used`,
+  `max_leverage` — each with a companion `*_error` — plus `funding_paid`, which
+  has **no** `*_error` companion (the spec defines none: the server always sends
+  a value, `"0"` when nothing has accrued). Every new field is `Option` and
+  defaulted, so positions from a server that omits them still decode. A `None`
+  risk field never means zero — the server declines to fabricate a value it
+  cannot derive and reports the reason in the matching `*_error`; read the pair
+  together.
+
+  `Position` was an externally-constructible struct (all-public fields, no
+  `#[non_exhaustive]`), so cargo-semver-checks flags the additions via
+  `constructible_struct_adds_field`; downstream struct literals of `Position`
+  must be updated. **`AccountSummary` (`GET /api/v1/account`) embeds
+  `Vec<Position>` and so inherits this change transitively** — code that
+  constructs the positions inside an `AccountSummary` literal needs the same
+  update. Read-back only: no request shape changed.
+- [**breaking**] *(account, positions)* Added `#[non_exhaustive]` to `Position`
+  and to the new `AccountPortfolioSummary`, `AccountState`, `AccountFees`,
+  `PortfolioHistory` and `PortfolioPoint`, per the `#[non_exhaustive]` policy in
+  CONTRIBUTING. Read these off returned values instead of building them with
+  struct literals. Taken **now**, inside a bump that is already breaking, because
+  the spec marks almost none of these properties required and is openly planning
+  more of them (`tier`/`schedule` are open strings, `FeeDiscount` finalizes with
+  the fee model, per-market fee rates are a planned follow-up) — every such
+  addition would otherwise be another break, and adding the attribute later is
+  itself one. `FeeDiscount` is deliberately excluded: it is a transparent wrapper
+  over the raw object, which callers may reasonably construct.
+- [**breaking**] *(errors)* `TransientError::Unavailable` gains a `code` field
+  carrying the server's machine-readable error code, and `Error::code()` now
+  returns it for any failure that came from an API response with one. Previously
+  every 5xx dropped the parsed code, and since the API's 5xx bodies carry a `code`
+  and no `message`, the whole surface for a fail-closed
+  `502 authoritative_margin_unavailable` was `service unavailable [502]: ` — a
+  caller could not tell it from a deploy blip, though the correct responses differ
+  (retry the read vs. treat balances as unknown). Matches the TypeScript and
+  Python SDKs, which both preserve the code. Patterns that destructure
+  `Unavailable { status, message }` need a `..`; the `Display` text now includes
+  the code.
+
+### Notes
+
+- The `v0.7.2` spec also added `cursor` pagination (and the `X-Next-Cursor`
+  response header) to five list endpoints, one of which this SDK already
+  implements (`/account/equity-history`); the others are `/fills`,
+  `/orders/history`, `/positions/closed` and `/markets/{market_id}/trades`. None
+  of it is exposed here — this PR is scoped to the portfolio-parity surface, and
+  the drift gate does not check parameters, so nothing failed to flag it. Tracked
+  as a fleet-wide follow-up (no SDK exposes it yet).
+
 ## [0.6.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.6.0...v0.6.1) - 2026-07-21
 
 ### Fixed

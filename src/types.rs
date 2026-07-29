@@ -27,7 +27,10 @@
 //!
 //! The types and fields affected are called out individually below:
 //! [`Ticker`], [`Trade`], [`MarketSummary`] (`last_trade_price`, `volume_24h`),
-//! [`OrderBook`] / [`PriceLevel`], and [`Ohlcv`].
+//! [`OrderBook`] / [`PriceLevel`], [`Ohlcv`], and [`Position`] (`leverage`
+//! only — the API sends it as a JSON number; every monetary field on
+//! [`Position`], including the enriched risk fields, is a `str`-adapter field
+//! and therefore exact).
 //!
 //! The clean fix is on the API side: if these endpoints emitted decimal strings
 //! like the others, the SDK could use the `str` adapter everywhere and every
@@ -552,8 +555,30 @@ pub struct AccountSummary {
     pub positions: Vec<Position>,
 }
 
-/// An open position.
+/// An open position, with per-position risk detail.
+///
+/// # Enriched risk fields
+///
+/// The risk fields ([`leverage`](Self::leverage),
+/// [`notional_value`](Self::notional_value), [`roe`](Self::roe),
+/// [`margin_used`](Self::margin_used), [`max_leverage`](Self::max_leverage))
+/// are derived server-side from indexer-mirrored state only — no engine
+/// round-trip, to keep positions on the low-latency read path. When an input
+/// isn't mirrored, the server sends the field as `null` and populates its
+/// companion `*_error` with a machine-readable reason **instead of fabricating
+/// a number**. So `None` never means "zero": pair each field with its `*_error`
+/// to tell "not computable, because X" from a real value.
+///
+/// Every enriched field is `Option` and defaulted, so a position from a server
+/// that predates them (or one that omits them entirely) still decodes rather
+/// than failing the whole positions/balance/account-state read.
+///
+/// `#[non_exhaustive]`: the spec marks none of these properties required and is
+/// openly planning more of them, so this is expected to keep gaining fields.
+/// Match with a `..` rest pattern and read fields off a returned value rather
+/// than constructing one with a struct literal.
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct Position {
     /// Market identifier, e.g. `BTC-USDX-PERP`.
     pub market_id: String,
@@ -576,6 +601,396 @@ pub struct Position {
     /// the whole balance/positions decode when omitted.
     #[serde(default, with = "rust_decimal::serde::str_option")]
     pub liquidation_price: Option<Decimal>,
+    /// Position leverage (the account's leverage multiplier for this position).
+    ///
+    /// Currently always `None` — deriving it needs the account's leverage
+    /// setting or equity/allocated margin, which the indexer does not mirror;
+    /// [`leverage_error`](Self::leverage_error) carries the reason. Do **not**
+    /// infer leverage from [`margin_used`](Self::margin_used): that collapses to
+    /// `1 / initial_margin_rate`, a per-market constant, not the real leverage.
+    ///
+    /// Sent as a JSON *number*, so this uses the `float` serde adapter and is
+    /// subject to the precision caveat in the [module docs](self).
+    #[serde(default, with = "rust_decimal::serde::float_option")]
+    pub leverage: Option<Decimal>,
+    /// Why [`leverage`](Self::leverage) is `None` (currently always
+    /// `margin_state_not_mirrored`), or `None` when it is populated.
+    #[serde(default)]
+    pub leverage_error: Option<String>,
+    /// Position notional value (`|size| × mark price`). `None` when the mark
+    /// price is unavailable — see
+    /// [`notional_value_error`](Self::notional_value_error).
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub notional_value: Option<Decimal>,
+    /// Why [`notional_value`](Self::notional_value) is `None` (e.g.
+    /// `mark_price_unavailable`), or `None` when it is populated.
+    #[serde(default)]
+    pub notional_value_error: Option<String>,
+    /// Return on equity: `unrealized_pnl / margin_used` (return on initial
+    /// margin). `None` when an input is unavailable or margin is zero — see
+    /// [`roe_error`](Self::roe_error).
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub roe: Option<Decimal>,
+    /// Why [`roe`](Self::roe) is `None` (e.g. `mark_price_unavailable`,
+    /// `margin_rate_unavailable`, `margin_used_zero`), or `None` when it is
+    /// populated.
+    #[serde(default)]
+    pub roe_error: Option<String>,
+    /// Initial-margin requirement held against this position
+    /// (`notional_value × initial_margin_rate`, under the engine's cross-margin
+    /// model). Isolated/custom margin allocations are not mirrored by the
+    /// indexer. `None` when an input is unavailable — see
+    /// [`margin_used_error`](Self::margin_used_error).
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub margin_used: Option<Decimal>,
+    /// Why [`margin_used`](Self::margin_used) is `None` (e.g.
+    /// `mark_price_unavailable`, `margin_rate_unavailable`), or `None` when it
+    /// is populated.
+    #[serde(default)]
+    pub margin_used_error: Option<String>,
+    /// Maximum leverage allowed for this market, from the market's risk
+    /// parameters. `None` when those params are unavailable — see
+    /// [`max_leverage_error`](Self::max_leverage_error).
+    #[serde(default)]
+    pub max_leverage: Option<u32>,
+    /// Why [`max_leverage`](Self::max_leverage) is `None` (e.g.
+    /// `market_params_unavailable`), or `None` when it is populated.
+    #[serde(default)]
+    pub max_leverage_error: Option<String>,
+    /// Cumulative funding paid on this position.
+    ///
+    /// **Paid-positive**: a positive value means the position has *paid*
+    /// funding, a negative value means it has *received* funding. The server
+    /// always sends it (`"0"` when nothing has accrued), bounded by the funding
+    /// history the indexer retains; it is `Option` only so a position from a
+    /// server that predates the field still decodes.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub funding_paid: Option<Decimal>,
+}
+
+/// Portfolio summary for the authenticated account
+/// (`GET /api/v1/account/summary`) — aggregate equity, PnL, volume, and open
+/// counts.
+///
+/// Distinct from [`AccountSummary`], which is the balance/collateral view from
+/// `GET /api/v1/account` and embeds the account's positions.
+///
+/// # Every field is optional
+///
+/// The spec gives this schema **no `required` array**, so the server may
+/// legitimately omit any property. Each field is therefore `Option` and
+/// defaulted: an absent `collateral` yields `None` for that one field instead of
+/// failing the entire `/account/summary` or `/account/state` decode. `None` means
+/// "not reported", never zero — do not substitute `0` for a missing aggregate, or
+/// an underwater account reads as flat. In practice a current server sends all of
+/// them.
+///
+/// `#[non_exhaustive]`: read fields off a returned value rather than constructing
+/// one with a struct literal, so a future spec addition isn't a breaking change.
+#[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
+pub struct AccountPortfolioSummary {
+    /// Collateral posted to the account.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub collateral: Option<Decimal>,
+    /// Total account equity (collateral plus unrealized PnL).
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub total_equity: Option<Decimal>,
+    /// Total unrealized PnL across all open positions.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub total_unrealized_pnl: Option<Decimal>,
+    /// Realized PnL booked over the last 24 hours.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub total_realized_pnl_24h: Option<Decimal>,
+    /// Traded notional over the last 24 hours.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub total_volume_24h: Option<Decimal>,
+    /// Number of open positions. When present on an [`AccountState`] read this
+    /// equals `positions.len()`.
+    #[serde(default)]
+    pub open_positions_count: Option<u32>,
+    /// Number of resting open orders.
+    #[serde(default)]
+    pub open_orders_count: Option<u32>,
+    /// Margin currently held against open positions.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub margin_used: Option<Decimal>,
+    /// Margin available to open new positions. May be negative for an
+    /// underwater account; see [`withdrawable`](Self::withdrawable) for the
+    /// floored, actually-withdrawable figure.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub available_margin: Option<Decimal>,
+    /// Wallet-withdrawable balance: engine-authoritative free margin floored at
+    /// zero (`max(0, available_margin)`).
+    ///
+    /// Free margin already nets each position's initial margin and pre-trade
+    /// order reservations out of equity, so this is exactly what can leave the
+    /// account. A negative free margin (an underwater account) is clamped to
+    /// `0` and never surfaced negative. The server derives it from the
+    /// authoritative margin view and fails closed with `502` rather than
+    /// reporting a local estimate when that view is unavailable — so a value
+    /// here is authoritative, never an approximation. That 502 surfaces as
+    /// [`TransientError::Unavailable`](crate::TransientError::Unavailable) with
+    /// [`code`](crate::Error::code) `authoritative_margin_unavailable`: retry the
+    /// read, and do not read the failure as a zero balance.
+    ///
+    /// `None` when the server did not report it (e.g. one predating the field);
+    /// prefer it over [`available_margin`](Self::available_margin) when deciding
+    /// how much a user may withdraw.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub withdrawable: Option<Decimal>,
+    /// Whether the account is allowed through the early-access gate. `None`
+    /// unless that gate is active.
+    #[serde(default)]
+    pub early_access_allowed: Option<bool>,
+}
+
+/// Consolidated single-call account snapshot (`GET /api/v1/account/state`) — the
+/// portfolio summary plus every open position.
+///
+/// Both halves come from **one coherent server-side read**, so they cannot tear
+/// against each other: `summary.open_positions_count` (when reported) always
+/// equals `positions.len()`, and `summary` is the same value the standalone
+/// [`Client::fetch_account_summary`](crate::Client::fetch_account_summary)
+/// returns. Fetching this is therefore strictly safer than issuing
+/// `fetch_account_summary` and
+/// [`fetch_positions`](crate::Client::fetch_positions) concurrently, where a
+/// fill landing between the two responses yields a mismatched pair.
+#[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
+pub struct AccountState {
+    /// Aggregate portfolio summary for the account.
+    pub summary: AccountPortfolioSummary,
+    /// All open positions for the account.
+    pub positions: Vec<Position>,
+}
+
+/// Window selector for the portfolio time series
+/// ([`Client::fetch_portfolio_history`](crate::Client::fetch_portfolio_history)).
+///
+/// The window also fixes the server-side downsample cadence and point capacity:
+///
+/// | window | cadence | max points | span |
+/// |---|---|---|---|
+/// | [`Day`](Self::Day) | 5 min | 288 | 24 h |
+/// | [`Week`](Self::Week) | 1 h | 168 | 7 d |
+/// | [`Month`](Self::Month) | 6 h | 120 | 30 d |
+/// | [`All`](Self::All) | 1 d | 366 | ~1 y |
+///
+/// Serializes lowercase (`day` / `week` / `month` / `all`), as the `window`
+/// query parameter expects, and deserializes those same four spellings — the
+/// spec's enum is lowercase-only, so no other casing is recognized.
+///
+/// This is the **request** side. A served window is read back off
+/// [`PortfolioHistory::window`], which is the raw string so that a window added
+/// to a later spec still decodes; [`from_wire`](Self::from_wire) maps it onto
+/// this enum where it can be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PortfolioWindow {
+    /// Trailing 24 hours, sampled every 5 minutes. The server's default.
+    #[default]
+    Day,
+    /// Trailing 7 days, sampled hourly.
+    Week,
+    /// Trailing 30 days, sampled every 6 hours.
+    Month,
+    /// Full retained history (~1 year), sampled daily.
+    All,
+}
+
+impl PortfolioWindow {
+    /// The wire value for this window, as sent in the `window` query parameter.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Day => "day",
+            Self::Week => "week",
+            Self::Month => "month",
+            Self::All => "all",
+        }
+    }
+
+    /// Map a served wire value onto this enum, the inverse of
+    /// [`as_str`](Self::as_str).
+    ///
+    /// `None` for anything outside the spec's four members — most usefully, a
+    /// window added to a later spec. Callers reading
+    /// [`PortfolioHistory::window`] get the served string either way, so an
+    /// unrecognized window stays reportable instead of being lost; the
+    /// `spec-drift` gate fails loudly the moment the spec adds a member, which is
+    /// the signal to add the variant here.
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "day" => Some(Self::Day),
+            "week" => Some(Self::Week),
+            "month" => Some(Self::Month),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for PortfolioWindow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// One downsampled sample from the portfolio time series.
+#[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
+pub struct PortfolioPoint {
+    /// Sample time, Unix ms.
+    pub timestamp_ms: i64,
+    /// Account equity at sample time (collateral plus unrealized PnL).
+    #[serde(with = "rust_decimal::serde::str")]
+    pub equity: Decimal,
+    /// Cumulative trading PnL up to this sample: realized PnL on close
+    /// (including liquidation and ADL closes), plus signed funding, plus current
+    /// unrealized PnL.
+    ///
+    /// Deposit-neutral — wallet deposits and withdrawals never move it — so the
+    /// curve reflects trading performance only.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub pnl: Decimal,
+    /// Cumulative traded notional (`Σ price × size`) up to this sample, across
+    /// taker and maker fills, counting a self-trade once. Monotonically
+    /// non-decreasing.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub volume: Decimal,
+}
+
+/// Portfolio time series for the authenticated account
+/// (`GET /api/v1/account/portfolio-history`): equity, cumulative PnL, and
+/// cumulative volume over the requested window.
+///
+/// The spec marks all three properties `required`, and all three decode
+/// strictly: an absent or `null` `window`, `cadence_ms` or `points` fails the
+/// decode loudly rather than being defaulted. A missing `cadence_ms` must not
+/// read as `0` (caller arithmetic divides by it), and a dropped `points` array
+/// must not read as "no history" — silently substituting an empty series would
+/// present a flat chart the server never reported. This matches
+/// [`AccountFees`]'s policy, and the Python SDK's.
+///
+/// The one concession to forward compatibility is that
+/// [`window`](Self::window) is an open string rather than the
+/// [`PortfolioWindow`] enum — see that field.
+#[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
+pub struct PortfolioHistory {
+    /// The window actually served — echoes the requested
+    /// [`PortfolioWindow`], or the server's `day` default when none was sent.
+    /// Read this rather than assuming the request's value.
+    ///
+    /// An **open string**, not the enum, so a window added to a later spec still
+    /// decodes: failing an entire response over a *label* would discard the
+    /// [`points`](Self::points) that are the actual payload, and keeping the
+    /// served text means an unrecognized window is still reportable — a caller
+    /// can log or display `"quarter"` rather than lose it. Use
+    /// [`PortfolioWindow::from_wire`] (or
+    /// [`window_parsed`](Self::window_parsed)) for the typed form, and
+    /// [`cadence_ms`](Self::cadence_ms) for the sample interval regardless.
+    ///
+    /// Absent or `null` is a contract violation and fails the decode; it is not
+    /// reported as an empty string.
+    pub window: String,
+    /// Downsample interval between adjacent points, in milliseconds (e.g.
+    /// `300000` for [`PortfolioWindow::Day`]).
+    pub cadence_ms: i64,
+    /// Samples for the window, **oldest first**. Bounded by the window's point
+    /// capacity and by the request's `limit`. Empty for an account with no
+    /// history in the window — but an *absent* array fails the decode rather
+    /// than reading as empty.
+    pub points: Vec<PortfolioPoint>,
+}
+
+impl PortfolioHistory {
+    /// [`window`](Self::window) as a [`PortfolioWindow`], or `None` if the server
+    /// served one this SDK version cannot name.
+    ///
+    /// Convenience for [`PortfolioWindow::from_wire`]; the raw value stays
+    /// readable on [`window`](Self::window) either way.
+    pub fn window_parsed(&self) -> Option<PortfolioWindow> {
+        PortfolioWindow::from_wire(&self.window)
+    }
+}
+
+/// The authenticated account's effective fee schedule
+/// (`GET /api/v1/account/fees`).
+///
+/// Reports the **forward-looking schedule rate**, not a realized per-fill
+/// average.
+///
+/// Unlike [`AccountPortfolioSummary`], the spec marks every field here required,
+/// so the rates and volume are non-`Option`: an omission is a contract violation
+/// and fails the decode loudly rather than being silently defaulted. Defaulting a
+/// fee to `0` bps would read as "trading is free", and a defaulted `volume_30d`
+/// as "no volume" — figures the server never reported.
+///
+/// [`discounts`](Self::discounts) is the single documented exception, for the
+/// reason given on that field. Every other field decodes strictly.
+#[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
+pub struct AccountFees {
+    /// Effective maker fee, in basis points. **Negative means the maker is paid
+    /// a rebate** — e.g. `-2` is a 0.02% rebate — so this is deliberately
+    /// signed.
+    pub maker_fee_bps: i32,
+    /// Effective taker fee, in basis points — e.g. `5` is a 0.05% fee.
+    pub taker_fee_bps: i32,
+    /// Fee tier for the account. Currently always `base`: there are no
+    /// per-account fee tiers yet (distinct from rate-limit tiers). Treat as an
+    /// **open string** — new values appear when the fee model lands.
+    pub tier: String,
+    /// Scope of the reported rate, currently always `standard`.
+    ///
+    /// The venue charges a per-market schedule (standard crypto, mid-cap crypto,
+    /// FX, and commodities/indices all differ), but this endpoint takes no
+    /// market parameter, so it reports the standard crypto-group schedule and
+    /// marks it here. Treat the rate as scoped by this value, **not** a
+    /// venue-wide guarantee. Also an open string.
+    pub schedule: String,
+    /// Rolling 30-day traded notional for the account. Best-effort — see
+    /// [`volume_30d_estimated`](Self::volume_30d_estimated).
+    #[serde(with = "rust_decimal::serde::str")]
+    pub volume_30d: Decimal,
+    /// `true` when [`volume_30d`](Self::volume_30d) may **undercount**: the
+    /// source fill buffer was at capacity, so some older in-window fills may
+    /// have been evicted. `false` when the full 30-day window is covered.
+    pub volume_30d_estimated: bool,
+    /// Active fee discounts on the account. Currently always empty — no
+    /// discount program exists yet.
+    ///
+    /// The **one exception** to this type's strict decode: the spec requires this
+    /// key, but an absent one defaults to `[]` rather than failing the read. The
+    /// justification is specific to this field and does not generalize — unlike a
+    /// time series or a position list, a dropped discount cannot silently distort
+    /// a figure the caller computes, so tolerating the omission cannot make any
+    /// number wrong. Every strict field on this type is one whose default *would*
+    /// misreport something.
+    ///
+    /// Matches the Python SDK, deliberately: the two SDKs report an absent
+    /// `discounts` the same way, so a caller need not know which language they
+    /// are in to know whether it raises. A **malformed** entry (a non-object in
+    /// the array) still fails the decode, which is where the two differ — py
+    /// skips it.
+    #[serde(default)]
+    pub discounts: Vec<FeeDiscount>,
+}
+
+/// An active fee discount applied to the account.
+///
+/// The concrete shape is **provisional** and finalizes with the fee model, so
+/// the spec guarantees no properties yet and
+/// [`AccountFees::discounts`] is currently always empty. Rather than freeze a
+/// shape that is about to change, this preserves the server's object verbatim —
+/// read [`fields`](Self::fields) directly, and expect a typed replacement once
+/// the fee model lands.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(transparent)]
+pub struct FeeDiscount {
+    /// The raw discount object as sent by the server.
+    pub fields: serde_json::Map<String, Value>,
 }
 
 /// A fill (private trade execution) for the authenticated account.

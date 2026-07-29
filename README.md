@@ -35,6 +35,7 @@ double as the primary docs. Run one with `cargo run --example <name>`:
 | [`cancel_order`](./examples/cancel_order.rs) | yes | Cancel one order by id, one market, or cancel all |
 | [`account_balances`](./examples/account_balances.rs) | yes | Balance, collateral, equity, margin |
 | [`positions`](./examples/positions.rs) | yes | Open positions with PnL and liquidation price |
+| [`portfolio`](./examples/portfolio.rs) | yes | Account state, per-position risk, fees, equity/PnL/volume history |
 | [`ws_user_events`](./examples/ws_user_events.rs) | yes | Stream private per-account events (fills, orders) |
 
 Authenticated examples read `NEXUS_API_KEY` / `NEXUS_API_SECRET` from the
@@ -48,7 +49,7 @@ through the crate's `Client`, with no transport of its own — see
 
 <!-- api-version-sync:start -->
 
-Currently targets Exchange API spec **`v0.7.1`**.
+Currently targets Exchange API spec **`v0.7.2`**.
 
 <!-- api-version-sync:end -->
 

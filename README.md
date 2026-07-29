@@ -53,7 +53,10 @@ first-page method and a `Paginator`:
 | `GET /api/v1/positions/closed` | `fetch_closed_positions` | `fetch_closed_positions_paginated` | `MAX_CLOSED_POSITIONS_LIMIT` = **200** |
 | `GET /api/v1/account/equity-history` | `fetch_equity_history` | `fetch_equity_history_paginated` | `MAX_EQUITY_HISTORY_LIMIT` = **720** |
 
-The flat methods return the first page only, and never a cursor.
+The flat methods return the first page only, and never a cursor. Their `limit`
+is the same per-endpoint bound as `page_size` below; `None` sends no `limit` at
+all, leaving each endpoint's own server-side default in force (100, except
+`/account/equity-history`, which defaults to its 720 maximum).
 
 Cursors are opaque — never parse one. Termination:
 

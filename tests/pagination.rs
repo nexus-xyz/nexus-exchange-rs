@@ -506,3 +506,84 @@ async fn invalid_market_id_is_rejected_before_a_paginator_is_built() {
     assert!(err.to_string().contains("market_id"), "unexpected: {err}");
     assert!(server.received_requests().await.unwrap().is_empty());
 }
+
+// -- the flat `/fills` read now carries `limit` (ENG-8167) --------------------
+
+/// The gap this closes: `fetch_my_trades` sent **no `limit` at all**, so a single
+/// call could never read past the server's default of 100 fills, even though
+/// v0.7.2 documents `limit` on `/fills` with `maximum: 1000`.
+#[tokio::test]
+async fn flat_fills_read_sends_the_limit() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(FILLS_PATH))
+        .and(query_param("limit", "1000"))
+        .and(query_param_is_missing("cursor"))
+        .and(header_exists("x-signature"))
+        .respond_with(page(serde_json::json!([fill("f1")]), Some("cur-b")))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let fills = authed(server.uri())
+        .fetch_my_trades(Some(MAX_FILLS_LIMIT))
+        .await
+        .unwrap();
+
+    // Still first-page-only: the cursor the server offered is not followed. That
+    // is what keeps `Vec<Fill>` an honest return type and `_paginated` the way to
+    // walk everything.
+    assert_eq!(fills.len(), 1);
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+/// `None` must send **no** `limit` parameter rather than a client-invented
+/// default — the server owns the default (100 here), and substituting one would
+/// silently change what an existing caller receives.
+#[tokio::test]
+async fn flat_fills_read_without_a_limit_sends_no_limit_param() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(FILLS_PATH))
+        .and(query_param_is_missing("limit"))
+        .and(query_param_is_missing("cursor"))
+        .respond_with(page(serde_json::json!([fill("f1")]), None))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let fills = authed(server.uri()).fetch_my_trades(None).await.unwrap();
+    assert_eq!(fills.len(), 1);
+}
+
+/// Validated against `/fills`'s own maximum before the request is **signed**, so
+/// nothing the server would reject is ever put on the wire under a signature.
+#[tokio::test]
+async fn flat_fills_read_rejects_an_out_of_schema_limit_before_signing() {
+    let server = MockServer::start().await;
+    let client = authed(server.uri());
+
+    for bad in [MAX_FILLS_LIMIT + 1, 5000, 0] {
+        let err = client
+            .fetch_my_trades(Some(bad))
+            .await
+            .expect_err("out-of-schema limit must be rejected");
+        assert!(
+            err.to_string().contains("fills page size must be between"),
+            "unexpected error for {bad}: {err}"
+        );
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+
+    // The bound is `/fills`'s own 1000, not the `366` of the unpaginated
+    // `/account/portfolio-history`: a clamp there would reject valid requests.
+    assert_eq!(MAX_FILLS_LIMIT, 1000);
+    let (portfolio, fills_max) = (
+        nexus_exchange::rest::MAX_PORTFOLIO_HISTORY_LIMIT,
+        MAX_FILLS_LIMIT,
+    );
+    assert!(
+        portfolio < fills_max,
+        "{portfolio} must not be reused as the /fills bound ({fills_max})"
+    );
+}

@@ -723,14 +723,41 @@ impl Client {
         })
     }
 
-    /// Recent fills (private trade executions) for the authenticated account.
-    /// Requires credentials.
+    /// Recent fills (private trade executions) for the authenticated account
+    /// (`GET /api/v1/fills`). Requires credentials.
     ///
-    /// Returns the first page only. Use
+    /// Returns the **first page only**. `limit` is that page's size and must be in
+    /// `1..=`[`MAX_FILLS_LIMIT`] (1000); pass `None` for the server's default of
+    /// 100. Out-of-range values are rejected here, before the request is signed or
+    /// sent. Use
     /// [`fetch_my_trades_paginated`](Self::fetch_my_trades_paginated) to walk the
     /// account's whole fill history.
-    pub async fn fetch_my_trades(&self) -> Result<Vec<Fill>> {
-        self.signed_get("/api/v1/fills", &[]).await
+    ///
+    /// # Breaking change in 0.7.0
+    ///
+    /// `limit` is new: v0.7.2 documents it on `/fills` and this method sent none at
+    /// all, so a single call could never read more than the server's default 100
+    /// fills. Callers that want the old behaviour pass `None`:
+    ///
+    /// ```text
+    /// client.fetch_my_trades()       ->  client.fetch_my_trades(None)
+    /// ```
+    ///
+    /// The signature now matches every other flat list read in this SDK
+    /// ([`fetch_trades`](Self::fetch_trades),
+    /// [`fetch_ohlcv`](Self::fetch_ohlcv),
+    /// [`fetch_funding_rate_history`](Self::fetch_funding_rate_history),
+    /// [`fetch_portfolio_history`](Self::fetch_portfolio_history)) and the sibling
+    /// Python SDK's `fetch_my_trades(limit=...)`.
+    pub async fn fetch_my_trades(&self, limit: Option<u32>) -> Result<Vec<Fill>> {
+        check_page_size(limit, MAX_FILLS_LIMIT, "fills")?;
+        // Built inline rather than through a shared helper so this change stays
+        // independent of the history-endpoints PR (ENG-8148), which adds one.
+        let mut query = Vec::new();
+        if let Some(limit) = limit {
+            query.push(("limit", limit.to_string()));
+        }
+        self.signed_get("/api/v1/fills", &query).await
     }
 
     /// Every fill on the authenticated account, as an auto-paging [`Paginator`]

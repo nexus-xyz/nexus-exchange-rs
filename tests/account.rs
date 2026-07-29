@@ -48,7 +48,7 @@ async fn fetch_my_trades_parses_fills() {
         )
         .mount(&server)
         .await;
-    let fills = authed(server.uri()).fetch_my_trades().await.unwrap();
+    let fills = authed(server.uri()).fetch_my_trades(None).await.unwrap();
     assert_eq!(fills[0].side, Side::Sell);
     assert_eq!(fills[0].fee.to_string(), "0.25");
 }

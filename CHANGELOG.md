@@ -24,6 +24,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     parameter's prose note that an over-capacity value is "clamped, not rejected"
     describes server tolerance of non-conforming input, not licence for a client
     to exceed the schema.
+
+    All three `PortfolioHistory` fields are spec-`required` and decode strictly:
+    an absent or `null` `window`, `cadence_ms` or `points` fails the decode rather
+    than being defaulted. Defaulting any of them would report a figure the server
+    never sent — an empty `points` reads as "no history" and charts a flat line, a
+    `0` cadence divides by zero in caller arithmetic, and a substituted window
+    misstates the span the points cover. Matches the Python SDK's failure modes.
+
+    `window` is typed as an open `String` rather than the `PortfolioWindow` enum,
+    so a window added to a later spec still decodes instead of making the whole
+    response unreadable, and the served label stays *reportable* — a caller can
+    log or display `"quarter"` instead of losing it. `PortfolioWindow::from_wire`
+    (or `PortfolioHistory::window_parsed`) maps it onto the enum, returning `None`
+    for a value this SDK version cannot name. The request side stays typed and
+    closed, and the `spec-drift` gate fails loudly the moment the spec adds a
+    member.
   - **Consolidated account state.** `fetch_account_state` (`GET
     /api/v1/account/state`) returning `AccountState` — the portfolio summary
     **and** all open positions from one coherent server-side read, so the
@@ -48,7 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     negative maker fee is a rebate), fee tier, rate `schedule` scope, rolling
     30-day volume with a `volume_30d_estimated` undercount flag, and
     `discounts`. `FeeDiscount` keeps the server's object verbatim because the
-    spec has not fixed its shape yet.
+    spec has not fixed its shape yet. All seven fields are spec-`required`,
+    `discounts` included, so every one of them decodes strictly: an omission is a
+    contract violation and fails loudly rather than being defaulted. An empty
+    `discounts` is a real answer ("none apply"); an absent one is a broken server,
+    and the two must not look alike.
 - Extended the `spec-drift` gate's enum invariant to resolve enum-valued
   properties composed by `$ref` / single-branch `allOf`, not just inline `enum`
   arrays. `PortfolioHistory.window` is composed that way, so without this its
@@ -96,13 +116,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Python SDKs, which both preserve the code. Patterns that destructure
   `Unavailable { status, message }` need a `..`; the `Display` text now includes
   the code.
-- [**breaking**] *(account)* `PortfolioHistory::window` is
-  `Option<PortfolioWindow>` rather than `PortfolioWindow`. A served window this
-  SDK version cannot name — a window added to a later spec — decodes as `None`
-  instead of failing the entire response: the points are the payload and stay
-  valid, while guessing a default would misreport the span they cover. The
-  `PortfolioWindow` enum itself stays closed, and the `spec-drift` gate fails
-  loudly the moment the spec adds a member.
 
 ### Notes
 

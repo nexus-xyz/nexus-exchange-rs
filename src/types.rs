@@ -778,26 +778,24 @@ pub struct AccountState {
 /// | [`All`](Self::All) | 1 d | 366 | ~1 y |
 ///
 /// Serializes lowercase (`day` / `week` / `month` / `all`), as the `window`
-/// query parameter expects. Deserialization additionally accepts the Titlecase
-/// and UPPERCASE spellings (`Day`, `DAY`), so a value echoed back in one of
-/// those still decodes; mixed casing such as `dAy` does not. A value outside the
-/// set entirely — a window added to a future spec — decodes as
-/// [`PortfolioHistory::window`] `None` rather than failing the whole response.
+/// query parameter expects, and deserializes those same four spellings — the
+/// spec's enum is lowercase-only, so no other casing is recognized.
+///
+/// This is the **request** side. A served window is read back off
+/// [`PortfolioHistory::window`], which is the raw string so that a window added
+/// to a later spec still decodes; [`from_wire`](Self::from_wire) maps it onto
+/// this enum where it can be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PortfolioWindow {
     /// Trailing 24 hours, sampled every 5 minutes. The server's default.
     #[default]
-    #[serde(alias = "Day", alias = "DAY")]
     Day,
     /// Trailing 7 days, sampled hourly.
-    #[serde(alias = "Week", alias = "WEEK")]
     Week,
     /// Trailing 30 days, sampled every 6 hours.
-    #[serde(alias = "Month", alias = "MONTH")]
     Month,
     /// Full retained history (~1 year), sampled daily.
-    #[serde(alias = "All", alias = "ALL")]
     All,
 }
 
@@ -811,33 +809,31 @@ impl PortfolioWindow {
             Self::All => "all",
         }
     }
+
+    /// Map a served wire value onto this enum, the inverse of
+    /// [`as_str`](Self::as_str).
+    ///
+    /// `None` for anything outside the spec's four members — most usefully, a
+    /// window added to a later spec. Callers reading
+    /// [`PortfolioHistory::window`] get the served string either way, so an
+    /// unrecognized window stays reportable instead of being lost; the
+    /// `spec-drift` gate fails loudly the moment the spec adds a member, which is
+    /// the signal to add the variant here.
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "day" => Some(Self::Day),
+            "week" => Some(Self::Week),
+            "month" => Some(Self::Month),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for PortfolioWindow {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
-}
-
-/// Deserialize a [`PortfolioWindow`] leniently: an unrecognized wire value
-/// becomes `None` instead of failing its enclosing response.
-///
-/// The window a response echoes is *metadata* about a time series whose points
-/// are the actual payload. Rejecting the whole [`PortfolioHistory`] because the
-/// server named a window this SDK version doesn't know would discard good data
-/// over a label — so an unknown value degrades to "not reported" (never a
-/// fabricated default; guessing `Day` would misreport the span the points
-/// cover). The `spec-drift` gate fails loudly the moment the spec adds a member,
-/// which is the signal to add the variant here.
-fn lenient_window<'de, D>(de: D) -> std::result::Result<Option<PortfolioWindow>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    // Land in an untyped `Value` first so an unknown string can't abort the
-    // enclosing struct's decode. `null` and an absent field both mean "not
-    // reported", same as an unrecognized value.
-    let raw = Option::<Value>::deserialize(de)?;
-    Ok(raw.and_then(|v| serde_json::from_value(v).ok()))
 }
 
 /// One downsampled sample from the portfolio time series.
@@ -867,6 +863,18 @@ pub struct PortfolioPoint {
 /// Portfolio time series for the authenticated account
 /// (`GET /api/v1/account/portfolio-history`): equity, cumulative PnL, and
 /// cumulative volume over the requested window.
+///
+/// The spec marks all three properties `required`, and all three decode
+/// strictly: an absent or `null` `window`, `cadence_ms` or `points` fails the
+/// decode loudly rather than being defaulted. A missing `cadence_ms` must not
+/// read as `0` (caller arithmetic divides by it), and a dropped `points` array
+/// must not read as "no history" — silently substituting an empty series would
+/// present a flat chart the server never reported. This matches
+/// [`AccountFees`]'s policy, and the Python SDK's.
+///
+/// The one concession to forward compatibility is that
+/// [`window`](Self::window) is an open string rather than the
+/// [`PortfolioWindow`] enum — see that field.
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct PortfolioHistory {
@@ -874,20 +882,37 @@ pub struct PortfolioHistory {
     /// [`PortfolioWindow`], or the server's `day` default when none was sent.
     /// Read this rather than assuming the request's value.
     ///
-    /// `None` when the server served a window this SDK version cannot name (a
-    /// spec addition) or omitted the field. The [`points`](Self::points) are
-    /// still valid; use [`cadence_ms`](Self::cadence_ms) for the sample interval
-    /// and upgrade the SDK to get the variant.
-    #[serde(default, deserialize_with = "lenient_window")]
-    pub window: Option<PortfolioWindow>,
+    /// An **open string**, not the enum, so a window added to a later spec still
+    /// decodes: failing an entire response over a *label* would discard the
+    /// [`points`](Self::points) that are the actual payload, and keeping the
+    /// served text means an unrecognized window is still reportable — a caller
+    /// can log or display `"quarter"` rather than lose it. Use
+    /// [`PortfolioWindow::from_wire`] (or
+    /// [`window_parsed`](Self::window_parsed)) for the typed form, and
+    /// [`cadence_ms`](Self::cadence_ms) for the sample interval regardless.
+    ///
+    /// Absent or `null` is a contract violation and fails the decode; it is not
+    /// reported as an empty string.
+    pub window: String,
     /// Downsample interval between adjacent points, in milliseconds (e.g.
     /// `300000` for [`PortfolioWindow::Day`]).
     pub cadence_ms: i64,
     /// Samples for the window, **oldest first**. Bounded by the window's point
     /// capacity and by the request's `limit`. Empty for an account with no
-    /// history in the window.
-    #[serde(default)]
+    /// history in the window — but an *absent* array fails the decode rather
+    /// than reading as empty.
     pub points: Vec<PortfolioPoint>,
+}
+
+impl PortfolioHistory {
+    /// [`window`](Self::window) as a [`PortfolioWindow`], or `None` if the server
+    /// served one this SDK version cannot name.
+    ///
+    /// Convenience for [`PortfolioWindow::from_wire`]; the raw value stays
+    /// readable on [`window`](Self::window) either way.
+    pub fn window_parsed(&self) -> Option<PortfolioWindow> {
+        PortfolioWindow::from_wire(&self.window)
+    }
 }
 
 /// The authenticated account's effective fee schedule
@@ -929,8 +954,9 @@ pub struct AccountFees {
     /// have been evicted. `false` when the full 30-day window is covered.
     pub volume_30d_estimated: bool,
     /// Active fee discounts on the account. Currently always empty — no
-    /// discount program exists yet.
-    #[serde(default)]
+    /// discount program exists yet. Empty and absent are **not** the same: the
+    /// spec requires this key, so an omission fails the decode rather than
+    /// defaulting to `[]`.
     pub discounts: Vec<FeeDiscount>,
 }
 

@@ -423,7 +423,8 @@ impl Client {
     /// `window` selects the span *and* the server-side downsample cadence and
     /// point capacity (see [`PortfolioWindow`]); `None` takes the server's `day`
     /// default. Read the served window back from
-    /// [`PortfolioHistory::window`] rather than assuming the requested value.
+    /// [`PortfolioHistory::window`] — an open string, so a window added to a later
+    /// spec still decodes — rather than assuming the requested value.
     ///
     /// `limit` caps the number of points returned; pass `None` for the full
     /// window. The spec's request schema is `minimum: 1, maximum: 366`, and both

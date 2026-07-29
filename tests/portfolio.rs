@@ -88,7 +88,10 @@ async fn fetch_portfolio_history_parses_and_sends_window_and_limit() {
         .await
         .unwrap();
 
-    assert_eq!(history.window, Some(PortfolioWindow::Week));
+    // A recognized window is readable both raw and typed, and the two agree.
+    assert_eq!(history.window, "week");
+    assert_eq!(history.window_parsed(), Some(PortfolioWindow::Week));
+    assert_eq!(history.window_parsed().unwrap().as_str(), history.window);
     assert_eq!(history.cadence_ms, 3_600_000);
     assert_eq!(history.points.len(), 2);
     // Oldest first, and the monetary fields are exact decimal strings.
@@ -117,7 +120,7 @@ async fn fetch_portfolio_history_omits_unset_params() {
         .await
         .unwrap();
 
-    assert_eq!(history.window, Some(PortfolioWindow::Day));
+    assert_eq!(history.window_parsed(), Some(PortfolioWindow::Day));
     assert!(history.points.is_empty());
 }
 
@@ -171,11 +174,11 @@ async fn fetch_portfolio_history_sends_the_schema_maximum() {
         .await
         .unwrap();
     // The served window is read back from the response, not assumed.
-    assert_eq!(history.window, Some(PortfolioWindow::All));
+    assert_eq!(history.window_parsed(), Some(PortfolioWindow::All));
 }
 
 #[tokio::test]
-async fn portfolio_window_wire_values_and_case_insensitive_decode() {
+async fn portfolio_window_wire_values_round_trip_lowercase_only() {
     assert_eq!(PortfolioWindow::Day.as_str(), "day");
     assert_eq!(PortfolioWindow::Week.as_str(), "week");
     assert_eq!(PortfolioWindow::Month.as_str(), "month");
@@ -183,46 +186,51 @@ async fn portfolio_window_wire_values_and_case_insensitive_decode() {
     assert_eq!(PortfolioWindow::default(), PortfolioWindow::Day);
     assert_eq!(PortfolioWindow::Month.to_string(), "month");
 
-    // Canonical lowercase plus the Titlecase / UPPERCASE aliases — exactly the
-    // spellings documented, no more.
-    for (wire, want) in [
-        ("day", PortfolioWindow::Day),
-        ("Week", PortfolioWindow::Week),
-        ("MONTH", PortfolioWindow::Month),
-        ("all", PortfolioWindow::All),
-        ("Day", PortfolioWindow::Day),
-        ("WEEK", PortfolioWindow::Week),
-        ("Month", PortfolioWindow::Month),
-        ("ALL", PortfolioWindow::All),
+    // The spec's enum is lowercase-only, and `from_wire` is the exact inverse of
+    // `as_str` over the four members — no other casing is claimed or accepted.
+    for want in [
+        PortfolioWindow::Day,
+        PortfolioWindow::Week,
+        PortfolioWindow::Month,
+        PortfolioWindow::All,
     ] {
-        let got: PortfolioWindow = serde_json::from_value(serde_json::json!(wire)).expect(wire);
-        assert_eq!(got, want, "{wire}");
-    }
-    // Mixed casing is NOT covered — the doc claims the three spellings above, not
-    // arbitrary casing. Pinned so the claim and the code can't drift apart.
-    for wire in ["dAy", "wEEk", "aLL"] {
-        assert!(
-            serde_json::from_value::<PortfolioWindow>(serde_json::json!(wire)).is_err(),
-            "{wire} is not one of the documented spellings"
+        assert_eq!(PortfolioWindow::from_wire(want.as_str()), Some(want));
+        // Serializes to the same lowercase form the query parameter expects, so
+        // request and response spellings cannot drift apart.
+        assert_eq!(
+            serde_json::to_value(want).unwrap(),
+            serde_json::json!(want.as_str())
         );
+        let decoded: PortfolioWindow =
+            serde_json::from_value(serde_json::json!(want.as_str())).unwrap();
+        assert_eq!(decoded, want);
     }
-    // Serializes back to the canonical lowercase form.
-    assert_eq!(
-        serde_json::to_value(PortfolioWindow::Week).unwrap(),
-        serde_json::json!("week")
-    );
-    // The enum itself stays closed: an unknown member is a decode error, never a
-    // silent fallback to `day`. (Tolerance lives on `PortfolioHistory::window`,
-    // which degrades to `None` — see the test below.)
+    // Other casings are not recognized. Nothing is lost by that: a served value
+    // stays readable on `PortfolioHistory::window` whatever its spelling, so the
+    // enum has no reason to claim a tolerance the spec does not describe.
+    for wire in ["Day", "DAY", "dAy", ""] {
+        assert_eq!(
+            PortfolioWindow::from_wire(wire),
+            None,
+            "{wire} is not a spec spelling"
+        );
+        assert!(serde_json::from_value::<PortfolioWindow>(serde_json::json!(wire)).is_err());
+    }
+    // The enum stays closed: an unknown member never silently falls back to
+    // `day`. (Tolerance lives on `PortfolioHistory::window`, which keeps the
+    // served string — see the test below.)
+    assert_eq!(PortfolioWindow::from_wire("quarter"), None);
     assert!(serde_json::from_value::<PortfolioWindow>(serde_json::json!("quarter")).is_err());
 }
 
 #[tokio::test]
-async fn unknown_served_window_degrades_to_none_and_keeps_the_points() {
+async fn unknown_served_window_degrades_to_none_but_stays_reportable() {
     // If a later spec adds a window and the server serves it, the response's
     // `window` is a label this SDK version can't name — but the points are the
     // payload and are still valid. Failing the whole read over metadata would
-    // discard good data; guessing `day` would misreport the span. So: `None`.
+    // discard good data; guessing `day` would misreport the span. So: `None` for
+    // the enum, and the served spelling preserved so the caller can still log or
+    // display it. Losing the value entirely is what makes leniency expensive.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/v1/account/portfolio-history"))
@@ -242,7 +250,10 @@ async fn unknown_served_window_degrades_to_none_and_keeps_the_points() {
         .await
         .unwrap();
 
-    assert_eq!(history.window, None);
+    assert_eq!(history.window_parsed(), None);
+    // Recoverable: the label survives even though the variant doesn't. This is
+    // the parity point with the Python SDK, which keeps `window` a plain string.
+    assert_eq!(history.window, "quarter");
     // The data survived, and the cadence is still readable for the real interval.
     assert_eq!(history.cadence_ms, 21_600_000);
     assert_eq!(history.points.len(), 1);
@@ -250,12 +261,21 @@ async fn unknown_served_window_degrades_to_none_and_keeps_the_points() {
 }
 
 #[tokio::test]
-async fn absent_or_null_served_window_decodes_as_none() {
-    // Same treatment for a server that omits the field or sends an explicit null:
-    // "not reported", not a fabricated default.
+async fn portfolio_history_required_fields_fail_loudly_when_missing() {
+    // `window`, `cadence_ms` and `points` are all spec-`required`, so an omission
+    // or an explicit null is a server contract violation and must fail the decode
+    // rather than be defaulted. Defaulting each one is actively harmful: an empty
+    // `points` reads as "no history" and charts a flat line the server never
+    // reported, a `0` cadence divides by zero in caller arithmetic, and a
+    // defaulted window misreports the span the points cover. Same policy as
+    // `AccountFees`, and the same failure modes as the Python SDK.
     for body in [
         serde_json::json!({ "cadence_ms": 300000i64, "points": [] }),
         serde_json::json!({ "window": null, "cadence_ms": 300000i64, "points": [] }),
+        serde_json::json!({ "window": "day", "points": [] }),
+        serde_json::json!({ "window": "day", "cadence_ms": null, "points": [] }),
+        serde_json::json!({ "window": "day", "cadence_ms": 300000i64 }),
+        serde_json::json!({ "window": "day", "cadence_ms": 300000i64, "points": null }),
     ] {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -264,11 +284,12 @@ async fn absent_or_null_served_window_decodes_as_none() {
             .mount(&server)
             .await;
 
-        let history = authed(server.uri())
+        let err = authed(server.uri())
             .fetch_portfolio_history(None, None)
             .await
-            .unwrap_or_else(|e| panic!("{body} should decode, got: {e}"));
-        assert_eq!(history.window, None, "{body}");
+            .expect_err(&format!("{body} must not decode"));
+        // A decode failure, not something a caller should retry into.
+        assert!(!err.is_retryable(), "{body}: {err}");
     }
 }
 
@@ -684,7 +705,11 @@ async fn account_fees_surfaces_estimated_volume_and_opaque_discounts() {
 }
 
 #[tokio::test]
-async fn account_fees_defaults_absent_discounts_to_empty() {
+async fn account_fees_absent_discounts_fails_the_decode() {
+    // All seven `AccountFees` fields are spec-`required`, `discounts` included, so
+    // an omission fails loudly instead of defaulting to `[]` — the policy the
+    // type's own docs state. An empty array is a real answer ("no discounts
+    // apply"); an absent key is a broken server, and the two must not look alike.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/v1/account/fees"))
@@ -695,8 +720,11 @@ async fn account_fees_defaults_absent_discounts_to_empty() {
         .mount(&server)
         .await;
 
-    let fees = authed(server.uri()).fetch_account_fees().await.unwrap();
-    assert!(fees.discounts.is_empty());
+    let err = authed(server.uri())
+        .fetch_account_fees()
+        .await
+        .expect_err("absent `discounts` must not decode");
+    assert!(!err.is_retryable(), "{err}");
 }
 
 // --- Auth ------------------------------------------------------------------

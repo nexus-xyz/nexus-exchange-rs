@@ -118,12 +118,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let history = client
         .fetch_portfolio_history(Some(PortfolioWindow::Week), None)
         .await?;
-    // A served window this SDK version cannot name decodes as `None` rather than
-    // failing the read — the points are still good, so report the label as
-    // unknown and carry on.
+    // `window` is the served string, so a window this SDK version cannot name
+    // still decodes and is still printable — the points are the payload and stay
+    // good. Report the raw label when it doesn't map onto a known variant rather
+    // than dropping it or guessing `day`.
     println!(
-        "window {} | cadence {}ms | {} point(s), oldest first",
-        agg(history.window),
+        "window {}{} | cadence {}ms | {} point(s), oldest first",
+        history.window,
+        match history.window_parsed() {
+            Some(_) => "",
+            None => " (unrecognized by this SDK version)",
+        },
         history.cadence_ms,
         history.points.len()
     );

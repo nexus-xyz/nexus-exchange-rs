@@ -208,9 +208,12 @@ MODEL_SCHEMA = {
     "AccountFees": "AccountFees",
     "PortfolioHistory": "PortfolioHistory",
     "PortfolioPoint": "PortfolioPoint",
+    "EquityPoint": "EquityPoint",
     "Position": "Position",
+    "ClosedPosition": "ClosedPosition",
     "Fill": "Fill",
     "Order": "Order",
+    "OrderHistoryEntry": "OrderHistoryEntry",
     "OrderRequest": "OrderRequest",
     "OrderResponse": "OrderResponse",
     # The Rust name reads better than the spec's schema name; the mapping is why

@@ -35,12 +35,15 @@ GET /api/v1/account/summary
 GET /api/v1/account/state
 GET /api/v1/account/fees
 GET /api/v1/account/portfolio-history
+GET /api/v1/account/equity-history
 POST /api/v1/account/credit
 GET /api/v1/positions
+GET /api/v1/positions/closed
 GET /api/v1/fills
 POST /api/v1/orders
 POST /api/v1/orders/preview
 GET /api/v1/orders
+GET /api/v1/orders/history
 DELETE /api/v1/orders
 POST /api/v1/orders/batch
 DELETE /api/v1/orders/{order_id}

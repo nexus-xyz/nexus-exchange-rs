@@ -42,7 +42,18 @@ while let Some(page) = pager.next_page().await? {
 }
 ```
 
-`fetch_trades` / `fetch_my_trades` still return the first page only.
+All five cursor-paginated endpoints in spec v0.7.2 are covered, each with a flat
+first-page method and a `Paginator`:
+
+| Endpoint | First page | Whole history | `limit` max |
+|---|---|---|---|
+| `GET /api/v1/markets/{id}/trades` | `fetch_trades` | `fetch_trades_paginated` | `MAX_TRADES_LIMIT` = **1000** |
+| `GET /api/v1/fills` | `fetch_my_trades` | `fetch_my_trades_paginated` | `MAX_FILLS_LIMIT` = **1000** |
+| `GET /api/v1/orders/history` | `fetch_order_history` | `fetch_order_history_paginated` | `MAX_ORDER_HISTORY_LIMIT` = **500** |
+| `GET /api/v1/positions/closed` | `fetch_closed_positions` | `fetch_closed_positions_paginated` | `MAX_CLOSED_POSITIONS_LIMIT` = **200** |
+| `GET /api/v1/account/equity-history` | `fetch_equity_history` | `fetch_equity_history_paginated` | `MAX_EQUITY_HISTORY_LIMIT` = **720** |
+
+The flat methods return the first page only, and never a cursor.
 
 Cursors are opaque — never parse one. Termination:
 
@@ -56,10 +67,17 @@ Cursors are opaque — never parse one. Termination:
 - Nothing else bounds how far back a walk goes; pass `max_pages` when that matters.
 
 `page_size` sets the per-page `limit` and is checked against **that endpoint's**
-spec maximum before the request is sent (`MAX_TRADES_LIMIT` /
-`MAX_FILLS_LIMIT`, both 1000). The maxima are per endpoint and not
-interchangeable; in particular the `366` of `MAX_PORTFOLIO_HISTORY_LIMIT` belongs
-to `/account/portfolio-history`, which is not cursor-paginated at all.
+spec maximum (the table above) before the request is sent — and on the signed
+routes, before it is signed. The maxima are per endpoint and **not
+interchangeable**: `page_size(500)` is valid on `/orders/history` and out of range
+on `/positions/closed`. Two things follow that are easy to get wrong:
+
+- the `366` of `MAX_PORTFOLIO_HISTORY_LIMIT` belongs to
+  `/account/portfolio-history`, which is not cursor-paginated at all — a shared
+  clamp there would sit *below* equity-history's own default of 720 and reject a
+  plain default request client-side;
+- `/account/equity-history` defaults to **720**, not 100, so omitting `limit`
+  there asks for the whole ~1h / 5s window and the first page is usually the last.
 
 ## Examples
 

@@ -1,19 +1,33 @@
 #!/usr/bin/env python3
-"""Regression tests for the enum-member drift invariants (Invariant 5, ENG-5474).
+"""Regression tests for the drift checker's own parsers.
 
-Proves the `spec-drift` gate goes RED on an enum-member delta between the pinned
-spec and the SDK — the enforcement gap that let PostOnly (ENG-5058) and the WS
-`Channel::Liquidations` variant (ENG-4646) land unmodeled. The SDK side is read
-from the real src/types.rs / src/ws/protocol.rs; only the spec side is synthetic,
-so the tests are hermetic (no network, no pinned-spec download) yet exercise the
-actual parsers against the actual sources.
+Two enforcement gaps are covered, both of the same shape — a check that reported
+green over a real gap:
+
+* **Invariant 5, enum members (ENG-5474).** Proves the `spec-drift` gate goes RED
+  on an enum-member delta between the pinned spec and the SDK — the gap that let
+  PostOnly (ENG-5058) and the WS `Channel::Liquidations` variant (ENG-4646) land
+  unmodeled. The SDK side is read from the real src/types.rs /
+  src/ws/protocol.rs; only the spec side is synthetic.
+* **Invariant 2, the REST call parser (ENG-8166).** Proves an endpoint reachable
+  ONLY through a cursor paginator is *counted*. The parser was anchored on a
+  `self.` receiver, but the paginated readers are called on an owned `Client`
+  clone inside a closure, so such an endpoint was silently UNDERCOUNTED — the
+  checker would have called it unimplemented. Here the Rust side is synthetic (so
+  the contract is pinned regardless of which endpoints happen to be paginated
+  today), with a companion class running the same parser over the real
+  src/rest.rs.
+
+Either way the tests are hermetic: no network, no pinned-spec download.
 
 Run: python3 scripts/test_check_spec_drift.py   (stdlib unittest; no pytest needed)
 """
 import contextlib
 import io
 import os
+import re
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -290,6 +304,157 @@ class TestWsChannelsVsSpec(unittest.TestCase):
     def test_missing_ws_path_fails_closed(self):
         with self.assertRaises(SystemExit):
             csd.spec_ws_channels({"paths": {}})
+
+
+class TestRestCallParser(unittest.TestCase):
+    """Invariant 2's code parser (ENG-8166).
+
+    The parser used to be anchored on a `self.` receiver, so the cursor-paginated
+    readers — called on an owned `Client` clone inside a paginator closure — were
+    invisible to it, and an endpoint reachable ONLY through a paginator was
+    silently UNDERCOUNTED. These fixtures are synthetic Rust so they pin the
+    parser's contract directly rather than depending on which endpoints happen to
+    be paginated today; `TestRestCallParserAgainstRealSource` below covers the real
+    src/rest.rs.
+    """
+
+    def _ops(self, source):
+        """Run `implemented_ops` over a synthetic src/rest.rs, quietly."""
+        with tempfile.NamedTemporaryFile("w", suffix=".rs", delete=False) as fh:
+            fh.write(source)
+            name = fh.name
+        self.addCleanup(os.unlink, name)
+        with contextlib.redirect_stdout(io.StringIO()):
+            return csd.implemented_ops(path=name)
+
+    # A paginator-only endpoint: reachable through `signed_get_page` on a cloned
+    # `Client` and NOTHING else. Formatted exactly as rustfmt wraps it, with the
+    # receiver on its own line and a turbofish naming the response type.
+    PAGINATOR_ONLY = """
+    pub fn fetch_widgets_paginated(&self) -> Paginator<Widget> {
+        let client = self.clone();
+        Paginator::new(move |req: PageRequest| {
+            let client = client.clone();
+            async move {
+                let (items, next) = client
+                    .signed_get_page::<Vec<Widget>>("/api/v1/widgets", &page_query(&req))
+                    .await?;
+                Ok(Page::new(items, next))
+            }
+        })
+    }
+"""
+
+    def test_paginator_only_endpoint_is_counted(self):
+        """The regression itself: this endpoint has no `self.<helper>(` call site
+        anywhere, so before ENG-8166 invariant 2 counted zero ops for it and would
+        have reported `/api/v1/widgets` as unimplemented."""
+        self.assertNotIn(
+            "self.signed_get",
+            self.PAGINATOR_ONLY,
+            "fixture must reach the endpoint ONLY through the paginator",
+        )
+        self.assertIn(("GET", "/api/v1/widgets"), self._ops(self.PAGINATOR_ONLY))
+
+    def test_old_self_anchored_pattern_would_have_missed_it(self):
+        """Pins *why* this needed fixing. The pre-ENG-8166 pattern is rebuilt here
+        verbatim — a literal `self.` receiver, no turbofish — and finds **zero**
+        call sites in the very source the current parser reads correctly. On the
+        real src/rest.rs that undercount was masked, because both paginated paths
+        were also reached by a plain `self.get` / `self.signed_get`; add a
+        paginator-only endpoint and the checker reports green over a gap.
+        """
+        old = re.compile(r"self\.(" + csd._HELPER_ALT + r")\s*\(\s*")
+        self.assertEqual(len(old.findall(self.PAGINATOR_ONLY)), 0)
+        # The current parser finds it.
+        self.assertEqual(
+            len(csd._CALL_SITE_RE.findall(self.PAGINATOR_ONLY)),
+            1,
+            "the current parser must see exactly the one paginated call site",
+        )
+
+    def test_wrapped_receiver_and_nested_generics(self):
+        """rustfmt puts the receiver on its own line and the turbofish carries
+        nested angle brackets; both have to survive the regex."""
+        src = """
+        let (items, next) = client
+            .get_page::<Vec<HashMap<String, Widget>>>("/api/v1/widgets/nested", &q, COST)
+            .await?;
+        """
+        self.assertIn(("GET", "/api/v1/widgets/nested"), self._ops(src))
+
+    def test_self_receiver_still_counted(self):
+        """No regression on the ordinary methods, including `&format!()` paths."""
+        src = """
+        self.signed_get("/api/v1/plain", &[]).await
+        self.get(&format!("/api/v1/markets/{id}/ticker"), &[], COST_DEFAULT)
+        """
+        ops = self._ops(src)
+        self.assertIn(("GET", "/api/v1/plain"), ops)
+        self.assertIn(("GET", "/api/v1/markets/{}/ticker"), ops)
+
+    def test_non_inline_path_on_a_paginator_call_is_rejected(self):
+        """The inline-literal convention now covers the paginated helpers too — a
+        path built into a local first must abort, not be silently dropped."""
+        src = """
+        let path = format!("/api/v1/widgets/{id}");
+        self.signed_get("/api/v1/plain", &[]).await
+        let (items, next) = client
+            .signed_get_page::<Vec<Widget>>(&path, &page_query(&req))
+            .await?;
+        """
+        with self.assertRaises(SystemExit):
+            self._ops(src)
+
+    def test_unknown_receiver_is_not_counted(self):
+        """The receiver set is an explicit alternation, not `\\w+\\.`: an unrelated
+        receiver must not be mistaken for a REST helper call. Paired with the
+        loud-failure paths above, that keeps a NEW receiver a deliberate edit
+        rather than something the parser guesses at."""
+        src = """
+        self.signed_get("/api/v1/plain", &[]).await
+        some_other_thing.signed_get("/api/v1/not-ours", &[]).await
+        """
+        ops = self._ops(src)
+        self.assertIn(("GET", "/api/v1/plain"), ops)
+        self.assertNotIn(("GET", "/api/v1/not-ours"), ops)
+
+    def test_helper_and_call_site_regexes_agree(self):
+        """The two regexes must match the same sites, or the count-agreement assert
+        inside `implemented_ops` fires. Cheap guard against them drifting apart."""
+        src = self.PAGINATOR_ONLY + """
+        self.signed_get("/api/v1/plain", &[]).await
+        """
+        self.assertEqual(
+            sum(1 for _ in csd._CALL_SITE_RE.finditer(src)),
+            sum(1 for _ in csd._CALL_RE.finditer(src)),
+        )
+
+
+class TestRestCallParserAgainstRealSource(unittest.TestCase):
+    """The same parser against the real src/rest.rs, so the fixtures above cannot
+    pass while the actual source has drifted out from under them."""
+
+    def test_paginated_helpers_are_reached_in_the_real_source(self):
+        src = open(csd.REST_RS).read()
+        receivers = {
+            (m.group(1), m.group(2))
+            for m in csd._CALL_SITE_RE.finditer(src)
+        }
+        paginated = {r for r in receivers if r[1].endswith("_page")}
+        self.assertTrue(
+            paginated,
+            "no paginated helper call site found in src/rest.rs; if the paginator "
+            "wiring moved, update HELPER_METHOD / _RECEIVER_ALT",
+        )
+        # They are called on a cloned `Client`, never on `self` — the whole reason
+        # the receiver alternation exists.
+        self.assertEqual({r[0] for r in paginated}, {"client"})
+
+    def test_real_source_has_no_non_inline_paths(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            ops = csd.implemented_ops()
+        self.assertTrue(ops)
 
 
 @contextlib.contextmanager

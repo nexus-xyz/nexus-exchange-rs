@@ -123,6 +123,15 @@ WS_PROTOCOL_RS = os.path.join(REPO, "src", "ws", "protocol.rs")
 # Map each REST helper on `Client` (defined in src/client.rs) to the HTTP method
 # it issues. The path is always the first argument: a bare "..." string literal
 # or `&format!("...")`. Keep this in sync with the helper set in src/client.rs.
+#
+# Deliberately excludes the paginated readers `get_page` / `signed_get_page`:
+# they are called on an owned `Client` clone inside a paginator closure, not on
+# `self`, so `_CALL_SITE_RE`'s `self\.` anchor never sees them. That is safe only
+# because every cursor-paginated path is *also* reached by a plain `self.get` /
+# `self.signed_get` method (`fetch_trades`, `fetch_my_trades`), so the op is
+# still counted. Adding an endpoint reachable ONLY through a paginator would
+# undercount it here — extend the parser (receiver alternation + these two
+# helper names) at that point.
 HELPER_METHOD = {
     "get": "GET",
     "signed_get": "GET",

@@ -11,6 +11,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use crate::auth::SigningContext;
 use crate::config::{API_VERSION_HEADER, API_VERSION_RAW, DEFAULT_USER_AGENT};
 use crate::ratelimit::{RateLimiter, ThrottleInfo};
+use crate::rest::pagination::{Cursor, NEXT_CURSOR_HEADER};
 use crate::types::RateLimitStatus;
 use crate::{Config, Error, Result};
 
@@ -146,6 +147,27 @@ impl Client {
         query: &[(&str, String)],
         cost: f64,
     ) -> Result<T> {
+        Ok(self.get_page(path, query, cost).await?.0)
+    }
+
+    /// Unauthenticated `GET` on a cursor-paginated list endpoint: the decoded
+    /// body **and** the [`Cursor`] from the `X-Next-Cursor` response header.
+    ///
+    /// Identical to [`get`](Self::get) — same rate-limit accounting, retry and
+    /// error decoding — except that the pagination cursor survives. It has to be
+    /// read here: the response body of a paginated list endpoint is a bare array,
+    /// so the only place the next page is advertised is a header, which
+    /// [`handle`](Self::handle) would otherwise drop.
+    ///
+    /// `None` for the cursor means the server sent no `X-Next-Cursor`, i.e. this
+    /// was the last page. That is the documented end-of-results signal, not a
+    /// failure.
+    pub(crate) async fn get_page<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+        cost: f64,
+    ) -> Result<(T, Option<Cursor>)> {
         let url = format!("{}{}", self.base_for(path), path);
 
         // Reserve the endpoint's cost once for this logical request. Retries
@@ -211,7 +233,7 @@ impl Client {
             // path above already returned, so `handle` never yields a
             // `RateLimited` here — the rate-limit layer stays the sole owner of
             // 429 and the two layers never double-retry it.
-            match self.handle(resp).await {
+            match self.handle_page(resp).await {
                 Err(err) if err.is_retryable() => {
                     if let Some(delay) = transient.next() {
                         tokio::time::sleep(delay).await;
@@ -254,6 +276,21 @@ impl Client {
         path: &str,
         query: &[(&str, String)],
     ) -> Result<T> {
+        Ok(self.signed_get_page(path, query).await?.0)
+    }
+
+    /// Signed `GET` on a cursor-paginated list endpoint: the decoded body **and**
+    /// the [`Cursor`] from the `X-Next-Cursor` response header. The signed-route
+    /// counterpart of [`get_page`](Self::get_page).
+    ///
+    /// The cursor rides in the query string, so it is covered by the signature on
+    /// every page — each page of a walk is independently signed over the exact
+    /// path and query sent.
+    pub(crate) async fn signed_get_page<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<(T, Option<Cursor>)> {
         let creds = self.creds()?;
         let qs = serde_urlencoded::to_string(query).unwrap_or_default();
         let headers = creds.auth_headers(&SigningContext {
@@ -272,7 +309,7 @@ impl Client {
         for (name, value) in &headers {
             req = req.header(*name, value);
         }
-        self.handle(req.send().await?).await
+        self.handle_page(req.send().await?).await
     }
 
     /// Signed `POST` with a JSON body.
@@ -440,12 +477,25 @@ impl Client {
 
     /// Decode a response, mapping the `{ code, message }` envelope on non-2xx.
     async fn handle<T: DeserializeOwned>(&self, resp: reqwest::Response) -> Result<T> {
+        Ok(self.handle_page(resp).await?.0)
+    }
+
+    /// [`handle`](Self::handle), also returning the `X-Next-Cursor` cursor.
+    ///
+    /// The single decode path for every response, so a paginated endpoint gets
+    /// exactly the same error mapping as any other; non-paginated callers go
+    /// through [`handle`](Self::handle) and drop the (always-absent) cursor.
+    async fn handle_page<T: DeserializeOwned>(
+        &self,
+        resp: reqwest::Response,
+    ) -> Result<(T, Option<Cursor>)> {
         let status = resp.status();
-        // Read the Retry-After hint before the response is consumed by `bytes()`.
+        // Read the header hints before the response is consumed by `bytes()`.
         let retry_after = parse_retry_after(resp.headers());
+        let next_cursor = parse_next_cursor(resp.headers());
         let bytes = resp.bytes().await?;
         if status.is_success() {
-            return Ok(serde_json::from_slice(&bytes)?);
+            return Ok((serde_json::from_slice(&bytes)?, next_cursor));
         }
         // Decode the `{ code, message }` envelope; fall back to the status when
         // the body isn't the expected shape. `Error::from_api` classifies into
@@ -471,6 +521,18 @@ impl Client {
 /// retry layer honoring [`crate::Error::retry_after`] would sleep effectively
 /// forever. Five minutes is well beyond any legitimate rate-limit window.
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(300);
+
+/// Read the next-page [`Cursor`] out of a response's `X-Next-Cursor` header.
+///
+/// `None` when the header is absent — the spec's signal that this was the last
+/// page — and also when it is present but blank or unreadable. A blank cursor
+/// cannot be sent back meaningfully: passing one on as `cursor=` would re-request
+/// the first page forever, so it is treated as absent (which terminates the walk)
+/// rather than as a cursor.
+fn parse_next_cursor(headers: &reqwest::header::HeaderMap) -> Option<Cursor> {
+    let raw = headers.get(NEXT_CURSOR_HEADER)?.to_str().ok()?.trim();
+    (!raw.is_empty()).then(|| Cursor::new(raw))
+}
 
 /// Parse a `Retry-After` header expressed in seconds (the form the gateway
 /// emits), clamped to [`MAX_RETRY_AFTER`]. HTTP-date forms are ignored (treated

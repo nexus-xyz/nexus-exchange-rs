@@ -20,6 +20,47 @@ thin, idiomatic wrapper over the public REST + WebSocket API.
   real tier via `429` headers and `Client::fetch_rate_limit_status`. Configure or
   disable it through `Config::with_rate_limit` / `Config::without_rate_limiter`.
 
+## Pagination
+
+The cursor-paginated list endpoints return one page plus an opaque cursor for the
+next, carried in the **`X-Next-Cursor`** response header (spec v0.7.2). The
+`*_paginated` methods hand back a `Paginator` that drives that cursor for you —
+nothing is requested until a page is asked for:
+
+```rust
+// Everything, in one Vec.
+let fills = client.fetch_my_trades_paginated().page_size(1000).all().await?;
+
+// Or a lazy stream of items, pages fetched on demand.
+let mut stream = Box::pin(client.fetch_trades_paginated("BTC-USDX-PERP")?.into_stream());
+while let Some(trade) = stream.next().await { let _ = trade?; }
+
+// Or page-by-page, persisting the cursor to resume later.
+let mut pager = client.fetch_my_trades_paginated().starting_after("saved-cursor");
+while let Some(page) = pager.next_page().await? {
+    save_checkpoint(page.next_cursor.as_ref()); // `None` on the last page
+}
+```
+
+`fetch_trades` / `fetch_my_trades` still return the first page only.
+
+Cursors are opaque — never parse one. Termination:
+
+- **No `X-Next-Cursor` ⇒ the last page.** Not an error, and not a reason to retry.
+- An **empty page that still carries a cursor is not the end** — paging continues,
+  so a sparse window does not truncate the walk.
+- A server that hands back the **same** cursor it was given cannot advance, so the
+  paginator returns that page and stops rather than re-issuing the identical
+  request forever. (`nexus-exchange-py` raises `PaginationError` on this instead;
+  here the stall is visible as a non-`None` `next_cursor` on the last page.)
+- Nothing else bounds how far back a walk goes; pass `max_pages` when that matters.
+
+`page_size` sets the per-page `limit` and is checked against **that endpoint's**
+spec maximum before the request is sent (`MAX_TRADES_LIMIT` /
+`MAX_FILLS_LIMIT`, both 1000). The maxima are per endpoint and not
+interchangeable; in particular the `366` of `MAX_PORTFOLIO_HISTORY_LIMIT` belongs
+to `/account/portfolio-history`, which is not cursor-paginated at all.
+
 ## Examples
 
 Runnable, copy-pasteable programs live under [`examples/`](./examples) and

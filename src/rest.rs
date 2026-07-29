@@ -54,6 +54,56 @@ const COST_DEFAULT: f64 = 1.0;
 /// same bound instead of hard-coding it.
 pub const MAX_PORTFOLIO_HISTORY_LIMIT: u32 = 366;
 
+/// Largest `limit` (page size) the `GET /api/v1/markets/{id}/trades` request
+/// schema permits (`maximum: 1000`, default 100).
+///
+/// Enforced by [`Client::fetch_trades_paginated`] before a page is fetched, so an
+/// out-of-schema [`Paginator::page_size`] fails locally instead of costing a
+/// round trip.
+pub const MAX_TRADES_LIMIT: u32 = 1000;
+
+/// Largest `limit` (page size) the `GET /api/v1/fills` request schema permits
+/// (`maximum: 1000`, default 100). Enforced by
+/// [`Client::fetch_my_trades_paginated`].
+///
+/// The paginated `limit` maxima are **per endpoint** in the spec (trades and
+/// fills 1000, `/orders/history` 500, `/positions/closed` 200,
+/// `/account/equity-history` 720) and are not interchangeable. In particular none
+/// of them is [`MAX_PORTFOLIO_HISTORY_LIMIT`]: that bound belongs to
+/// `/account/portfolio-history`, which is not cursor-paginated at all.
+pub const MAX_FILLS_LIMIT: u32 = 1000;
+
+/// Reject a page size the endpoint's request schema forbids, before it is sent
+/// (and, on a signed route, before it is signed).
+///
+/// Checked inside the page-fetching closure rather than at paginator
+/// construction because [`Paginator::page_size`] is a builder method that cannot
+/// return an error — this way an out-of-range size fails on the first page fetch
+/// instead of being silently sent and rejected by the server.
+fn check_page_size(limit: Option<u32>, maximum: u32, endpoint: &str) -> Result<()> {
+    match limit {
+        Some(limit) if limit == 0 || limit > maximum => Err(Error::invalid_request(format!(
+            "{endpoint} page size must be between 1 and {maximum} (got {limit})"
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// Build the `limit` / `cursor` query for one page of a paginated list endpoint.
+///
+/// The cursor is passed back **verbatim** — it is opaque, and the encoder is the
+/// only thing that touches it, so what is signed always equals what is sent.
+fn page_query(req: &PageRequest) -> Vec<(&'static str, String)> {
+    let mut query = Vec::new();
+    if let Some(limit) = req.limit {
+        query.push(("limit", limit.to_string()));
+    }
+    if let Some(cursor) = &req.cursor {
+        query.push(("cursor", cursor.as_str().to_string()));
+    }
+    query
+}
+
 /// Percent-encode a single path segment so a caller-supplied identifier (e.g. a
 /// client order id) cannot break out of its position in the request path.
 /// Everything outside the RFC 3986 *unreserved* set is escaped, so `/`, `?`,
@@ -152,6 +202,49 @@ impl Client {
             COST_DEFAULT,
         )
         .await
+    }
+
+    /// Every recent public trade for a market, as an auto-paging
+    /// [`Paginator`] that follows the `X-Next-Cursor` header for you.
+    ///
+    /// [`fetch_trades`](Self::fetch_trades) returns the first page only; this
+    /// walks the whole history. Nothing is requested until a page is asked for,
+    /// so building a paginator is free:
+    ///
+    /// ```no_run
+    /// # use nexus_exchange::{Client, Config, Result};
+    /// # async fn run(client: &Client) -> Result<()> {
+    /// // Everything, in one Vec.
+    /// let trades = client.fetch_trades_paginated("BTC-USDX-PERP")?.page_size(500).all().await?;
+    ///
+    /// // Or page-by-page, keeping the cursor to resume later.
+    /// let mut pager = client.fetch_trades_paginated("BTC-USDX-PERP")?.max_pages(10);
+    /// while let Some(page) = pager.next_page().await? {
+    ///     let resume_from = page.next_cursor.clone(); // `None` on the last page
+    ///     let _ = (page.items, resume_from);
+    /// }
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// [`page_size`](Paginator::page_size) sets the per-page `limit` and must be
+    /// in `1..=`[`MAX_TRADES_LIMIT`]; an out-of-range value fails on the first
+    /// page fetch rather than being sent. `Err` here means the `market_id` itself
+    /// was rejected, so it is reported before any request is issued.
+    pub fn fetch_trades_paginated(&self, market_id: &str) -> Result<Paginator<Trade>> {
+        let id = encoded_segment(market_id, "market_id")?;
+        let path = format!("/api/v1/markets/{id}/trades");
+        let client = self.clone();
+        Ok(Paginator::new(move |req: PageRequest| {
+            let client = client.clone();
+            let path = path.clone();
+            async move {
+                check_page_size(req.limit, MAX_TRADES_LIMIT, "trades")?;
+                let (items, next) = client
+                    .get_page::<Vec<Trade>>(&path, &page_query(&req), COST_DEFAULT)
+                    .await?;
+                Ok(Page::new(items, next))
+            }
+        }))
     }
 
     /// OHLCV candles for a market.
@@ -464,8 +557,51 @@ impl Client {
 
     /// Recent fills (private trade executions) for the authenticated account.
     /// Requires credentials.
+    ///
+    /// Returns the first page only. Use
+    /// [`fetch_my_trades_paginated`](Self::fetch_my_trades_paginated) to walk the
+    /// account's whole fill history.
     pub async fn fetch_my_trades(&self) -> Result<Vec<Fill>> {
         self.signed_get("/api/v1/fills", &[]).await
+    }
+
+    /// Every fill on the authenticated account, as an auto-paging [`Paginator`]
+    /// that follows the `X-Next-Cursor` header for you. Requires credentials.
+    ///
+    /// Each page costs one signed request, issued lazily — the cursor rides in
+    /// the query string, so every page is independently signed.
+    ///
+    /// ```no_run
+    /// # use nexus_exchange::{Client, Result};
+    /// # async fn run(client: &Client) -> Result<()> {
+    /// let fills = client.fetch_my_trades_paginated().page_size(1000).all().await?;
+    ///
+    /// // Resume a backfill from a cursor persisted on a previous run.
+    /// let mut pager = client.fetch_my_trades_paginated().starting_after("saved-cursor");
+    /// while let Some(page) = pager.next_page().await? {
+    ///     let _ = (page.items, page.next_cursor);
+    /// }
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// [`page_size`](Paginator::page_size) sets the per-page `limit` and must be
+    /// in `1..=`[`MAX_FILLS_LIMIT`]; an out-of-range value fails on the first page
+    /// fetch, before anything is signed or sent.
+    ///
+    /// Nothing bounds how far back the walk goes — pass
+    /// [`max_pages`](Paginator::max_pages) on an account with a long history.
+    pub fn fetch_my_trades_paginated(&self) -> Paginator<Fill> {
+        let client = self.clone();
+        Paginator::new(move |req: PageRequest| {
+            let client = client.clone();
+            async move {
+                check_page_size(req.limit, MAX_FILLS_LIMIT, "fills")?;
+                let (items, next) = client
+                    .signed_get_page::<Vec<Fill>>("/api/v1/fills", &page_query(&req))
+                    .await?;
+                Ok(Page::new(items, next))
+            }
+        })
     }
 
     /// Place a single order. Requires credentials.

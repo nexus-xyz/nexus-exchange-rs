@@ -64,11 +64,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     negative maker fee is a rebate), fee tier, rate `schedule` scope, rolling
     30-day volume with a `volume_30d_estimated` undercount flag, and
     `discounts`. `FeeDiscount` keeps the server's object verbatim because the
-    spec has not fixed its shape yet. All seven fields are spec-`required`,
-    `discounts` included, so every one of them decodes strictly: an omission is a
-    contract violation and fails loudly rather than being defaulted. An empty
-    `discounts` is a real answer ("none apply"); an absent one is a broken server,
-    and the two must not look alike.
+    spec has not fixed its shape yet. The rates and volume decode strictly: all
+    are spec-`required`, and a defaulted fee would read as "trading is free" or a
+    defaulted `volume_30d` as "no volume" — figures the server never reported.
+    `discounts` is the single documented exception, defaulting to `[]` when absent:
+    unlike a time series or a position list, a dropped discount cannot distort a
+    figure the caller computes, and matching the Python SDK here means an absent
+    `discounts` reports the same way in both. A malformed (non-object) entry still
+    fails the decode.
 - Extended the `spec-drift` gate's enum invariant to resolve enum-valued
   properties composed by `$ref` / single-branch `allOf`, not just inline `enum`
   arrays. `PortfolioHistory.window` is composed that way, so without this its

@@ -705,11 +705,13 @@ async fn account_fees_surfaces_estimated_volume_and_opaque_discounts() {
 }
 
 #[tokio::test]
-async fn account_fees_absent_discounts_fails_the_decode() {
-    // All seven `AccountFees` fields are spec-`required`, `discounts` included, so
-    // an omission fails loudly instead of defaulting to `[]` — the policy the
-    // type's own docs state. An empty array is a real answer ("no discounts
-    // apply"); an absent key is a broken server, and the two must not look alike.
+async fn account_fees_defaults_absent_discounts_but_is_strict_elsewhere() {
+    // `discounts` is the one documented exception to this type's strict decode:
+    // spec-`required`, but an absent key defaults to `[]` rather than failing.
+    // Tolerating it cannot make any number wrong — unlike a time series or a
+    // position list, a dropped discount does not feed a figure the caller
+    // computes. Matches the Python SDK, so an absent `discounts` reports the same
+    // way in both.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/v1/account/fees"))
@@ -720,11 +722,41 @@ async fn account_fees_absent_discounts_fails_the_decode() {
         .mount(&server)
         .await;
 
-    let err = authed(server.uri())
-        .fetch_account_fees()
-        .await
-        .expect_err("absent `discounts` must not decode");
-    assert!(!err.is_retryable(), "{err}");
+    let fees = authed(server.uri()).fetch_account_fees().await.unwrap();
+    assert!(fees.discounts.is_empty());
+
+    // The tolerance stops there, and is not a general policy for this type: every
+    // field whose default *would* misreport something still fails loudly. A `0`
+    // bps fee reads as "trading is free" and a `0` volume as "no volume", so
+    // neither may be fabricated.
+    for missing in [
+        "maker_fee_bps",
+        "taker_fee_bps",
+        "tier",
+        "schedule",
+        "volume_30d",
+        "volume_30d_estimated",
+    ] {
+        let mut body = serde_json::json!({
+            "maker_fee_bps": 1, "taker_fee_bps": 5, "tier": "base",
+            "schedule": "standard", "volume_30d": "0",
+            "volume_30d_estimated": false, "discounts": []
+        });
+        body.as_object_mut().unwrap().remove(missing);
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/account/fees"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+
+        let err = authed(server.uri())
+            .fetch_account_fees()
+            .await
+            .expect_err(&format!("absent `{missing}` must not decode"));
+        assert!(!err.is_retryable(), "absent `{missing}`: {err}");
+    }
 }
 
 // --- Auth ------------------------------------------------------------------

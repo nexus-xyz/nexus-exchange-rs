@@ -922,8 +922,13 @@ impl PortfolioHistory {
 /// average.
 ///
 /// Unlike [`AccountPortfolioSummary`], the spec marks every field here required,
-/// so they are non-`Option`: an omission is a contract violation and fails the
-/// decode loudly rather than being silently defaulted.
+/// so the rates and volume are non-`Option`: an omission is a contract violation
+/// and fails the decode loudly rather than being silently defaulted. Defaulting a
+/// fee to `0` bps would read as "trading is free", and a defaulted `volume_30d`
+/// as "no volume" — figures the server never reported.
+///
+/// [`discounts`](Self::discounts) is the single documented exception, for the
+/// reason given on that field. Every other field decodes strictly.
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct AccountFees {
@@ -954,9 +959,22 @@ pub struct AccountFees {
     /// have been evicted. `false` when the full 30-day window is covered.
     pub volume_30d_estimated: bool,
     /// Active fee discounts on the account. Currently always empty — no
-    /// discount program exists yet. Empty and absent are **not** the same: the
-    /// spec requires this key, so an omission fails the decode rather than
-    /// defaulting to `[]`.
+    /// discount program exists yet.
+    ///
+    /// The **one exception** to this type's strict decode: the spec requires this
+    /// key, but an absent one defaults to `[]` rather than failing the read. The
+    /// justification is specific to this field and does not generalize — unlike a
+    /// time series or a position list, a dropped discount cannot silently distort
+    /// a figure the caller computes, so tolerating the omission cannot make any
+    /// number wrong. Every strict field on this type is one whose default *would*
+    /// misreport something.
+    ///
+    /// Matches the Python SDK, deliberately: the two SDKs report an absent
+    /// `discounts` the same way, so a caller need not know which language they
+    /// are in to know whether it raises. A **malformed** entry (a non-object in
+    /// the array) still fails the decode, which is where the two differ — py
+    /// skips it.
+    #[serde(default)]
     pub discounts: Vec<FeeDiscount>,
 }
 

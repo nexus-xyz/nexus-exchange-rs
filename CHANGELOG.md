@@ -77,6 +77,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arrays. `PortfolioHistory.window` is composed that way, so without this its
   members would have gone unchecked — silently losing the protection the
   invariant exists for. `PortfolioWindow` is now covered.
+- *(orders)* `preview_order` (`POST /api/v1/orders/preview`) — pre-trade preview
+  projecting an order's margin, equity, liquidation-price, fee and expected-fill
+  impact **without submitting it** (ENG-7928). Takes the same `OrderRequest` as
+  `create_order`, so preview-then-commit reuses one value; nothing is placed and
+  no margin is reserved. Returns the new `OrderPreview`.
+
+  **A rejected preview is `Ok`, not `Err`.** The endpoint answers "what would
+  this order do?", so a projection that the order *would* be rejected is a `200`
+  with `accepted: false` and a `reject_reason`. Gate submission on
+  `OrderPreview::is_accepted()`, never on `Result::is_ok()`. `is_accepted()`
+  fails closed: an unreported `accepted` returns `false` rather than waving an
+  order through the server never vouched for.
+
+  Every `OrderPreview` field is `Option` and defaulted, because the spec gives
+  `PreviewResponse` **no `required` array** — the server may legitimately omit
+  any property, and one absent field must not fail the whole decode. `None`
+  means "not reported", never zero. Every monetary field is a decimal *string*
+  parsed exactly via the `str` adapter, including
+  `projected_post_trade_leverage`, which the spec types as `Decimal` (a string)
+  even though the `leverage` *request* parameter elsewhere in the API is a JSON
+  number. `reject_reason` stays a free-form `String` rather than an enum so a
+  reason added server-side cannot break the response, and `OrderPreview` is
+  `#[non_exhaustive]` so a later additive spec field is not a breaking change.
+  `OrderPreview` is registered in the `spec-drift` gate's model invariant
+  (`OrderPreview` ↔ `PreviewResponse`).
+
+  This unblocks `nexus order preview` in the CLI (ENG-7734), which had no way to
+  reach the endpoint: the SDK is the CLI's only transport.
 
 ### Changed
 

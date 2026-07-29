@@ -204,6 +204,9 @@ MODEL_SCHEMA = {
     "Order": "Order",
     "OrderRequest": "OrderRequest",
     "OrderResponse": "OrderResponse",
+    # The Rust name reads better than the spec's schema name; the mapping is why
+    # this dict exists (cf. AdlEvent <-> AdlEventRecord).
+    "OrderPreview": "PreviewResponse",
     "AgentInfo": "AgentInfo",
     "LoginResponse": "LoginResponse",
     "AdlEvent": "AdlEventRecord",

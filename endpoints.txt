@@ -39,6 +39,7 @@ POST /api/v1/account/credit
 GET /api/v1/positions
 GET /api/v1/fills
 POST /api/v1/orders
+POST /api/v1/orders/preview
 GET /api/v1/orders
 DELETE /api/v1/orders
 POST /api/v1/orders/batch

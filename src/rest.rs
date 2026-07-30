@@ -30,9 +30,9 @@ use crate::types::{
     BridgeDepositAddress, CancelOnDisconnectStatus, CreatedApiKey, CreditResult, Decimal,
     DepositResult, Fill, FundingPayment, FundingSample, HealthStatus, LeverageUpdate,
     LoginResponse, MarginAdjustment, MarginDirection, MarginMode, MarginModeUpdate, MarkPrice,
-    Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderRequest, OrderResponse,
-    OrderResult, PortfolioHistory, PortfolioWindow, Position, RateLimitStatus, SubAccount, Ticker,
-    TierOverride, Trade, Transfer, TransferRequest, Withdrawal, WsToken,
+    Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderPreview, OrderRequest,
+    OrderResponse, OrderResult, PortfolioHistory, PortfolioWindow, Position, RateLimitStatus,
+    SubAccount, Ticker, TierOverride, Trade, Transfer, TransferRequest, Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
 
@@ -471,6 +471,62 @@ impl Client {
     /// Place a single order. Requires credentials.
     pub async fn create_order(&self, order: &OrderRequest) -> Result<OrderResponse> {
         self.signed_post("/api/v1/orders", order).await
+    }
+
+    /// Project an order's margin / equity / fee impact **without submitting it**
+    /// (`POST /api/v1/orders/preview`). Requires credentials.
+    ///
+    /// Takes the same [`OrderRequest`] as [`create_order`](Self::create_order),
+    /// so the preview-then-commit flow reuses one value: build it, preview it,
+    /// and pass the *same* request to `create_order` if the projection is
+    /// acceptable. Nothing is placed and no margin is reserved.
+    ///
+    /// # A rejected preview is `Ok`, not `Err`
+    ///
+    /// The endpoint's job is to answer "what would this order do?", so a
+    /// projection saying the order *would be rejected* is a successful `200`:
+    /// [`OrderPreview::is_accepted`] is `false` and
+    /// [`OrderPreview::reject_reason`] explains why. Gate submission on
+    /// `is_accepted()`, never on `Result::is_ok()`.
+    ///
+    /// # Errors
+    ///
+    /// Only genuine request failures are `Err`, classified as everywhere else in
+    /// the crate — and each carries the server's machine-readable
+    /// [`code`](crate::Error::code):
+    ///
+    /// | Response | Error |
+    /// |---|---|
+    /// | `400` validation error | [`TerminalError::BadRequest`], or [`TerminalError::InvalidOrder`] for an engine order-parameter code (`InvalidTickSize`, `InvalidLotSize`, …) |
+    /// | `401` | [`TerminalError::Auth`] (`code` = `unauthorized`) |
+    /// | `429` | [`TransientError::RateLimited`], honoring `Retry-After` |
+    /// | `5xx` | [`TransientError::Unavailable`], preserving `status` and `code` |
+    ///
+    /// A `400` here means the request was *malformed* (e.g. a limit order with no
+    /// price). An order that is well-formed but unaffordable comes back as an
+    /// accepted-`false` preview, not a `400`.
+    ///
+    /// ```no_run
+    /// # use nexus_exchange::types::{Decimal, OrderRequest, Side, TimeInForce};
+    /// # async fn f(client: &nexus_exchange::Client) -> nexus_exchange::Result<()> {
+    /// let order = OrderRequest::market("BTC-USDX-PERP", Side::Buy, Decimal::ONE);
+    /// let preview = client.preview_order(&order).await?;
+    /// if !preview.is_accepted() {
+    ///     eprintln!("would be rejected: {:?}", preview.reject_reason);
+    ///     return Ok(());
+    /// }
+    /// println!("margin required: {:?}", preview.required_initial_margin);
+    /// client.create_order(&order).await?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// [`TerminalError::BadRequest`]: crate::TerminalError::BadRequest
+    /// [`TerminalError::InvalidOrder`]: crate::TerminalError::InvalidOrder
+    /// [`TerminalError::Auth`]: crate::TerminalError::Auth
+    /// [`TransientError::RateLimited`]: crate::TransientError::RateLimited
+    /// [`TransientError::Unavailable`]: crate::TransientError::Unavailable
+    pub async fn preview_order(&self, order: &OrderRequest) -> Result<OrderPreview> {
+        self.signed_post("/api/v1/orders/preview", order).await
     }
 
     /// Submit a batch of orders (`POST /api/v1/orders/batch`). Requires

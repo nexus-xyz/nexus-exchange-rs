@@ -1236,6 +1236,91 @@ pub struct OrderResponse {
     pub fills: Vec<serde_json::Value>,
 }
 
+/// Projected pre-trade impact of an order that was **not** submitted
+/// (`POST /api/v1/orders/preview`, spec schema `PreviewResponse`) — returned by
+/// [`Client::preview_order`](crate::Client::preview_order).
+///
+/// # A rejected preview is a success, not an error
+///
+/// The endpoint answers "what would this order do?", so a *projection saying the
+/// order would be rejected* is a `200` carrying
+/// [`accepted`](Self::accepted)` = Some(false)` and a
+/// [`reject_reason`](Self::reject_reason) — **not** an `Err`. Only a genuine
+/// request failure (bad request, auth, rate limit, server) is an `Err`. Always
+/// branch on [`is_accepted`](Self::is_accepted) rather than on `Result::is_ok`,
+/// or a would-be-rejected order reads as safe to send.
+///
+/// # Every field is optional
+///
+/// The spec gives this schema **no `required` array**, so the server may
+/// legitimately omit any property. Each field is therefore `Option` and
+/// defaulted: an absent `projected_fees` yields `None` for that one field instead
+/// of failing the whole preview decode. `None` means "not reported", never zero —
+/// do not substitute `0` for a missing projection, or an order that needs margin
+/// reads as free. In practice a current server sends all of them.
+///
+/// Every monetary field is a decimal **string** on the wire, parsed exactly via
+/// the `str` adapter — including
+/// [`projected_post_trade_leverage`](Self::projected_post_trade_leverage), which
+/// the spec types as `Decimal` (a string) even though the *request*-side
+/// `leverage` parameter elsewhere in the API is a JSON number.
+///
+/// `#[non_exhaustive]`: read fields off a returned value rather than constructing
+/// one with a struct literal, so a future spec addition isn't a breaking change.
+#[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
+pub struct OrderPreview {
+    /// Whether the order would be accepted if submitted as-is. `None` when the
+    /// server did not report it — treat that as "unknown", never as accepted;
+    /// [`is_accepted`](Self::is_accepted) does exactly that.
+    #[serde(default)]
+    pub accepted: Option<bool>,
+    /// Why the order would be rejected, when
+    /// [`accepted`](Self::accepted) is `Some(false)`; `None` for an accepted
+    /// preview (the server sends `null`).
+    ///
+    /// Deliberately a free-form `String` rather than an enum: the spec types it
+    /// as a plain nullable string with no enumerated values, so a reason added
+    /// server-side must not fail the decode. Match on it for display/telemetry,
+    /// not for control flow.
+    #[serde(default)]
+    pub reject_reason: Option<String>,
+    /// Initial margin the order would require.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub required_initial_margin: Option<Decimal>,
+    /// Account equity projected after the order fills.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub projected_post_trade_equity: Option<Decimal>,
+    /// Liquidation price projected after the order fills. `None` (wire `null`)
+    /// when the resulting state has no liquidation price — e.g. the order would
+    /// flatten the position.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub projected_post_trade_liquidation_price: Option<Decimal>,
+    /// Account leverage projected after the order fills. A decimal string on the
+    /// wire, not a JSON number.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub projected_post_trade_leverage: Option<Decimal>,
+    /// Volume-weighted average price the order is expected to fill at. `None`
+    /// (wire `null`) when no fill is projected — e.g. a resting limit order that
+    /// would not cross.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub expected_fill_vwap: Option<Decimal>,
+    /// Fees the order is expected to incur.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub projected_fees: Option<Decimal>,
+}
+
+impl OrderPreview {
+    /// Whether the order would be accepted, **failing closed**: an unreported
+    /// [`accepted`](Self::accepted) returns `false`.
+    ///
+    /// Use this to gate submission. Reading the raw `Option` and treating `None`
+    /// as "fine" would send an order the server never vouched for.
+    pub fn is_accepted(&self) -> bool {
+        self.accepted == Some(true)
+    }
+}
+
 /// One entry in the array returned by
 /// [`Client::create_orders`](crate::Client::create_orders) (`POST
 /// /orders/batch`).

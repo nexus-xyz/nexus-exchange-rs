@@ -1,11 +1,27 @@
 //! Cursor / time auto-paging for list endpoints.
 //!
 //! List endpoints accept a `limit` and return a page of results plus a cursor
-//! pointing at the next page. Rather than make callers hold and re-submit that
-//! cursor by hand (the way dYdX does), the SDK exposes a [`Paginator`] that
-//! drives the cursor for you: ask it for the next [`Page`], iterate every item
-//! with [`Paginator::all`], or consume it as a [`Stream`] via
+//! pointing at the next page, carried in the [`NEXT_CURSOR_HEADER`] response
+//! header. Rather than make callers hold and re-submit that cursor by hand (the
+//! way dYdX does), the SDK exposes a [`Paginator`] that drives the cursor for
+//! you: ask it for the next [`Page`], iterate every item with
+//! [`Paginator::all`], or consume it as a [`Stream`] via
 //! [`Paginator::into_stream`].
+//!
+//! The endpoint methods that hand one back are
+//! [`Client::fetch_trades_paginated`](crate::Client::fetch_trades_paginated) and
+//! [`Client::fetch_my_trades_paginated`](crate::Client::fetch_my_trades_paginated)
+//! — the two cursor-paginated routes this SDK implements today.
+//!
+//! # Termination
+//!
+//! Absent `X-Next-Cursor` means the last page: not an error, and not a reason to
+//! retry. An **empty page that still carries a cursor is not the end** — paging
+//! continues, so a sparse window does not truncate the walk. A server that hands
+//! back the *same* cursor it was given cannot advance, so the paginator returns
+//! that page and stops instead of re-issuing the identical request forever; see
+//! [`Paginator::next_page`]. `max_pages` bounds a server that keeps advancing
+//! without end.
 //!
 //! The paginator is generic over how a single page is fetched, so the same
 //! machinery serves both cursor-based and time-windowed endpoints: a
@@ -41,6 +57,17 @@ use futures_core::Stream;
 use serde::{Deserialize, Serialize};
 
 use crate::Result;
+
+/// Response header carrying the cursor for the next page (spec v0.7.2).
+///
+/// Present **only when more results exist**; absent on the last page. The
+/// response body of a paginated list endpoint stays a bare JSON array, so
+/// pagination state rides exclusively in this header — which is why the
+/// endpoint methods read it rather than looking for a cursor field in the body.
+///
+/// Lowercase because `reqwest`/`http` normalize header names; matching is
+/// case-insensitive either way.
+pub const NEXT_CURSOR_HEADER: &str = "x-next-cursor";
 
 /// An opaque pagination cursor returned by a list endpoint.
 ///

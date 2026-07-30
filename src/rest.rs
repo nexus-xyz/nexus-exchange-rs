@@ -27,12 +27,13 @@ use crate::auth::{AgentRegistration, EthSigner};
 use crate::types::{
     AccountFees, AccountPortfolioSummary, AccountState, AccountSummary, AdlEvent, AgentInfo,
     AgentRegistered, AmendOrder, ApiKeyInfo, BridgeAssetsResponse, BridgeDeposit,
-    BridgeDepositAddress, CancelOnDisconnectStatus, CreatedApiKey, CreditResult, Decimal,
-    DepositResult, Fill, FundingPayment, FundingSample, HealthStatus, LeverageUpdate,
-    LoginResponse, MarginAdjustment, MarginDirection, MarginMode, MarginModeUpdate, MarkPrice,
-    Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderPreview, OrderRequest,
-    OrderResponse, OrderResult, PortfolioHistory, PortfolioWindow, Position, RateLimitStatus,
-    SubAccount, Ticker, TierOverride, Trade, Transfer, TransferRequest, Withdrawal, WsToken,
+    BridgeDepositAddress, CancelOnDisconnectStatus, ClosedPosition, CreatedApiKey, CreditResult,
+    Decimal, DepositResult, EquityPoint, Fill, FundingPayment, FundingSample, HealthStatus,
+    LeverageUpdate, LoginResponse, MarginAdjustment, MarginDirection, MarginMode, MarginModeUpdate,
+    MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderHistoryEntry,
+    OrderPreview, OrderRequest, OrderResponse, OrderResult, PortfolioHistory, PortfolioWindow,
+    Position, RateLimitStatus, SubAccount, Ticker, TierOverride, Trade, Transfer, TransferRequest,
+    Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
 
@@ -73,19 +74,58 @@ pub const MAX_TRADES_LIMIT: u32 = 1000;
 /// `/account/portfolio-history`, which is not cursor-paginated at all.
 pub const MAX_FILLS_LIMIT: u32 = 1000;
 
+/// Largest `limit` (page size) the `GET /api/v1/orders/history` request schema
+/// permits (`maximum: 500`, default 100) — half what `/fills` and the public
+/// trades feed allow. Enforced by [`Client::fetch_order_history`] and
+/// [`Client::fetch_order_history_paginated`].
+pub const MAX_ORDER_HISTORY_LIMIT: u32 = 500;
+
+/// Largest `limit` (page size) the `GET /api/v1/positions/closed` request schema
+/// permits (`maximum: 200`, default 100) — the **smallest** of the five paginated
+/// maxima, so a long close history takes proportionally more pages than `/fills`
+/// would. Enforced by [`Client::fetch_closed_positions`] and
+/// [`Client::fetch_closed_positions_paginated`].
+pub const MAX_CLOSED_POSITIONS_LIMIT: u32 = 200;
+
+/// Largest `limit` (page size) the `GET /api/v1/account/equity-history` request
+/// schema permits (`maximum: 720`) — which is also that endpoint's **default**.
+/// Enforced by [`Client::fetch_equity_history`] and
+/// [`Client::fetch_equity_history_paginated`].
+///
+/// Uniquely among the paginated endpoints, omitting `limit` here asks for 720
+/// points rather than 100: one page already covers the whole ~1h / 5s window. Any
+/// smaller shared clamp — [`MAX_PORTFOLIO_HISTORY_LIMIT`]'s `366` in particular —
+/// would sit *below* that default and reject client-side a plain request the
+/// server accepts.
+pub const MAX_EQUITY_HISTORY_LIMIT: u32 = 720;
+
 /// Reject a page size the endpoint's request schema forbids, before it is sent
 /// (and, on a signed route, before it is signed).
 ///
 /// Checked inside the page-fetching closure rather than at paginator
 /// construction because [`Paginator::page_size`] is a builder method that cannot
 /// return an error — this way an out-of-range size fails on the first page fetch
-/// instead of being silently sent and rejected by the server.
+/// instead of being silently sent and rejected by the server. The flat
+/// first-page methods run the same check before signing.
 fn check_page_size(limit: Option<u32>, maximum: u32, endpoint: &str) -> Result<()> {
     match limit {
         Some(limit) if limit == 0 || limit > maximum => Err(Error::invalid_request(format!(
             "{endpoint} page size must be between 1 and {maximum} (got {limit})"
         ))),
         _ => Ok(()),
+    }
+}
+
+/// Build the query for a flat, first-page-only read of a paginated list endpoint:
+/// the `limit` when one was given, and nothing else.
+///
+/// No `cursor` — that is what makes these methods first-page-only, and it is why
+/// they can keep returning a plain `Vec` while the `*_paginated` variants own the
+/// walk.
+fn limit_query(limit: Option<u32>) -> Vec<(&'static str, String)> {
+    match limit {
+        Some(limit) => vec![("limit", limit.to_string())],
+        None => Vec::new(),
     }
 }
 
@@ -455,6 +495,64 @@ impl Client {
         self.signed_get("/api/v1/positions", &[]).await
     }
 
+    /// Closed positions for the authenticated account, newest first
+    /// (`GET /api/v1/positions/closed`). Requires credentials.
+    ///
+    /// The realized counterpart of [`fetch_positions`](Self::fetch_positions):
+    /// [`ClosedPosition`] carries the size and prices at close plus the PnL the
+    /// close booked, rather than live risk detail.
+    ///
+    /// Returns the **first page only**. `limit` is that page's size and must be in
+    /// `1..=`[`MAX_CLOSED_POSITIONS_LIMIT`] (200 — the smallest of the paginated
+    /// maxima); pass `None` for the server's default of 100. Out-of-range values
+    /// are rejected here, before the request is signed or sent. Use
+    /// [`fetch_closed_positions_paginated`](Self::fetch_closed_positions_paginated)
+    /// for the whole history.
+    pub async fn fetch_closed_positions(&self, limit: Option<u32>) -> Result<Vec<ClosedPosition>> {
+        check_page_size(limit, MAX_CLOSED_POSITIONS_LIMIT, "positions/closed")?;
+        self.signed_get("/api/v1/positions/closed", &limit_query(limit))
+            .await
+    }
+
+    /// Every closed position on the authenticated account, as an auto-paging
+    /// [`Paginator`] that follows the `X-Next-Cursor` header for you. Requires
+    /// credentials.
+    ///
+    /// Each page costs one signed request, issued lazily — the cursor rides in the
+    /// query string, so every page is independently signed.
+    ///
+    /// ```no_run
+    /// # use nexus_exchange::{Client, Result};
+    /// # async fn run(client: &Client) -> Result<()> {
+    /// let mut pager = client.fetch_closed_positions_paginated().page_size(200);
+    /// while let Some(page) = pager.next_page().await? {
+    ///     let _ = (page.items, page.next_cursor);
+    /// }
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// [`page_size`](Paginator::page_size) must be in
+    /// `1..=`[`MAX_CLOSED_POSITIONS_LIMIT`] (**200**, the tightest bound of the
+    /// five paginated endpoints — a size valid on `/orders/history` is not valid
+    /// here); an out-of-range value fails on the first page fetch, before anything
+    /// is signed or sent.
+    pub fn fetch_closed_positions_paginated(&self) -> Paginator<ClosedPosition> {
+        let client = self.clone();
+        Paginator::new(move |req: PageRequest| {
+            let client = client.clone();
+            async move {
+                check_page_size(req.limit, MAX_CLOSED_POSITIONS_LIMIT, "positions/closed")?;
+                let (items, next) = client
+                    .signed_get_page::<Vec<ClosedPosition>>(
+                        "/api/v1/positions/closed",
+                        &page_query(&req),
+                    )
+                    .await?;
+                Ok(Page::new(items, next))
+            }
+        })
+    }
+
     /// Aggregate portfolio summary for the authenticated account
     /// (`GET /api/v1/account/summary`) — equity, PnL, volume, open counts, and
     /// [`withdrawable`](AccountPortfolioSummary::withdrawable). Requires
@@ -553,6 +651,69 @@ impl Client {
         }
         self.signed_get("/api/v1/account/portfolio-history", &query)
             .await
+    }
+
+    /// Account equity time series, **oldest first**
+    /// (`GET /api/v1/account/equity-history`). Requires credentials.
+    ///
+    /// The high-resolution recent view — 5s cadence over roughly one hour — where
+    /// [`fetch_portfolio_history`](Self::fetch_portfolio_history) is the
+    /// downsampled long-window one. Note [`EquityPoint::equity`] arrives as a JSON
+    /// *number*, unlike [`PortfolioPoint`](crate::types::PortfolioPoint)'s decimal
+    /// string; see [`EquityPoint`] before using it for anything authoritative.
+    ///
+    /// Returns the **first page only** — which here is normally the entire series:
+    /// `limit` must be in `1..=`[`MAX_EQUITY_HISTORY_LIMIT`] and **720 is also this
+    /// endpoint's default**, so `None` asks for the whole window rather than the
+    /// 100 the other paginated endpoints default to. Out-of-range values are
+    /// rejected before the request is signed or sent. Use
+    /// [`fetch_equity_history_paginated`](Self::fetch_equity_history_paginated) if
+    /// the series is longer than one page.
+    pub async fn fetch_equity_history(&self, limit: Option<u32>) -> Result<Vec<EquityPoint>> {
+        check_page_size(limit, MAX_EQUITY_HISTORY_LIMIT, "account/equity-history")?;
+        self.signed_get("/api/v1/account/equity-history", &limit_query(limit))
+            .await
+    }
+
+    /// Every available equity sample for the authenticated account, as an
+    /// auto-paging [`Paginator`] that follows the `X-Next-Cursor` header for you.
+    /// Requires credentials.
+    ///
+    /// Each page costs one signed request, issued lazily — the cursor rides in the
+    /// query string, so every page is independently signed.
+    ///
+    /// ```no_run
+    /// # use nexus_exchange::{Client, Result};
+    /// # async fn run(client: &Client) -> Result<()> {
+    /// let equity = client.fetch_equity_history_paginated().all().await?;
+    /// # let _ = equity;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// [`page_size`](Paginator::page_size) must be in
+    /// `1..=`[`MAX_EQUITY_HISTORY_LIMIT`] (720); an out-of-range value fails on the
+    /// first page fetch, before anything is signed or sent. Leaving it unset sends
+    /// no `limit`, which this endpoint reads as its default of 720 — so the first
+    /// page is usually the last.
+    pub fn fetch_equity_history_paginated(&self) -> Paginator<EquityPoint> {
+        let client = self.clone();
+        Paginator::new(move |req: PageRequest| {
+            let client = client.clone();
+            async move {
+                check_page_size(
+                    req.limit,
+                    MAX_EQUITY_HISTORY_LIMIT,
+                    "account/equity-history",
+                )?;
+                let (items, next) = client
+                    .signed_get_page::<Vec<EquityPoint>>(
+                        "/api/v1/account/equity-history",
+                        &page_query(&req),
+                    )
+                    .await?;
+                Ok(Page::new(items, next))
+            }
+        })
     }
 
     /// Recent fills (private trade executions) for the authenticated account.
@@ -723,8 +884,76 @@ impl Client {
     }
 
     /// List open orders for the authenticated account. Requires credentials.
+    ///
+    /// For orders that have already finished, see
+    /// [`fetch_order_history`](Self::fetch_order_history).
     pub async fn fetch_open_orders(&self) -> Result<Vec<Order>> {
         self.signed_get("/api/v1/orders", &[]).await
+    }
+
+    /// Terminal-status order history — filled / cancelled / rejected / expired
+    /// orders for the authenticated account, newest first
+    /// (`GET /api/v1/orders/history`). Requires credentials.
+    ///
+    /// The history counterpart of
+    /// [`fetch_open_orders`](Self::fetch_open_orders), returning
+    /// [`OrderHistoryEntry`] rather than [`Order`].
+    ///
+    /// Returns the **first page only**. `limit` is that page's size and must be in
+    /// `1..=`[`MAX_ORDER_HISTORY_LIMIT`] (500); pass `None` for the server's
+    /// default of 100. Out-of-range values are rejected here, before the request is
+    /// signed or sent. Use
+    /// [`fetch_order_history_paginated`](Self::fetch_order_history_paginated) to
+    /// walk the whole history.
+    pub async fn fetch_order_history(&self, limit: Option<u32>) -> Result<Vec<OrderHistoryEntry>> {
+        check_page_size(limit, MAX_ORDER_HISTORY_LIMIT, "orders/history")?;
+        self.signed_get("/api/v1/orders/history", &limit_query(limit))
+            .await
+    }
+
+    /// Every terminal-status order on the authenticated account, as an auto-paging
+    /// [`Paginator`] that follows the `X-Next-Cursor` header for you. Requires
+    /// credentials.
+    ///
+    /// Each page costs one signed request, issued lazily — the cursor rides in the
+    /// query string, so every page is independently signed.
+    ///
+    /// ```no_run
+    /// # use nexus_exchange::{Client, Result};
+    /// # async fn run(client: &Client) -> Result<()> {
+    /// let history = client
+    ///     .fetch_order_history_paginated()
+    ///     .page_size(500)
+    ///     .max_pages(20)
+    ///     .all()
+    ///     .await?;
+    /// # let _ = history;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// [`page_size`](Paginator::page_size) must be in
+    /// `1..=`[`MAX_ORDER_HISTORY_LIMIT`] (500 — *not* the 1000 that `/fills` and
+    /// the public trades feed allow); an out-of-range value fails on the first
+    /// page fetch, before anything is signed or sent.
+    ///
+    /// Nothing bounds how far back the walk goes — pass
+    /// [`max_pages`](Paginator::max_pages) on an account with a long trading
+    /// history.
+    pub fn fetch_order_history_paginated(&self) -> Paginator<OrderHistoryEntry> {
+        let client = self.clone();
+        Paginator::new(move |req: PageRequest| {
+            let client = client.clone();
+            async move {
+                check_page_size(req.limit, MAX_ORDER_HISTORY_LIMIT, "orders/history")?;
+                let (items, next) = client
+                    .signed_get_page::<Vec<OrderHistoryEntry>>(
+                        "/api/v1/orders/history",
+                        &page_query(&req),
+                    )
+                    .await?;
+                Ok(Page::new(items, next))
+            }
+        })
     }
 
     /// Fetch a single order by id on `market_id`. Requires credentials.

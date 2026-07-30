@@ -27,8 +27,10 @@
 //!
 //! The types and fields affected are called out individually below:
 //! [`Ticker`], [`Trade`], [`MarketSummary`] (`last_trade_price`, `volume_24h`),
-//! [`OrderBook`] / [`PriceLevel`], [`Ohlcv`], and [`Position`] (`leverage`
-//! only — the API sends it as a JSON number; every monetary field on
+//! [`OrderBook`] / [`PriceLevel`], [`Ohlcv`], [`EquityPoint`] (`equity` — the
+//! spec sends this series as JSON numbers, unlike the string-typed
+//! [`PortfolioPoint::equity`] derived from the same value), and [`Position`]
+//! (`leverage` only — the API sends it as a JSON number; every monetary field on
 //! [`Position`], including the enriched risk fields, is a `str`-adapter field
 //! and therefore exact).
 //!
@@ -668,6 +670,59 @@ pub struct Position {
     pub funding_paid: Option<Decimal>,
 }
 
+/// A closed position (`GET /api/v1/positions/closed`, spec v0.7.2).
+///
+/// The realized counterpart of [`Position`]: the size and prices at close plus
+/// the PnL the close booked. [`side`](Self::side) is the side the position held
+/// **before** it closed — note the wire form here is `Long` / `Short`, not the
+/// `buy` / `sell` of orders and fills — and [`size`](Self::size) is its absolute
+/// size at close, so the direction lives in `side` alone.
+///
+/// # Every field is optional
+///
+/// The spec gives this schema **no `required` array**, so every field is `Option`
+/// and defaulted, exactly as on [`AccountPortfolioSummary`]. `None` means *not
+/// reported* — never zero. That distinction is the whole point on
+/// [`realized_pnl`](Self::realized_pnl) and [`exit_price`](Self::exit_price):
+/// defaulting an absent field to `Decimal::ZERO` would report a loss-making close
+/// as break-even and an unknown exit price as free, with nothing to tell the
+/// caller it was fabricated. (The Python SDK keeps the untouched payload on
+/// `raw` for the same reason; this SDK has no `raw`, so absence is modelled in
+/// the type instead.)
+///
+/// `#[non_exhaustive]`: read fields off a returned value rather than constructing
+/// one with a struct literal, so a future spec addition isn't a breaking change.
+#[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
+pub struct ClosedPosition {
+    /// Market identifier, e.g. `BTC-USDX-PERP`.
+    #[serde(default)]
+    pub market_id: Option<String>,
+    /// The side the position held before it closed: `Long` or `Short`.
+    ///
+    /// An open string rather than an enum so a side spelling added to a later
+    /// spec still decodes instead of failing the whole page.
+    #[serde(default)]
+    pub side: Option<String>,
+    /// Absolute position size at close, in the base asset (unsigned — the
+    /// direction is [`side`](Self::side)).
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub size: Option<Decimal>,
+    /// Average entry price of the closed position.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub entry_price: Option<Decimal>,
+    /// Price the position closed at.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub exit_price: Option<Decimal>,
+    /// Profit and loss the close realized. Signed: negative is a loss.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub realized_pnl: Option<Decimal>,
+    /// Unix timestamp (ms) the position closed at. `None` when unreported —
+    /// **not** `0`, which would date every such close to the Unix epoch.
+    #[serde(default)]
+    pub closed_at_ms: Option<i64>,
+}
+
 /// Portfolio summary for the authenticated account
 /// (`GET /api/v1/account/summary`) — aggregate equity, PnL, volume, and open
 /// counts.
@@ -913,6 +968,48 @@ impl PortfolioHistory {
     pub fn window_parsed(&self) -> Option<PortfolioWindow> {
         PortfolioWindow::from_wire(&self.window)
     }
+}
+
+/// One equity sample (`GET /api/v1/account/equity-history`, spec v0.7.2).
+///
+/// The high-resolution recent view of account equity — 5s cadence over roughly a
+/// one-hour window, **oldest first** — where [`PortfolioHistory`] is the
+/// downsampled long-window one. The two are derived from the same underlying
+/// value, so compare them by decimal value rather than by wire text.
+///
+/// # `equity` arrives as a JSON *number*, not a decimal string
+///
+/// This is the one place the two series disagree on the wire:
+/// [`PortfolioPoint::equity`] is a lossless decimal string, while `equity` here
+/// is a JSON number, so it decodes through the `float` adapter and carries the
+/// precision caveat in the [module docs](self). Read anything authoritative for
+/// accounting off a `str`-adapter field ([`PortfolioPoint::equity`],
+/// [`AccountPortfolioSummary::total_equity`]) and treat this series as what it is:
+/// a fine-grained chart source.
+///
+/// # Every field is optional
+///
+/// The spec gives this schema **no `required` array**, so both fields are `Option`
+/// and defaulted, as on [`AccountPortfolioSummary`]. `None` means *not reported*,
+/// never zero: an equity sample defaulted to `0` would draw a wiped-out account
+/// the server never reported, and a timestamp defaulted to `0` would place the
+/// sample at the Unix epoch.
+///
+/// `#[non_exhaustive]`: read fields off a returned value rather than constructing
+/// one with a struct literal, so a future spec addition isn't a breaking change.
+#[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
+pub struct EquityPoint {
+    /// Sample time, Unix ms. `None` when unreported — **not** `0`.
+    #[serde(default)]
+    pub timestamp_ms: Option<i64>,
+    /// Account equity at sample time (collateral balance plus Σ unrealized PnL).
+    ///
+    /// Sent as a JSON *number*, so this uses the `float` serde adapter and is
+    /// subject to the precision caveat in the [module docs](self) — see the type
+    /// docs above.
+    #[serde(default, with = "rust_decimal::serde::float_option")]
+    pub equity: Option<Decimal>,
 }
 
 /// The authenticated account's effective fee schedule
@@ -1224,6 +1321,88 @@ pub struct Order {
     /// Unix timestamp (ms) when the order was last updated.
     #[serde(default)]
     pub updated_at: i64,
+}
+
+/// A terminal-status order (`GET /api/v1/orders/history`, spec v0.7.2).
+///
+/// Orders that have reached `Filled` / `Cancelled` / `Rejected` / `Expired`,
+/// newest first. Distinct from [`Order`], which
+/// [`fetch_open_orders`](crate::Client::fetch_open_orders) returns for *live*
+/// orders: the history entry drops the live bookkeeping fields (`account_id`,
+/// `time_in_force`, `updated_at`) and adds
+/// [`completed_at_ms`](Self::completed_at_ms) and
+/// [`cancellation_reason`](Self::cancellation_reason).
+///
+/// [`size`](Self::size) is the **original** quantity, not the remaining one —
+/// compare it against [`filled_qty`](Self::filled_qty) to see how much of a
+/// cancelled order had executed before it went away.
+///
+/// # Every field is optional
+///
+/// The spec gives this schema **no `required` array**, so every field is `Option`
+/// and defaulted, as on [`AccountPortfolioSummary`]. `None` means *not reported*,
+/// and it is deliberately distinguishable from the zero/empty value in each case:
+/// a defaulted `""` [`status`](Self::status) would read as a status the server
+/// never sent, a defaulted `0` [`filled_qty`](Self::filled_qty) would report a
+/// partially-filled cancel as untouched, and a defaulted `0` timestamp would date
+/// the order to the Unix epoch. (The Python SDK keeps the untouched payload on
+/// `raw` to recover the same distinction; this SDK has no `raw`, so absence is
+/// modelled in the type.)
+///
+/// `#[non_exhaustive]`: read fields off a returned value rather than constructing
+/// one with a struct literal, so a future spec addition isn't a breaking change.
+#[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
+pub struct OrderHistoryEntry {
+    /// Exchange-assigned order identifier.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Market identifier, e.g. `BTC-USDX-PERP`.
+    #[serde(default)]
+    pub market_id: Option<String>,
+    /// Order side.
+    #[serde(default)]
+    pub side: Option<Side>,
+    /// Order type: `limit`, `market`, `stop_*`, `take_profit_*`,
+    /// `trailing_stop`, `trailing_limit`.
+    ///
+    /// An open string rather than [`OrderType`]: the spec documents this
+    /// property as free-form prose over a lowercase, snake-cased vocabulary
+    /// (`stop_limit`), not the `PascalCase` enum [`OrderType`] serializes, and
+    /// keeping it open means an order type added upstream still decodes.
+    #[serde(default)]
+    pub order_type: Option<String>,
+    /// Limit price. The spec types this **nullable** — a market order carries no
+    /// limit price — so an explicit `null` decodes to `None` rather than a
+    /// fabricated `0` that would read as a real price of zero.
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub price: Option<Decimal>,
+    /// **Original** order quantity, in the base asset (not the remaining one).
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub size: Option<Decimal>,
+    /// Quantity filled before the order reached its terminal status, in the base
+    /// asset. `None` is *not reported*, distinct from a real `0` (nothing filled).
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub filled_qty: Option<Decimal>,
+    /// Terminal status: `Filled`, `Cancelled`, `Rejected`, or `Expired`.
+    ///
+    /// An open string rather than an enum so a status added to a later spec still
+    /// decodes, matching [`Order::status`].
+    #[serde(default)]
+    pub status: Option<String>,
+    /// Why the order was cancelled, when the server reports a reason. The spec
+    /// types it nullable, so `None` covers both "no reason given" and "not
+    /// reported".
+    #[serde(default)]
+    pub cancellation_reason: Option<String>,
+    /// Unix timestamp (ms) the order was created. `None` when unreported —
+    /// **not** `0`.
+    #[serde(default)]
+    pub created_at_ms: Option<i64>,
+    /// Unix timestamp (ms) the order reached its terminal status. `None` when
+    /// unreported — **not** `0`.
+    #[serde(default)]
+    pub completed_at_ms: Option<i64>,
 }
 
 /// Response to `POST /orders`: the resulting order plus any immediate fills.

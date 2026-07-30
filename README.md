@@ -60,12 +60,24 @@ This repo does not vendor a copy — `spec-drift` CI fetches the pinned release 
 check for drift, and `spec-autobump` opens a PR when a newer spec releases
 (dispatched on api-repo release, with a daily poll fallback). It classifies the
 change with oasdiff: non-breaking bumps arm auto-merge, breaking ones route to a
-human (ENG-3563). The line above and the top row of the table below (the
-in-development SDK series) are bot-managed; the historical rows are left as-is.
+human (ENG-3563). Only the line above is bot-managed — it tracks the pin on
+`main`, including spec versions no release has shipped yet.
+
+The table below records **released** SDK versions and the spec each one actually
+shipped against, so it is history and no automation rewrites it. A new row is
+appended when a release goes out. Every row is derived from the tags themselves
+and can be re-checked in one command:
+
+```sh
+for t in $(git tag -l 'v*' | sort -V); do echo "$t -> $(git show "$t:.api-version")"; done
+```
 
 | SDK version | API spec |
 |---|---|
-| `0.3.x` | `v0.7.1` |
+| `0.6.x` | `v0.7.1` |
+| `0.5.1` | `v0.6.2` |
+| `0.5.0` | `v0.6.0` |
+| `0.3.x`–`0.4.x` | `v0.5.0` |
 | `0.1.x`–`0.2.x` | `v0.3.5` |
 
 ## License

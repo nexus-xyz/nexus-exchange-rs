@@ -48,9 +48,11 @@ def main():
     out.append("</details>\n")
     out.append("### Applied\n")
     out.append(f"- Bumped `.api-version` to `{args.new_tag}`.")
+    out.append('- Updated the bot-managed "currently targets" line in the README.')
     out.append(
-        '- Updated the bot-managed "currently targets" line + the README '
-        "compat-table row.\n"
+        "- Left the README SDK<->spec compatibility table alone: it records what "
+        "*released* versions shipped against, so a bare spec release changes "
+        "nothing in it. A row is appended when a release goes out.\n"
     )
 
     if args.verdict == "non-breaking":

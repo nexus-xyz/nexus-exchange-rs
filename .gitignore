@@ -1,3 +1,6 @@
 /target
 
 coverage.json
+
+# Byte-cache from the scripts/ helpers (spec-drift, api-version sync).
+__pycache__/

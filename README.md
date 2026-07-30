@@ -136,6 +136,7 @@ for t in $(git tag -l 'v*' | sort -V); do echo "$t -> $(git show "$t:.api-versio
 
 | SDK version | API spec |
 |---|---|
+| `0.7.0` | `v0.7.2` |
 | `0.6.x` | `v0.7.1` |
 | `0.5.1` | `v0.6.2` |
 | `0.5.0` | `v0.6.0` |

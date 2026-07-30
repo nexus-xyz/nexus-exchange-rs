@@ -11,8 +11,11 @@ name: Spec autobump
 #      the spec-drift check uses — the download_count signal stays reserved),
 #   3. runs oasdiff to classify old-pin -> new as BREAKING vs NON-BREAKING,
 #   4. bumps `.api-version` + the README "currently targets" line
-#      (scripts/sync_api_version.py) and the README compat-table row
-#      (scripts/update_compat_table.py), and opens a PR.
+#      (scripts/sync_api_version.py), and opens a PR.
+#
+# It deliberately does NOT touch the README SDK<->spec compatibility table: that
+# table records what *released* versions shipped against, so a bare spec release
+# changes nothing in it. A row is appended when a release goes out.
 #
 #   * NON-BREAKING -> label `spec-autobump`, arm GitHub auto-merge (squash).
 #   * BREAKING      -> label `breaking · needs-SDK-update`, request review, do
@@ -153,14 +156,13 @@ jobs:
             echo "ERR-level (breaking) change(s) detected — BREAKING."
           fi
 
-      - name: Apply the pin bump + compat-table row
+      - name: Apply the pin bump
         if: steps.gate.outputs.proceed == 'true'
         env:
           NEW_TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           set -euo pipefail
           python3 scripts/sync_api_version.py --write --latest "$NEW_TAG"
-          python3 scripts/update_compat_table.py --tag "$NEW_TAG"
 
       - name: Open / update the bump PR
         if: steps.gate.outputs.proceed == 'true'

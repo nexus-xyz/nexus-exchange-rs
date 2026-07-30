@@ -130,7 +130,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the drift gate does not check parameters, so nothing failed to flag it. Tracked
   as a fleet-wide follow-up (no SDK exposes it yet).
 
-## [0.6.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.6.0...v0.6.1) - 2026-07-21
+### Fixed
+
+- *(docs)* Corrected the README SDK↔spec compatibility table, which had been
+  misreporting every shipped version since `0.3.x`. It claimed `0.3.x` targeted
+  `v0.7.1`; `0.3.x` actually shipped against `v0.5.0`, and the `0.4.x`, `0.5.x`
+  and `0.6.x` series were missing entirely. Every row is now derived from the
+  release tags (`git show <tag>:.api-version`), and the README documents that
+  one-liner so the table can be re-checked rather than trusted.
+
+  Root cause: `spec-autobump` ran a second script that advanced the API-spec cell
+  of the table's *top* row on every spec bump, on the documented assumption that
+  "the next SDK release (release-plz) appends a new top row". Release-plz only
+  touches `CHANGELOG.md` / `Cargo.toml` / `Cargo.lock`, so that counterpart never
+  existed: the row's spec cell marched `v0.4.0` → `v0.5.0` → `v0.6.0` → `v0.6.2`
+  → `v0.7.1` while its SDK label stayed frozen at `0.3.x`. The script is removed
+  and the bot now touches only the marker-delimited "currently targets" line —
+  matching what `sync_api_version.py` already documented as the split, which the
+  second script had been contradicting. A stale table now reads as *incomplete*
+  (a missing row) rather than as a confident false claim.
 
 ### Fixed
 

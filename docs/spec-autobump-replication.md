@@ -46,13 +46,17 @@ These repos follow the same `.api-version` + drift pattern as this one. To
 replicate:
 
 1. Copy `.github/workflows/spec-autobump.yml`.
-2. Port the two helper scripts to the repo's language/idiom (or reuse as-is if
-   Python is available in CI):
-   - the **pin + "currently targets" line** bump — here `scripts/sync_api_version.py`.
-   - the **compat-table row** update — here `scripts/update_compat_table.py`
-     (advances the API-spec cell of the table's top row, which by convention is
-     the SDK series under active development; language-agnostic — just point it
-     at the repo's README).
+2. Port the helper script to the repo's language/idiom (or reuse as-is if Python
+   is available in CI): the **pin + "currently targets" line** bump — here
+   `scripts/sync_api_version.py`.
+
+   Do **not** have the bot touch the README SDK<->spec compatibility table. That
+   table records what *released* versions shipped against, so a bare spec release
+   changes nothing in it; a row is appended when a release goes out. An earlier
+   revision of this pipeline advanced the table's top row on every bump, which
+   silently rotted the row's SDK label (it read `0.3.x` while its spec cell had
+   marched from `v0.4.0` to `v0.7.1`) because the assumed release-time counterpart
+   never existed.
 3. Update the **required checks** referenced in the PR body to that repo's
    drift and test job names.
 4. Add the repo to the `matrix.target` list in the api repo's

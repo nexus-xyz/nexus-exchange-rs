@@ -47,3 +47,21 @@ or semantics is a genuine break — keeping the old method would preserve the ol
 
 `0.x` is for iteration. We'll commit to a stable public surface at `1.0`; after
 that, breaking changes require a deprecation window and a major bump.
+
+## Cutting a release
+
+release-plz opens and maintains the release PR (version bump + changelog). It does
+**not** touch the README, so one step is manual:
+
+- **Append a row to the README SDK↔spec compatibility table** for the series being
+  released, recording the spec in `.api-version` at that point. The table is
+  released-version history, so the row is added when the release goes out — not
+  when the spec pin moves. Verify against the tags afterwards:
+
+  ```sh
+  for t in $(git tag -l 'v*' | sort -V); do echo "$t -> $(git show "$t:.api-version")"; done
+  ```
+
+This step used to be assumed automatic. It wasn't, and the table silently
+misreported every shipped version from `0.3.x` onward until it was corrected —
+so treat a missing row as a release that isn't finished.

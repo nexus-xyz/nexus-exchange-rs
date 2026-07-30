@@ -733,7 +733,7 @@ impl Client {
     /// [`fetch_my_trades_paginated`](Self::fetch_my_trades_paginated) to walk the
     /// account's whole fill history.
     ///
-    /// # Breaking change in 0.7.0
+    /// # Breaking change
     ///
     /// `limit` is new: v0.7.2 documents it on `/fills` and this method sent none at
     /// all, so a single call could never read more than the server's default 100

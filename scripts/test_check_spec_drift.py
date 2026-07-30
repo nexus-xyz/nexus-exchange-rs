@@ -410,14 +410,44 @@ class TestRestCallParser(unittest.TestCase):
         """The receiver set is an explicit alternation, not `\\w+\\.`: an unrelated
         receiver must not be mistaken for a REST helper call. Paired with the
         loud-failure paths above, that keeps a NEW receiver a deliberate edit
-        rather than something the parser guesses at."""
+        rather than something the parser guesses at.
+
+        The suffix cases are the interesting ones. `_RECEIVER_ALT` is anchored with
+        a leading `\\b`, without which the alternation degrades into a *suffix*
+        match and silently counts every receiver merely ending in `self`/`client`
+        — an allowlist in name only. A receiver sharing no suffix (the original
+        `some_other_thing`) passes either way, so it cannot pin the property on
+        its own."""
         src = """
         self.signed_get("/api/v1/plain", &[]).await
         some_other_thing.signed_get("/api/v1/not-ours", &[]).await
+        some_client.signed_get("/api/v1/suffix-client", &[]).await
+        http_client.signed_get("/api/v1/prefixed-client", &[]).await
+        myself.signed_get("/api/v1/suffix-self", &[]).await
         """
         ops = self._ops(src)
         self.assertIn(("GET", "/api/v1/plain"), ops)
         self.assertNotIn(("GET", "/api/v1/not-ours"), ops)
+        # Receivers that merely END in an allowed name are not allowed names.
+        self.assertNotIn(("GET", "/api/v1/suffix-client"), ops)
+        self.assertNotIn(("GET", "/api/v1/prefixed-client"), ops)
+        self.assertNotIn(("GET", "/api/v1/suffix-self"), ops)
+
+    def test_bare_allowed_receivers_still_match_at_token_start(self):
+        """The `\\b` must not over-correct: both allowed receivers have to keep
+        matching at a token start, including after punctuation that is not a word
+        character (`(`, `&`, `=`), which is where a naive anchor like `(?<=\\s)`
+        would silently drop sites."""
+        src = """
+        self.get("/api/v1/a", &[]).await
+        client.get("/api/v1/b", &[]).await
+        let (items, next) = client
+            .signed_get_page::<Vec<Fill>>("/api/v1/c", &page_query(&req))
+            .await?;
+        """
+        ops = self._ops(src)
+        for path in ("/api/v1/a", "/api/v1/b", "/api/v1/c"):
+            self.assertIn(("GET", path), ops)
 
     def test_helper_and_call_site_regexes_agree(self):
         """The two regexes must match the same sites, or the count-agreement assert

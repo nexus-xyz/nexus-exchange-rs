@@ -350,7 +350,17 @@ def spec_ops(spec):
 # — the count-agreement assert at the end of `implemented_ops` and the
 # inline-literal enforcement both key off these same regexes, so they cannot
 # silently disagree.
-_RECEIVER_ALT = r"(self|client)"
+#
+# The leading `\b` is what makes that alternation real rather than a suffix match.
+# Without it the pattern matches *any* receiver ENDING in `self`/`client`, so
+# `some_client.get(...)`, `http_client.signed_get(...)` and `myself.get(...)` were
+# all counted — a partial wildcard wearing an allowlist's comment (the #114 review
+# nit). `\b` holds at a token start but not inside `some_client` (`_` -> `c` is
+# word-to-word, so there is no boundary there), which is exactly the distinction
+# this wants. The failure direction was *over*counting, so the undercount
+# guarantee invariant 2 exists for was never at risk — but the allowlist has to
+# mean what its comment says, and `test_unknown_receiver_is_not_counted` pins it.
+_RECEIVER_ALT = r"\b(self|client)"
 
 # The method-access dot, allowing the line break rustfmt inserts when a call is
 # too long to fit — the paginated calls wrap as

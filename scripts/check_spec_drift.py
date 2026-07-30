@@ -15,8 +15,9 @@ Five independent invariants are enforced:
    wrapper could be added (or removed) without updating the checklist and this
    check would still pass. We now derive the set of REST operations the client
    actually implements from src/rest.rs (the path-literal arguments to the
-   self.get/signed_get/signed_post/... helper calls) and assert it equals the
-   endpoints.txt set, modulo two explicit, documented allowlists:
+   get/signed_get/signed_post/get_page/... helper calls, on either a `self` or a
+   `client` receiver — see _RECEIVER_ALT) and assert it equals the endpoints.txt
+   set, modulo two explicit, documented allowlists:
 
      * CODE_ONLY_OPS    — implemented in the client but intentionally NOT in
                           endpoints.txt (ahead-of-spec; they would break the
@@ -34,6 +35,15 @@ Five independent invariants are enforced:
    first). That convention is now ENFORCED with a loud failure — a call site
    whose first argument is not an inline literal aborts the check — so a wrapper
    can no longer silently undercount the implemented set (the #49 review nit).
+
+   Undercounting is the failure mode this invariant has to be paranoid about, and
+   it has bitten once already: the parser was anchored on a `self.` receiver, so
+   the cursor-paginated readers — called on an owned `Client` clone inside a
+   paginator closure — were invisible, and an endpoint reachable ONLY through a
+   paginator would have passed silently unimplemented (ENG-8166). Both the
+   receiver set (_RECEIVER_ALT) and the helper set (HELPER_METHOD) are therefore
+   explicit and asserted, never inferred: this check exists to catch a gap, so it
+   fails loudly rather than reporting green over one.
 
 3. SDK models <-> spec schemas   (added by ENG-3377)
    Operations existing is necessary but not sufficient: the SDK can still drift
@@ -124,17 +134,19 @@ WS_PROTOCOL_RS = os.path.join(REPO, "src", "ws", "protocol.rs")
 # it issues. The path is always the first argument: a bare "..." string literal
 # or `&format!("...")`. Keep this in sync with the helper set in src/client.rs.
 #
-# Deliberately excludes the paginated readers `get_page` / `signed_get_page`:
-# they are called on an owned `Client` clone inside a paginator closure, not on
-# `self`, so `_CALL_SITE_RE`'s `self\.` anchor never sees them. That is safe only
-# because every cursor-paginated path is *also* reached by a plain `self.get` /
-# `self.signed_get` method (`fetch_trades`, `fetch_my_trades`), so the op is
-# still counted. Adding an endpoint reachable ONLY through a paginator would
-# undercount it here — extend the parser (receiver alternation + these two
-# helper names) at that point.
+# Includes the cursor-paginated readers `get_page` / `signed_get_page` (ENG-8166).
+# Those are NOT called on `self`: a `*_paginated` method clones the `Client` and
+# the closure calls the helper on the owned clone, so the parser has to match a
+# `client.` receiver as well as `self.` (see `_RECEIVER_ALT`) and a turbofish
+# (`client.signed_get_page::<Vec<Fill>>(...)`, needed because the closure's return
+# type cannot be inferred). Before that, an endpoint reachable ONLY through a
+# paginator was invisible here and silently UNDERCOUNTED by invariant 2 — a
+# verification tool reporting green over a real gap, which is worse than no tool.
 HELPER_METHOD = {
     "get": "GET",
+    "get_page": "GET",
     "signed_get": "GET",
+    "signed_get_page": "GET",
     "post_unsigned": "POST",
     "signed_post": "POST",
     "signed_post_empty": "POST",
@@ -325,22 +337,66 @@ def spec_ops(spec):
 # every call site and `implemented_ops` asserts each one is followed by an inline
 # literal, exiting non-zero otherwise. See enforce below.
 
-# Matches a call site up to (but not into) the first argument: `self.<helper>(`
-# plus optional whitespace and an optional `&format!(` wrapper. Whatever follows
-# must be a `"..."` literal for the convention to hold.
+# Receivers a REST helper is called on in src/rest.rs. `self` covers the ordinary
+# `async fn` endpoint methods; `client` covers the cursor-paginated ones, where the
+# `*_paginated` method clones the `Client` (`let client = self.clone()`) and the
+# page-fetching closure calls the helper on that owned clone — `self` is not
+# available inside a `'static` closure. Anchoring on `self` alone made every
+# paginator call site invisible (ENG-8166).
+#
+# It is an explicit alternation, not a wildcard `\w+\.`: a wildcard would also
+# match unrelated receivers (and doc-comment prose), and the failure mode we care
+# about is *undercounting*, so a new receiver name must be added here deliberately
+# — the count-agreement assert at the end of `implemented_ops` and the
+# inline-literal enforcement both key off these same regexes, so they cannot
+# silently disagree.
+#
+# The leading `\b` is what makes that alternation real rather than a suffix match.
+# Without it the pattern matches *any* receiver ENDING in `self`/`client`, so
+# `some_client.get(...)`, `http_client.signed_get(...)` and `myself.get(...)` were
+# all counted — a partial wildcard wearing an allowlist's comment (the #114 review
+# nit). `\b` holds at a token start but not inside `some_client` (`_` -> `c` is
+# word-to-word, so there is no boundary there), which is exactly the distinction
+# this wants. The failure direction was *over*counting, so the undercount
+# guarantee invariant 2 exists for was never at risk — but the allowlist has to
+# mean what its comment says, and `test_unknown_receiver_is_not_counted` pins it.
+_RECEIVER_ALT = r"\b(self|client)"
+
+# The method-access dot, allowing the line break rustfmt inserts when a call is
+# too long to fit — the paginated calls wrap as
+#     let (items, next) = client
+#         .signed_get_page::<Vec<Fill>>("/api/v1/fills", &page_query(&req))
+# so a regex anchored on a literal `client.` (no whitespace) matches none of them.
+# That is not a hypothetical: it is why the first cut of this fix still found zero
+# paginator call sites.
+_DOT = r"\s*\.\s*"
+
+# Matches a call site up to (but not into) the first argument: `<recv>.<helper>(`
+# plus an optional turbofish, optional whitespace, and an optional `&format!(`
+# wrapper. Whatever follows must be a `"..."` literal for the convention to hold.
+#
+# The turbofish is not decoration: a paginator closure returns `Page<T>`, so the
+# helper's response type has to be named at the call site
+# (`client.signed_get_page::<Vec<Fill>>(...)`). `[^()]*` stops at the paren that
+# opens the argument list, so it spans nested generics (`Vec<Fill>`) without
+# running past the call.
 _HELPER_ALT = "|".join(sorted(HELPER_METHOD, key=len, reverse=True))
+_TURBOFISH = r"(?:\s*::\s*<[^()]*>)?"
 _CALL_SITE_RE = re.compile(
-    r"self\.(" + _HELPER_ALT + r")"
+    _RECEIVER_ALT + _DOT + r"(" + _HELPER_ALT + r")"
+    + _TURBOFISH +                # optional `::<T>` on the helper
     r"\s*\(\s*"                   # open paren + optional whitespace
     r"(?:&\s*format!\s*\(\s*)?"   # optional `&format!(` wrapper
 )
 
-# Each call is `self.<helper>(` followed (allowing whitespace/newlines, since
+# Each call is `<recv>.<helper>(` followed (allowing whitespace/newlines, since
 # multi-line calls wrap the path onto the next line) by the path argument: either
-# a `"..."` literal or `&format!("...")`. We capture the helper name and the
-# first string literal that opens the argument list.
+# a `"..."` literal or `&format!("...")`. Both regexes capture the receiver as
+# group 1 and the helper as group 2 (so a diagnostic can name the real call site
+# rather than assuming `self.`); `_CALL_RE` captures the path literal as group 3.
 _CALL_RE = re.compile(
-    r"self\.(" + _HELPER_ALT + r")"
+    _RECEIVER_ALT + _DOT + r"(" + _HELPER_ALT + r")"
+    + _TURBOFISH +               # optional `::<T>` on the helper
     r"\s*\(\s*"            # open paren + optional whitespace
     r"(?:&\s*format!\s*\(\s*)?"  # optional `&format!(` wrapper
     r'"([^"]+)"'           # the path string literal
@@ -371,8 +427,8 @@ def implemented_ops(path=REST_RS):
         rest_after = src[m.end():]
         if not rest_after.lstrip().startswith('"'):
             lineno = src.count("\n", 0, m.start()) + 1
-            snippet = src[m.start(): m.start() + 60].splitlines()[0]
-            non_inline.append((lineno, m.group(1), snippet))
+            snippet = " ".join(src[m.start(): m.start() + 90].split())[:70]
+            non_inline.append((lineno, f"{m.group(1)}.{m.group(2)}", snippet))
     if non_inline:
         print(
             f"\nERROR: {len(non_inline)} helper call(s) in {path} do not pass "
@@ -381,13 +437,13 @@ def implemented_ops(path=REST_RS):
             f"local variable first would be silently uncounted, undercounting "
             f"implemented ops. Inline the path literal at the call site:"
         )
-        for lineno, helper, snippet in non_inline:
-            print(f"  - {path}:{lineno}: self.{helper}(...  ->  {snippet.strip()}")
+        for lineno, call, snippet in non_inline:
+            print(f"  - {path}:{lineno}: {call}(...  ->  {snippet.strip()}")
         sys.exit(1)
 
     ops = set()
     for m in _CALL_RE.finditer(src):
-        helper, p = m.group(1), m.group(2)
+        helper, p = m.group(2), m.group(3)
         ops.add((HELPER_METHOD[helper], normalize_path(p)))
     if not ops:
         sys.exit(

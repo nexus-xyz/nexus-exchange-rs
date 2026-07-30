@@ -271,16 +271,23 @@ impl Client {
     /// page fetch rather than being sent. `Err` here means the `market_id` itself
     /// was rejected, so it is reported before any request is issued.
     pub fn fetch_trades_paginated(&self, market_id: &str) -> Result<Paginator<Trade>> {
+        // `id` (not a pre-built `path`) is moved into the closure so the path can
+        // be `format!`ed *inline at the call site*: scripts/check_spec_drift.py
+        // reads the path literal passed to each helper call, and a path built into
+        // a local first is invisible to it. See its inline-literal convention.
         let id = encoded_segment(market_id, "market_id")?;
-        let path = format!("/api/v1/markets/{id}/trades");
         let client = self.clone();
         Ok(Paginator::new(move |req: PageRequest| {
             let client = client.clone();
-            let path = path.clone();
+            let id = id.clone();
             async move {
                 check_page_size(req.limit, MAX_TRADES_LIMIT, "trades")?;
                 let (items, next) = client
-                    .get_page::<Vec<Trade>>(&path, &page_query(&req), COST_DEFAULT)
+                    .get_page::<Vec<Trade>>(
+                        &format!("/api/v1/markets/{id}/trades"),
+                        &page_query(&req),
+                        COST_DEFAULT,
+                    )
                     .await?;
                 Ok(Page::new(items, next))
             }

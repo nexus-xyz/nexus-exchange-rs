@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.6.1...v0.7.0) - 2026-07-30
+
+### Added
+
+- *(rest)* [**breaking**] send `limit` on GET /fills from fetch_my_trades (ENG-8167) ([#115](https://github.com/nexus-xyz/nexus-exchange-rs/pull/115))
+- *(rest)* implement /orders/history, /positions/closed and /account/equity-history (ENG-8148) ([#113](https://github.com/nexus-xyz/nexus-exchange-rs/pull/113))
+- *(rest)* return a Paginator from the cursor-paginated endpoints (ENG-8084) ([#112](https://github.com/nexus-xyz/nexus-exchange-rs/pull/112))
+- *(orders)* add preview_order for POST /api/v1/orders/preview (ENG-7928) ([#111](https://github.com/nexus-xyz/nexus-exchange-rs/pull/111))
+- *(account)* [**breaking**] expose portfolio-parity endpoints/fields in the Rust SDK (ENG-6457) ([#109](https://github.com/nexus-xyz/nexus-exchange-rs/pull/109))
+- *(orders)* [**breaking**] surface Order.limit_offset_bps on read-back (ENG-6035) ([#101](https://github.com/nexus-xyz/nexus-exchange-rs/pull/101))
+
+### Fixed
+
+- *(spec-drift)* count endpoints reached only through a paginator (ENG-8166) ([#114](https://github.com/nexus-xyz/nexus-exchange-rs/pull/114))
+- *(docs)* correct the SDK<->spec compat table and stop the bot rotting it ([#116](https://github.com/nexus-xyz/nexus-exchange-rs/pull/116))
+
+### Other
+
+- bump dtolnay/rust-toolchain ([#102](https://github.com/nexus-xyz/nexus-exchange-rs/pull/102))
+- bump tokio-tungstenite from 0.29.0 to 0.30.0 ([#104](https://github.com/nexus-xyz/nexus-exchange-rs/pull/104))
+- bump the cargo-minor group across 1 directory with 6 updates ([#108](https://github.com/nexus-xyz/nexus-exchange-rs/pull/108))
+
 ### Added
 
 - Pinned the API spec to `v0.7.2` and exposed the **portfolio-parity** surface

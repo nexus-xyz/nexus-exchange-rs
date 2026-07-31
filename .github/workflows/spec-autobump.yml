@@ -22,17 +22,17 @@ name: Spec autobump
 #                      NOT arm auto-merge.
 #
 # SAFETY: arming auto-merge does not merge. The PR still cannot merge until
-#   (a) the required status checks pass — today `fmt`/`clippy`/`test`/`docs` plus
-#       CI's `drift` (pin lag) — and
+#   (a) the required status checks pass — `fmt`, `clippy`, `test`, `docs`,
+#       `spec-pin` (pin lag) and `spec-drift` (the manifest/model/enum
+#       verification that actually proves the pin advance needs no code change),
+#       and
 #   (b) the ENG-4149 ruleset bypass for this bot is configured to satisfy the
 #       1-review + code-owner-review rule for these pin-bump PRs only.
 #
-# NOTE the gap in (a): the check that actually proves the pin advance needs no
-# code change is `spec-drift` (manifest/model/enum verification, spec-drift.yml),
-# and it is NOT in the required contexts yet — it reports on every PR but is
-# advisory. Until it is required, a red `spec-drift` does not by itself stop an
-# armed auto-merge. Adding it is the pending settings step; the command is in the
-# footer of spec-drift.yml (ENG-7961).
+# `spec-drift` became a REQUIRED context on 2026-07-31 (ENG-7961). Before that it
+# ran but was advisory, so a red `spec-drift` did not by itself stop an armed
+# auto-merge — the safety argument here rested on a check nothing enforced. If you
+# port this workflow, make the drift check required, not merely running.
 #
 # "ARMS AUTO-MERGE" IS NOT "LANDS UNATTENDED" (ENG-7961). `allow_auto_merge` is
 # true on this repo, which is necessary but NOT sufficient: the ruleset still

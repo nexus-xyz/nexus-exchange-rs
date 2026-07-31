@@ -105,11 +105,12 @@ jobs:
   # release, and does it lag the latest?). It does NOT verify endpoints.txt or the
   # SDK against the spec — that is the `spec-drift` job in spec-drift.yml.
   #
-  # The name is kept as `drift` only because branch protection requires that
-  # context; renaming it here without updating the setting would block every PR.
-  # It is a misleading name for a pin-lag check and should become `spec-pin` in
-  # the same change that updates the required contexts (ENG-7961).
-  drift:
+  # Named `spec-pin`, not `drift` (ENG-7961). It was `drift` until this commit,
+  # which was actively misleading: `spec-drift` is the job that verifies the
+  # manifest, and a reviewer reading a green `drift` reasonably assumed that had
+  # happened. Renaming a REQUIRED context needs the branch-protection setting
+  # updated in the same change — see the footer of spec-drift.yml.
+  spec-pin:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -138,8 +139,8 @@ jobs:
           # bleeding edge, so "a newer release exists" is informational, not a
           # build break. The complementary endpoints.txt<->spec invariant — an
           # operation that vanished from the pinned spec — is enforced separately
-          # by scripts/check_spec_drift.py (the `Spec drift` workflow); that is
-          # where real breakage against the *pinned* spec fails.
+          # by scripts/check_spec_drift.py (the `spec-drift` job); that is where
+          # real breakage against the *pinned* spec fails.
 
           # 1. The pinned version must exist as a published release in the spec
           #    repo. A pin that is not a real release tag is genuine breakage
@@ -170,7 +171,7 @@ jobs:
             exit 0
           fi
 
-          echo "No drift: SDK is pinned to the latest API spec (${pinned})."
+          echo "Pin is current: SDK is pinned to the latest API spec (${pinned})."
 
   # Guard the floor declared by `rust-version` in Cargo.toml. Cargo.toml is the
   # single source of truth — the toolchain is read from it, never duplicated

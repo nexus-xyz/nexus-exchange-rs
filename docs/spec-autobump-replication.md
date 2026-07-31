@@ -51,17 +51,18 @@ covering the other.
 
 Arming auto-merge does **not** merge. A PR can only merge once **both**:
 
-- the **required status checks** pass (this repo, today: `fmt`, `clippy`, `test`,
-  `docs`, and CI's `drift` pin-lag job), and
+- the **required status checks** pass — on `-rs`: `fmt`, `clippy`, `test`, `docs`,
+  `spec-pin` (pin lag) and `spec-drift` (the manifest verification), and
 - the **ENG-4149 ruleset bypass** is configured so the bot satisfies the
   1-review + code-owner-review rule for pin-bump PRs only.
 
-> **Mind the gap.** The check that proves a pin advance needs no code change is
-> `spec-drift`, and it is **not required yet** on `-rs` — it reports on every PR
-> but is advisory, so a red `spec-drift` does not on its own stop an armed
-> auto-merge. When replicating, make the drift check a *required* context, not
-> just a running one; otherwise the safety argument below rests on a check nothing
-> enforces.
+> **Make the drift check *required*, not merely running.** `spec-drift` only
+> became a required context on `-rs` on 2026-07-31 (ENG-7961). For the whole
+> period before that it ran on every PR and reported green or red with nothing
+> depending on the answer — so a red `spec-drift` would not have stopped an armed
+> auto-merge, and the safety argument on this page rested on a check nothing
+> enforced. Running is visible; required is enforced. Do not confuse them when you
+> port this.
 
 ### "Arms auto-merge" is not "lands unattended"
 
@@ -90,10 +91,17 @@ branch protection can see:
   `-rs` originally filtered on the pin plus the three source files the checker
   reads; that worked for pin bumps but had to be maintained in lockstep with the
   checker's inputs, with nothing enforcing it.
-- **Do not name it the same as anything else.** `-rs` had two jobs called `drift`
-  — CI's pin-lag check and the real manifest verification — so a PR outside the
-  path filter showed a green `drift` that had verified nothing. The manifest check
-  is now `spec-drift`.
+- **Do not name it the same as anything else, and name it for what it checks.**
+  `-rs` had two jobs called `drift` — CI's pin-lag check and the real manifest
+  verification — so a PR outside the path filter showed a green `drift` that had
+  verified nothing. The manifest check is now `spec-drift` and the pin-lag check
+  `spec-pin`.
+- **Renaming a *required* check is its own trap.** The context and the
+  branch-protection setting have to move together: a required context with no job
+  reporting it blocks every PR forever, and so does a renamed job whose old
+  context is still required. Nothing makes this atomic, so plan on an admin merge
+  for the renaming PR plus an immediate settings patch. Related: never require a
+  context before the workflow producing it is on the base branch.
 
 ## Replicating to `-py` / `-cli` / `-mcp`
 
@@ -112,8 +120,10 @@ replicate:
    silently rotted the row's SDK label (it read `0.3.x` while its spec cell had
    marched from `v0.4.0` to `v0.7.1`) because the assumed release-time counterpart
    never existed.
-3. Update the **required checks** referenced in the PR body to that repo's
-   drift and test job names.
+3. Update the **required checks** referenced in the PR body
+   (`scripts/render_autobump_pr_body.py`) to that repo's drift and test job names
+   — and confirm those contexts are genuinely *required*, since the body tells a
+   human reader they gate the merge.
 4. Add the repo to the `matrix.target` list in the api repo's
    `spec-dispatch.yml` (uncomment the TODO entry).
 5. Have ENG-4149 scope `SDK_DISPATCH_TOKEN` + the ruleset bypass to the repo.

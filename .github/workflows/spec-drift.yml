@@ -17,10 +17,10 @@ name: Spec drift
 #
 #   * A skipped workflow reports NOTHING, so a required check that never runs is
 #     satisfied by absence. This job's name is therefore also distinct from CI's
-#     `drift` job (which only compares the pin to the api repo's latest release
-#     and does NOT verify the manifest). While both were called `drift`, a PR
-#     outside the old path filter showed a green "drift" that had verified
-#     nothing — see the note at the bottom of this file.
+#     pin-lag job, now `spec-pin` (it only compares the pin to the api repo's
+#     latest release and does NOT verify the manifest). While that job and this
+#     one were BOTH called `drift`, a PR outside the old path filter showed a
+#     green `drift` that had verified nothing — see the note at the bottom.
 #   * The filter had to be maintained in lockstep with the files
 #     check_spec_drift.py actually reads (src/rest.rs, src/types.rs,
 #     src/ws/protocol.rs). Nothing enforced that, so moving a REST method into a
@@ -39,9 +39,9 @@ permissions:
   contents: read
 
 jobs:
-  # Named `spec-drift`, not `drift`: CI has its own `drift` job (pin vs. latest
-  # release) and two identically-named checks cannot be told apart by branch
-  # protection or by a reviewer reading the checks list.
+  # Named `spec-drift`, not `drift`: CI has its own pin-vs-latest job (`spec-pin`)
+  # and two identically-named checks cannot be told apart by branch protection or
+  # by a reviewer reading the checks list. Both were `drift` until ENG-7961.
   spec-drift:
     runs-on: ubuntu-latest
     steps:
@@ -85,22 +85,29 @@ jobs:
       - name: Check drift
         run: python3 scripts/check_spec_drift.py openapi.pinned.json
 
-# REQUIRED-CHECK SETTING (needs a repo-settings change, ENG-7961)
+# REQUIRED-CHECK SETTING (ENG-7961)
 #
-# Branch protection on `main` currently requires the context `drift`, which is
-# CI's pin-vs-latest job — NOT this one. So the manifest verification is advisory
-# today even though the autobump's safety argument leans on it.
+# `spec-drift` IS a required context on `main` as of 2026-07-31 — the manifest
+# verification the autobump's safety argument leans on is now enforced, not
+# advisory. Required contexts, in full:
 #
-# Now that this job reports on every PR under a distinct name, it can be required
-# without the classic skipped-required-check deadlock.
+#   fmt  clippy  test  docs  spec-pin  spec-drift
 #
-# RUN THIS ONLY AFTER THIS WORKFLOW IS ON `main`. `spec-drift` does not report on
-# a commit that predates it, so requiring it first would block every open PR on a
-# check that never arrives.
+# `spec-pin` is CI's pin-vs-latest job, renamed from `drift` in the same change
+# that swapped the context (see the NOTE above that job in ci.yml). Two rules
+# learned the hard way, worth keeping if you touch any of this:
 #
-# The endpoint REPLACES the whole list — it does not append. The five existing
-# contexts are repeated deliberately; omitting one silently unprotects it, so do
-# not trim this to just the new entry:
+#   1. RENAME AND SETTING MOVE TOGETHER. A required context with no job reporting
+#      it blocks every PR — GitHub waits forever for a check that will never
+#      arrive. Equally, a renamed job whose old context stays required blocks
+#      every PR. There is no atomic way to do both, so expect the PR making the
+#      rename to need an admin merge, and patch protection immediately after.
+#   2. NEVER REQUIRE A CHECK THAT DOES NOT YET RUN ON `main`. A context is only
+#      satisfiable once the workflow producing it is on the base branch.
+#
+# The endpoint REPLACES the whole list — it does not append. Every context is
+# repeated deliberately; omitting one silently unprotects it, so do not trim this
+# to just the entry you are adding:
 #
 #   gh api -X PATCH repos/nexus-xyz/nexus-exchange-rs/branches/main/protection/required_status_checks \
 #     --input - <<'JSON'
@@ -111,18 +118,16 @@ jobs:
 #       {"context": "clippy",     "app_id": 15368},
 #       {"context": "test",       "app_id": 15368},
 #       {"context": "docs",       "app_id": 15368},
-#       {"context": "drift",      "app_id": 15368},
+#       {"context": "spec-pin",   "app_id": 15368},
 #       {"context": "spec-drift", "app_id": 15368}
 #     ]
 #   }
 #   JSON
 #
 # Values mirror the settings as of this commit (`strict: false`, app_id 15368 =
-# GitHub Actions). Re-read before running, in case the list has moved on:
+# GitHub Actions). This endpoint touches ONLY required_status_checks; the review
+# rules, force-push and linear-history settings are unaffected. Re-read before
+# running, in case the list has moved on:
 #
 #   gh api repos/nexus-xyz/nexus-exchange-rs/branches/main/protection/required_status_checks \
-#     --jq '.strict, .checks[]'
-#
-# When CI's `drift` is later renamed to `spec-pin`, swap that context here and
-# edit the job id in ci.yml in the SAME change — a required context with no job
-# reporting it blocks every PR.
+#     --jq '.strict, (.checks[] | .context)'

@@ -403,3 +403,138 @@ async fn public_market_reads_reject_empty_market_id_locally() {
         ));
     }
 }
+
+// ── Venue statistics: GET /stats and GET /stats/history ─────────────────────
+//
+// Both start from a `Client` method against a mock server, so they fail if the
+// endpoint is unreachable from the public API rather than merely mis-typed —
+// the ENG-8084 lesson (a `Paginator` with a green unit suite for months while
+// nothing on `Client` returned one).
+
+fn stats_body() -> serde_json::Value {
+    serde_json::json!({
+        "events_received": 1_234_567i64,
+        "fills_total": 89_012i64,
+        "liquidations_total": 34i64,
+        "gap_count": 0i64,
+        "connected": true,
+        "last_event_ms": 1_776_033_900_000i64,
+        "uptime_seconds": 86_400i64,
+        "events_per_sec": 42.5,
+        "health": "Healthy",
+        "highest_sequence_seen": 9_876_543i64,
+        "unique_traders_24h": 512i64,
+        "unique_traders_7d": 2_048i64,
+        "unique_traders_30d": 8_192i64
+    })
+}
+
+#[tokio::test]
+async fn fetch_stats_reads_counters_and_trader_rollups() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/stats"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(stats_body()))
+        .mount(&server)
+        .await;
+
+    let stats = client(server.uri()).fetch_stats().await.unwrap();
+    assert_eq!(stats.events_received, 1_234_567);
+    assert_eq!(stats.fills_total, 89_012);
+    assert_eq!(stats.liquidations_total, 34);
+    assert_eq!(stats.gap_count, 0);
+    assert!(stats.connected);
+    assert_eq!(stats.last_event_ms, Some(1_776_033_900_000));
+    assert_eq!(stats.uptime_seconds, 86_400);
+    assert_eq!(stats.events_per_sec, 42.5);
+    assert_eq!(stats.health, "Healthy");
+    assert_eq!(stats.highest_sequence_seen, 9_876_543);
+    assert_eq!(stats.unique_traders_24h, Some(512));
+    assert_eq!(stats.unique_traders_7d, Some(2_048));
+    assert_eq!(stats.unique_traders_30d, Some(8_192));
+}
+
+/// An absent trader rollup must decode as `None`, never as `Some(0)`.
+///
+/// The spec documents the three `unique_traders_*` fields as "Present on
+/// `/stats`", i.e. an augmentation rather than part of the base snapshot. A
+/// consumer rendering DAU has to tell "not reported" from "nobody traded"; a
+/// defaulted `0` would render an outage as a real zero.
+#[tokio::test]
+async fn absent_trader_rollups_are_none_not_zero() {
+    let server = MockServer::start().await;
+    let mut body = stats_body();
+    let obj = body.as_object_mut().unwrap();
+    obj.remove("unique_traders_24h");
+    obj.remove("unique_traders_7d");
+    obj.remove("unique_traders_30d");
+    Mock::given(method("GET"))
+        .and(path("/stats"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .mount(&server)
+        .await;
+
+    let stats = client(server.uri()).fetch_stats().await.unwrap();
+    assert_eq!(stats.unique_traders_24h, None);
+    assert_eq!(stats.unique_traders_7d, None);
+    assert_eq!(stats.unique_traders_30d, None);
+    // A reported zero is still a zero — the two cases must stay distinguishable.
+    assert_eq!(stats.fills_total, 89_012);
+}
+
+/// `last_event_ms` is `None` before the first event, not the Unix epoch.
+#[tokio::test]
+async fn null_last_event_ms_is_none_not_epoch() {
+    let server = MockServer::start().await;
+    let mut body = stats_body();
+    body.as_object_mut()
+        .unwrap()
+        .insert("last_event_ms".into(), serde_json::Value::Null);
+    Mock::given(method("GET"))
+        .and(path("/stats"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .mount(&server)
+        .await;
+
+    let stats = client(server.uri()).fetch_stats().await.unwrap();
+    assert_eq!(stats.last_event_ms, None);
+}
+
+#[tokio::test]
+async fn fetch_stats_history_reads_the_throughput_ring() {
+    let server = MockServer::start().await;
+    let body = serde_json::json!([
+        { "timestamp": 1_776_033_900i64, "fills": 12i64 },
+        { "timestamp": 1_776_033_901i64, "fills": 0i64 },
+        { "timestamp": 1_776_033_902i64, "fills": 7i64 }
+    ]);
+    Mock::given(method("GET"))
+        .and(path("/stats/history"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .mount(&server)
+        .await;
+
+    let hist = client(server.uri()).fetch_stats_history().await.unwrap();
+    assert_eq!(hist.len(), 3);
+    // Oldest-first, and seconds (not ms) — the one unit exception in this crate.
+    assert_eq!(hist[0].timestamp, 1_776_033_900);
+    assert_eq!(hist[0].fills, 12);
+    // A genuine zero-fill second survives as 0 rather than being dropped.
+    assert_eq!(hist[1].fills, 0);
+    assert_eq!(hist[2].fills, 7);
+}
+
+/// An empty ring is a valid 200, not an error — a freshly started indexer has
+/// not filled the buffer yet.
+#[tokio::test]
+async fn empty_stats_history_is_ok_not_an_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/stats/history"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
+
+    let hist = client(server.uri()).fetch_stats_history().await.unwrap();
+    assert!(hist.is_empty());
+}

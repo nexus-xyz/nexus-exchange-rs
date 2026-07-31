@@ -59,6 +59,8 @@ GET /api/v1/bridge/deposits/{id}
 GET /markets
 GET /markets/{market_id}/adl-events
 GET /account/{address}/adl-history
+GET /stats
+GET /stats/history
 GET /status
 GET /keys
 POST /keys

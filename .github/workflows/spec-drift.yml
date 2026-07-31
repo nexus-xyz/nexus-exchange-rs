@@ -10,38 +10,39 @@ name: Spec drift
 # reserved as an external adoption signal) and caches it by the pinned version
 # so a normal run does no network.
 #
-# Triggered by the spec pin and by the SDK surfaces the check derives from
-# (src/rest.rs for the code<->endpoints check, src/types.rs for the model<->spec
-# and enum checks, src/ws/protocol.rs for the WS channel check) so editing a
-# model, enum, or wrapper re-runs drift even when the pin is unchanged.
+# RUNS ON EVERY PR, DELIBERATELY — do not add a `paths:` filter (ENG-7961).
+#
+# "Safe to merge = spec-drift is green" is the whole merge signal for a spec
+# pin-bump PR, and a path filter quietly makes that claim conditional:
+#
+#   * A skipped workflow reports NOTHING, so a required check that never runs is
+#     satisfied by absence. This job's name is therefore also distinct from CI's
+#     `drift` job (which only compares the pin to the api repo's latest release
+#     and does NOT verify the manifest). While both were called `drift`, a PR
+#     outside the old path filter showed a green "drift" that had verified
+#     nothing — see the note at the bottom of this file.
+#   * The filter had to be maintained in lockstep with the files
+#     check_spec_drift.py actually reads (src/rest.rs, src/types.rs,
+#     src/ws/protocol.rs). Nothing enforced that, so moving a REST method into a
+#     new module would have silently stopped triggering the check that exists to
+#     notice exactly such a move.
+#
+# The run is cheap enough that filtering buys nothing: the pinned spec is cached
+# by version, so a normal run does no network and finishes in seconds.
 
 on:
   pull_request:
-    paths:
-      - '.api-version'
-      - 'endpoints.txt'
-      - 'scripts/check_spec_drift.py'
-      - 'scripts/test_check_spec_drift.py'
-      - '.github/workflows/spec-drift.yml'
-      - 'src/rest.rs'
-      - 'src/types.rs'
-      - 'src/ws/protocol.rs'
   push:
     branches: [main]
-    paths:
-      - '.api-version'
-      - 'endpoints.txt'
-      - 'scripts/check_spec_drift.py'
-      - 'scripts/test_check_spec_drift.py'
-      - 'src/rest.rs'
-      - 'src/types.rs'
-      - 'src/ws/protocol.rs'
 
 permissions:
   contents: read
 
 jobs:
-  drift:
+  # Named `spec-drift`, not `drift`: CI has its own `drift` job (pin vs. latest
+  # release) and two identically-named checks cannot be told apart by branch
+  # protection or by a reviewer reading the checks list.
+  spec-drift:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -83,3 +84,45 @@ jobs:
 
       - name: Check drift
         run: python3 scripts/check_spec_drift.py openapi.pinned.json
+
+# REQUIRED-CHECK SETTING (needs a repo-settings change, ENG-7961)
+#
+# Branch protection on `main` currently requires the context `drift`, which is
+# CI's pin-vs-latest job — NOT this one. So the manifest verification is advisory
+# today even though the autobump's safety argument leans on it.
+#
+# Now that this job reports on every PR under a distinct name, it can be required
+# without the classic skipped-required-check deadlock.
+#
+# RUN THIS ONLY AFTER THIS WORKFLOW IS ON `main`. `spec-drift` does not report on
+# a commit that predates it, so requiring it first would block every open PR on a
+# check that never arrives.
+#
+# The endpoint REPLACES the whole list — it does not append. The five existing
+# contexts are repeated deliberately; omitting one silently unprotects it, so do
+# not trim this to just the new entry:
+#
+#   gh api -X PATCH repos/nexus-xyz/nexus-exchange-rs/branches/main/protection/required_status_checks \
+#     --input - <<'JSON'
+#   {
+#     "strict": false,
+#     "checks": [
+#       {"context": "fmt",        "app_id": 15368},
+#       {"context": "clippy",     "app_id": 15368},
+#       {"context": "test",       "app_id": 15368},
+#       {"context": "docs",       "app_id": 15368},
+#       {"context": "drift",      "app_id": 15368},
+#       {"context": "spec-drift", "app_id": 15368}
+#     ]
+#   }
+#   JSON
+#
+# Values mirror the settings as of this commit (`strict: false`, app_id 15368 =
+# GitHub Actions). Re-read before running, in case the list has moved on:
+#
+#   gh api repos/nexus-xyz/nexus-exchange-rs/branches/main/protection/required_status_checks \
+#     --jq '.strict, .checks[]'
+#
+# When CI's `drift` is later renamed to `spec-pin`, swap that context here and
+# edit the job id in ci.yml in the SAME change — a required context with no job
+# reporting it blocks every PR.

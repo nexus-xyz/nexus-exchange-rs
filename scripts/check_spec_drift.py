@@ -29,6 +29,19 @@ Five independent invariants are enforced:
    endpoints.txt nor in CODE_ONLY_OPS, or (b) endpoints.txt lists an op that has
    no implementing method and is not in NON_REST_TARGETS.
 
+   Both allowlists also carry the stale-entry checks the model/enum allowlists
+   have, so an exemption cannot quietly outlive its reason (ENG-7961):
+
+     * a CODE_ONLY_OPS entry no longer implemented in the client;
+     * a CODE_ONLY_OPS entry the pinned spec now DEFINES — the allowlist means
+       "implemented but ahead of the pinned spec", so once the spec catches up
+       the op belongs in endpoints.txt. Leaving it parked is the damaging case:
+       the op is deliberately kept OUT of endpoints.txt, so invariant 1 stops
+       checking that its path still exists, and the SDK's coverage number
+       understates reality;
+     * a NON_REST_TARGETS entry that is not in endpoints.txt, which therefore
+       suppresses nothing and is a stale exemption waiting to hide a regression.
+
    The code parser reads the path *literal* passed inline to each helper call, so
    it relies on an inline-literal convention (every helper call passes its path
    as `"..."` / `&format!("...")` directly, never a path built into a local var
@@ -464,11 +477,18 @@ def implemented_ops(path=REST_RS):
     return ops
 
 
-def check_code_vs_targets(targeted):
+def check_code_vs_targets(targeted, available):
     """Invariant 2: implemented REST ops == endpoints.txt, modulo the two
-    documented allowlists. Returns the number of errors printed."""
+    documented allowlists. Returns the number of errors printed.
+
+    `available` is the pinned spec's operation set (spec_ops), needed only for
+    the CODE_ONLY_OPS staleness check below — an allowlist that means "ahead of
+    the pinned spec" cannot be validated without knowing what the spec has."""
     impl = implemented_ops()
     targeted_norm = {(m, normalize_path(p)) for m, p in targeted}
+    # spec_ops keeps the spec's own placeholder names; the allowlists are written
+    # in normalized `{}` form, so normalize this side before comparing.
+    available_norm = {(m, normalize_path(p)) for m, p in available}
 
     # (a) implemented but not listed (and not an intentional code-only op).
     impl_missing_from_targets = sorted(impl - targeted_norm - CODE_ONLY_OPS)
@@ -477,6 +497,17 @@ def check_code_vs_targets(targeted):
     # Bonus integrity check: a CODE_ONLY_OPS entry that is no longer implemented
     # is stale and should be removed — catch it so the allowlist can't rot.
     stale_code_only = sorted(CODE_ONLY_OPS - impl)
+    # The other way CODE_ONLY_OPS rots, and the dangerous one: the pinned spec
+    # has CAUGHT UP with an op parked here. The allowlist's whole meaning is
+    # "implemented but ahead of the pinned spec"; once the spec declares the op,
+    # leaving it parked exempts a real operation from invariant 1 (nothing then
+    # checks that its path still exists) and understates the SDK's coverage
+    # number, because it is deliberately kept OUT of endpoints.txt.
+    landed_code_only = sorted(CODE_ONLY_OPS & available_norm)
+    # NON_REST_TARGETS mirrors the same rot risk from the other direction: an
+    # entry that is no longer listed in endpoints.txt suppresses nothing and is
+    # just a stale exemption waiting to hide a future regression.
+    stale_non_rest = sorted(NON_REST_TARGETS - targeted_norm)
 
     errors = 0
     if impl_missing_from_targets:
@@ -506,6 +537,27 @@ def check_code_vs_targets(targeted):
             f"longer implemented in src/rest.rs (remove them from the allowlist):"
         )
         for m, p in stale_code_only:
+            print(f"  - {m} {p}")
+
+    if landed_code_only:
+        errors += len(landed_code_only)
+        print(
+            f"\nERROR: {len(landed_code_only)} CODE_ONLY_OPS entr(ies) are now "
+            f"defined by the pinned spec, so they are no longer 'ahead of spec' "
+            f"(move each into endpoints.txt and drop it from the allowlist — "
+            f"leaving it parked exempts a real operation and understates coverage):"
+        )
+        for m, p in landed_code_only:
+            print(f"  - {m} {p}")
+
+    if stale_non_rest:
+        errors += len(stale_non_rest)
+        print(
+            f"\nERROR: {len(stale_non_rest)} NON_REST_TARGETS entr(ies) are not "
+            f"in endpoints.txt, so they suppress nothing (remove them from the "
+            f"allowlist, or re-add the endpoint to endpoints.txt):"
+        )
+        for m, p in stale_non_rest:
             print(f"  - {m} {p}")
 
     if not errors:
@@ -1190,7 +1242,7 @@ def main():
         print("\nOK: every targeted endpoint exists in the pinned spec.")
 
     # Invariant 2: client code <-> endpoints.txt.
-    failures += check_code_vs_targets(targeted)
+    failures += check_code_vs_targets(targeted, available)
 
     # Invariant 3: SDK models <-> spec schemas.
     failures += check_models_vs_spec(spec)

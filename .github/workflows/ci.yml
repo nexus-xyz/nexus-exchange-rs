@@ -101,6 +101,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --locked --no-deps --all-features
 
+  # NOTE: this job only checks the spec PIN (does the pinned tag exist as a real
+  # release, and does it lag the latest?). It does NOT verify endpoints.txt or the
+  # SDK against the spec — that is the `spec-drift` job in spec-drift.yml.
+  #
+  # The name is kept as `drift` only because branch protection requires that
+  # context; renaming it here without updating the setting would block every PR.
+  # It is a misleading name for a pin-lag check and should become `spec-pin` in
+  # the same change that updates the required contexts (ENG-7961).
   drift:
     runs-on: ubuntu-latest
     steps:

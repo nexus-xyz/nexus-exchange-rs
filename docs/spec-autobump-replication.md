@@ -51,9 +51,17 @@ covering the other.
 
 Arming auto-merge does **not** merge. A PR can only merge once **both**:
 
-- the **required status checks** pass (this repo: `spec-drift` + CI `test`), and
+- the **required status checks** pass (this repo, today: `fmt`, `clippy`, `test`,
+  `docs`, and CI's `drift` pin-lag job), and
 - the **ENG-4149 ruleset bypass** is configured so the bot satisfies the
   1-review + code-owner-review rule for pin-bump PRs only.
+
+> **Mind the gap.** The check that proves a pin advance needs no code change is
+> `spec-drift`, and it is **not required yet** on `-rs` — it reports on every PR
+> but is advisory, so a red `spec-drift` does not on its own stop an armed
+> auto-merge. When replicating, make the drift check a *required* context, not
+> just a running one; otherwise the safety argument below rests on a check nothing
+> enforces.
 
 ### "Arms auto-merge" is not "lands unattended"
 

@@ -92,10 +92,37 @@ jobs:
 # today even though the autobump's safety argument leans on it.
 #
 # Now that this job reports on every PR under a distinct name, it can be required
-# without the classic skipped-required-check deadlock:
+# without the classic skipped-required-check deadlock.
+#
+# RUN THIS ONLY AFTER THIS WORKFLOW IS ON `main`. `spec-drift` does not report on
+# a commit that predates it, so requiring it first would block every open PR on a
+# check that never arrives.
+#
+# The endpoint REPLACES the whole list — it does not append. The five existing
+# contexts are repeated deliberately; omitting one silently unprotects it, so do
+# not trim this to just the new entry:
 #
 #   gh api -X PATCH repos/nexus-xyz/nexus-exchange-rs/branches/main/protection/required_status_checks \
-#     -f 'checks[][context]=spec-drift'   # plus the existing fmt/clippy/test/docs/drift
+#     --input - <<'JSON'
+#   {
+#     "strict": false,
+#     "checks": [
+#       {"context": "fmt",        "app_id": 15368},
+#       {"context": "clippy",     "app_id": 15368},
+#       {"context": "test",       "app_id": 15368},
+#       {"context": "docs",       "app_id": 15368},
+#       {"context": "drift",      "app_id": 15368},
+#       {"context": "spec-drift", "app_id": 15368}
+#     ]
+#   }
+#   JSON
 #
-# Do that in the same change as renaming this job, or the rename lands with the
-# real check still not required.
+# Values mirror the settings as of this commit (`strict: false`, app_id 15368 =
+# GitHub Actions). Re-read before running, in case the list has moved on:
+#
+#   gh api repos/nexus-xyz/nexus-exchange-rs/branches/main/protection/required_status_checks \
+#     --jq '.strict, .checks[]'
+#
+# When CI's `drift` is later renamed to `spec-pin`, swap that context here and
+# edit the job id in ci.yml in the SAME change — a required context with no job
+# reporting it blocks every PR.

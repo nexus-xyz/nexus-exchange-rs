@@ -524,6 +524,59 @@ class TestRestCallParserAgainstRealSource(unittest.TestCase):
         self.assertTrue(ops)
 
 
+class RenameAllIdentifierConventions(unittest.TestCase):
+    """`_apply_rename_all` must serve BOTH call sites.
+
+    It is handed snake_case identifiers by the struct-field parser and PascalCase
+    identifiers by the enum-variant parser. It previously assumed snake_case, so
+    on a variant the `snake_case` rule was a no-op and `camelCase` / `kebab-case`
+    / `SCREAMING-KEBAB-CASE` mis-derived — the gate then reported every member of
+    such an enum as simultaneously missing from the SDK and absent from the spec.
+
+    Same shape as the other gaps covered in this file: a check that was loud in
+    the wrong place, sending you to look for drift that did not exist.
+    """
+
+    # (rule, snake_case field, PascalCase variant, expected field, expected variant)
+    CASES = [
+        (None, "mark_price", "PartiallyFilled", "mark_price", "PartiallyFilled"),
+        ("snake_case", "mark_price", "PartiallyFilled", "mark_price", "partially_filled"),
+        ("camelCase", "mark_price", "PartiallyFilled", "markPrice", "partiallyFilled"),
+        ("PascalCase", "mark_price", "PartiallyFilled", "MarkPrice", "PartiallyFilled"),
+        ("SCREAMING_SNAKE_CASE", "mark_price", "PartiallyFilled", "MARK_PRICE", "PARTIALLY_FILLED"),
+        ("kebab-case", "mark_price", "PartiallyFilled", "mark-price", "partially-filled"),
+        ("SCREAMING-KEBAB-CASE", "mark_price", "PartiallyFilled", "MARK-PRICE", "PARTIALLY-FILLED"),
+        ("lowercase", "mark_price", "PartiallyFilled", "markprice", "partiallyfilled"),
+        ("UPPERCASE", "mark_price", "PartiallyFilled", "MARKPRICE", "PARTIALLYFILLED"),
+    ]
+
+    def test_every_rule_handles_both_identifier_conventions(self):
+        for rule, field, variant, want_field, want_variant in self.CASES:
+            with self.subTest(rule=rule, kind="field"):
+                self.assertEqual(csd._apply_rename_all(field, rule), want_field)
+            with self.subTest(rule=rule, kind="variant"):
+                self.assertEqual(csd._apply_rename_all(variant, rule), want_variant)
+
+    def test_snake_case_lowercases_a_single_word_variant(self):
+        """The exact case that failed: `Deposit` under `snake_case` must be
+        `deposit`, not `Deposit`."""
+        for variant, want in [("Deposit", "deposit"), ("Withdrawal", "withdrawal"), ("Faucet", "faucet")]:
+            self.assertEqual(csd._apply_rename_all(variant, "snake_case"), want)
+
+    def test_acronym_runs_are_not_split_mid_word(self):
+        self.assertEqual(csd._identifier_words("APIKey"), ["api", "key"])
+        self.assertEqual(csd._apply_rename_all("APIKey", "snake_case"), "api_key")
+        self.assertEqual(csd._apply_rename_all("APIKey", "camelCase"), "apiKey")
+
+    def test_digits_stay_attached_to_their_word(self):
+        self.assertEqual(csd._identifier_words("unique_traders_24h"), ["unique", "traders", "24h"])
+        self.assertEqual(csd._apply_rename_all("unique_traders_24h", "snake_case"), "unique_traders_24h")
+
+    def test_an_unknown_rule_still_fails_closed(self):
+        with self.assertRaises(SystemExit):
+            csd._apply_rename_all("Whatever", "TitleCase")
+
+
 @contextlib.contextmanager
 def _patched(module, name, value):
     """Temporarily set module.<name> = value, restoring the original after."""

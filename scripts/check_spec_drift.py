@@ -585,27 +585,60 @@ _RENAME_ALL_RE = re.compile(r'\brename_all\s*=\s*"([^"]+)"')
 _SKIP_RE = re.compile(r"\bskip(?:_serializing|_deserializing)?\b(?!_if)")
 
 
+def _identifier_words(name):
+    """Split a Rust identifier into lowercase words.
+
+    The two callers hand this function different identifier conventions: struct
+    fields arrive snake_case (`mark_price`), enum variants arrive PascalCase
+    (`PartiallyFilled`). serde derives a wire name from the *word sequence* in
+    both cases, so normalizing to words here is what lets one rename table serve
+    both — and is what `_apply_rename_all` got wrong before: it assumed a
+    snake_case input, so every rule was a no-op or a mis-derivation on a
+    PascalCase variant.
+
+    Acronym runs stay whole (`APIKey` -> ["api", "key"]) so a future
+    `rename_all` does not split them mid-word.
+    """
+    if "_" in name or name[:1].islower():
+        return [p.lower() for p in name.split("_") if p]
+    return [
+        w.lower() for w in re.findall(r"[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+", name)
+    ]
+
+
 def _apply_rename_all(name, rule):
-    """Map a snake_case Rust field identifier to its serde wire name under a
+    """Map a Rust field or variant identifier to its serde wire name under a
     container `rename_all` rule. Fail closed on an unknown rule rather than
-    silently mis-deriving a name (which would manufacture phantom drift)."""
-    if rule in (None, "snake_case"):
+    silently mis-deriving a name (which would manufacture phantom drift).
+
+    Accepts BOTH identifier conventions — snake_case struct fields and
+    PascalCase enum variants — because both call sites share this function.
+    That was a real gap: `rename_all = "snake_case"` on an enum returned the
+    PascalCase variant unchanged, so the gate reported every member as
+    simultaneously missing from the SDK and absent from the spec. `camelCase`,
+    `kebab-case` and `SCREAMING-KEBAB-CASE` were wrong on variants for the same
+    reason. Only PascalCase / lowercase / UPPERCASE happened to come out right,
+    which is why no existing enum had tripped it.
+    """
+    if rule is None:
         return name
-    parts = name.split("_")
+    parts = _identifier_words(name)
+    if rule == "snake_case":
+        return "_".join(parts)
     if rule == "camelCase":
         return parts[0] + "".join(p[:1].upper() + p[1:] for p in parts[1:])
     if rule == "PascalCase":
         return "".join(p[:1].upper() + p[1:] for p in parts)
     if rule == "SCREAMING_SNAKE_CASE":
-        return name.upper()
+        return "_".join(parts).upper()
     if rule == "kebab-case":
-        return name.replace("_", "-")
+        return "-".join(parts)
     if rule == "SCREAMING-KEBAB-CASE":
-        return name.upper().replace("_", "-")
+        return "-".join(parts).upper()
     if rule == "lowercase":
-        return name.replace("_", "").lower()
+        return "".join(parts)
     if rule == "UPPERCASE":
-        return name.replace("_", "").upper()
+        return "".join(parts).upper()
     sys.exit(
         f"ERROR: unsupported serde rename_all rule {rule!r}; extend "
         f"_apply_rename_all() in {os.path.basename(__file__)}."

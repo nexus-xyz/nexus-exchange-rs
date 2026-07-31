@@ -30,11 +30,11 @@ use crate::types::{
     BridgeDepositAddress, CancelOnDisconnectStatus, ClosedPosition, CreatedApiKey, CreditResult,
     Decimal, DepositResponse, DepositResult, EquityPoint, FaucetResponse, Fill, FundingPayment,
     FundingSample, FundsEntry, HealthStatus, LeverageUpdate, LoginResponse, MarginAdjustment,
-    MarginDirection, MarginMode, MarginModeUpdate, MarkPrice, Market, MarketStatus, MarketSummary,
-    Ohlcv, Order, OrderBook, OrderHistoryEntry, OrderPreview, OrderRequest, OrderResponse,
-    OrderResult, PortfolioHistory, PortfolioWindow, Position, RateLimitStatus, StatsSnapshot,
-    SubAccount, ThroughputSample, Ticker, TierOverride, Trade, Transfer, TransferRequest,
-    Withdrawal, WsToken,
+    MarginDirection, MarginMode, MarginModeUpdate, MarkPrice, Market, MarketRiskParams,
+    MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderHistoryEntry, OrderPreview,
+    OrderRequest, OrderResponse, OrderResult, PortfolioHistory, PortfolioWindow, Position,
+    RateLimitStatus, StatsSnapshot, SubAccount, ThroughputSample, Ticker, TierOverride, Trade,
+    Transfer, TransferRequest, Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
 
@@ -214,6 +214,22 @@ impl Client {
     /// empty map.
     pub async fn fetch_tickers(&self) -> Result<HashMap<String, Ticker>> {
         self.get("/api/v1/tickers", &[], COST_DEFAULT).await
+    }
+
+    /// Risk parameters for a single market
+    /// (`GET /markets/{market_id}/risk-params`). Unauthenticated.
+    ///
+    /// Answers `404` for an unknown market id, which surfaces as an error rather
+    /// than an all-zero [`MarketRiskParams`] — a zeroed margin rate would read as
+    /// "no margin required", the most dangerous possible default here.
+    pub async fn fetch_market_risk_params(&self, market_id: &str) -> Result<MarketRiskParams> {
+        let id = encoded_segment(market_id, "market_id")?;
+        // Unprefixed, deliberately: unlike the other single-market reads the spec
+        // does NOT dual-mount this one under `/api/v1` — it declares only
+        // `/markets/{market_id}/risk-params`. Following the contract rather than
+        // the sibling routes' shape; `check_spec_drift.py` catches it either way.
+        self.get(&format!("/markets/{id}/risk-params"), &[], COST_DEFAULT)
+            .await
     }
 
     /// Fetch the ticker for a single market, e.g. `BTC-USDX-PERP`.

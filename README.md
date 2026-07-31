@@ -101,7 +101,28 @@ double as the primary docs. Run one with `cargo run --example <name>`:
 | [`ws_user_events`](./examples/ws_user_events.rs) | yes | Stream private per-account events (fills, orders) |
 
 Authenticated examples read `NEXUS_API_KEY` / `NEXUS_API_SECRET` from the
-environment and default to a non-production network where they mutate state.
+environment and target `Network::Testnet`, where balances are synthetic play
+funds — so a copy-paste run cannot move real money.
+
+## Networks
+
+`Network` is the target axis: `Testnet` (play funds, the default), `Mainnet`
+(real funds) and `Local` (a developer convenience, never a fallback). Each
+bundles its REST bases, WebSocket origin and EIP-712 signing domain, and each
+host is written out as a named case — mainnet is `api.nexus.xyz`, deliberately
+*not* `api.mainnet.nexus.xyz`, so no host is ever derived by interpolating a
+network name.
+
+Two properties worth knowing before you wire anything up:
+
+- **`Mainnet` is not targetable by this release.** Its host does not resolve
+  yet and its durable base uses a different path layout than the one this SDK
+  builds and signs, so a client configured for it refuses every request locally
+  rather than guess against real funds.
+- **Credentials never cross networks.** API keys, session tokens and agent keys
+  are minted per network and are invalid on any other. Build a separate
+  `Config` per network; never reuse a signature, nonce or agent registration
+  across them.
 
 For a complete command-line application built on the SDK — every request goes
 through the crate's `Client`, with no transport of its own — see

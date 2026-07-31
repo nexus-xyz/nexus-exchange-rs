@@ -279,7 +279,7 @@ async fn connect_ws_mints_token_and_presents_it_on_upgrade() {
 /// attempt would hang/fail the test; the check must short-circuit before it.
 #[tokio::test]
 async fn connect_ws_errors_when_endpoint_unconfigured() {
-    let client = Client::new(Config::new(Network::Stable).api_key("nx", TEST_SECRET));
+    let client = Client::new(Config::new(Network::Testnet).api_key("nx", TEST_SECRET));
     let err = client.connect_ws(vec![]).await.unwrap_err();
     assert!(
         err.to_string().contains("no WebSocket endpoint configured"),
@@ -292,7 +292,7 @@ async fn connect_ws_errors_when_endpoint_unconfigured() {
 /// loop against a host that can't exist.
 #[tokio::test]
 async fn connect_without_endpoint_reports_once_then_ends() {
-    let client = Client::new(Config::new(Network::Stable));
+    let client = Client::new(Config::new(Network::Testnet));
     let mut sub = client.connect(vec![]);
     match next_event(&mut sub).await {
         Some(Event::Disconnected(reason)) => {

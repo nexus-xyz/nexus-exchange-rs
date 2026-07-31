@@ -17,10 +17,13 @@ use zeroize::Zeroizing;
 /// The exact, fixed message the API requires for EIP-191 session login.
 pub const SIGN_IN_MESSAGE: &str = "Sign in to Nexus Exchange";
 
-/// EIP-712 domain `name`, per the `/agents/register` spec.
-const EIP712_DOMAIN_NAME: &str = "Nexus Exchange";
-/// EIP-712 domain `version`, per the `/agents/register` spec.
-const EIP712_DOMAIN_VERSION: &str = "1";
+/// EIP-712 domain `name`, per the `/agents/register` spec. Re-exported through
+/// [`Network::signing_domain`](crate::Network::signing_domain) so the value that
+/// signs and the value the SDK advertises cannot drift apart.
+pub(crate) const EIP712_DOMAIN_NAME: &str = "Nexus Exchange";
+/// EIP-712 domain `version`, per the `/agents/register` spec. See
+/// [`EIP712_DOMAIN_NAME`].
+pub(crate) const EIP712_DOMAIN_VERSION: &str = "1";
 
 /// Signed body for `POST /auth/login` (EIP-191 session login).
 ///

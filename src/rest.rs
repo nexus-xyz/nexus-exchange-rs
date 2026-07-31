@@ -1051,13 +1051,15 @@ impl Client {
     /// applies. Requires credentials.
     ///
     /// Routing:
-    /// - **Non-production** network ([`Network::is_production`](crate::Network::is_production) is `false`,
-    ///   i.e. [`Beta`](crate::Network::Beta) / [`Local`](crate::Network::Local)):
-    ///   claims `amount` from the testnet faucet ([`claim_credit`](Self::claim_credit)).
-    /// - **Production** ([`Network::Stable`](crate::Network::Stable)): rejected
+    /// - **Play-funds** network ([`Network::is_mainnet`](crate::Network::is_mainnet) is `false`,
+    ///   i.e. [`Testnet`](crate::Network::Testnet) / [`Local`](crate::Network::Local)):
+    ///   claims `amount` from the faucet ([`claim_credit`](Self::claim_credit)).
+    /// - **Real funds** ([`Network::Mainnet`](crate::Network::Mainnet)): rejected
     ///   locally. `fund` will **never silently move real collateral** — depositing
     ///   real funds must be an explicit, deliberate [`deposit`](Self::deposit)
-    ///   call, not a side effect of a convenience helper.
+    ///   call, not a side effect of a convenience helper. (A `Mainnet` client
+    ///   refuses every request anyway; this guard is independent of that, so
+    ///   `fund` stays safe if mainnet later becomes targetable.)
     /// - **Unknown** network (client built with [`Config::with_base_url`](crate::Config::with_base_url),
     ///   so the host's real-money character is unknown): rejected locally; call
     ///   [`deposit`](Self::deposit) or [`claim_credit`](Self::claim_credit)
@@ -1070,7 +1072,7 @@ impl Client {
             return Err(Error::invalid_request("fund amount must be positive"));
         }
         match self.config.network {
-            Some(network) if !network.is_production() => self.claim_credit(Some(amount)).await,
+            Some(network) if !network.is_mainnet() => self.claim_credit(Some(amount)).await,
             Some(_) => Err(Error::invalid_request(
                 "fund() claims synthetic testnet credit and refuses to move real \
                  collateral on a production network; call deposit() explicitly to \
@@ -1440,13 +1442,13 @@ mod tests {
         assert_eq!(encode_path_segment("k#frag"), "k%23frag");
     }
 
-    // Routing a non-production `fund()` to the faucet needs both a declared
+    // Routing a play-funds `fund()` to the faucet needs both a declared
     // `Network` and a mock-server base URL — a combination the public builders
     // can't express (`with_base_url` carries no network). This in-crate test
     // sets the `pub(crate)` base URL directly to assert the wiring: a
-    // non-production fund() POSTs the amount to the credit/faucet endpoint.
+    // play-funds fund() POSTs the amount to the credit/faucet endpoint.
     #[tokio::test]
-    async fn fund_on_non_production_claims_faucet_credit() {
+    async fn fund_on_play_funds_network_claims_faucet_credit() {
         use crate::{Client, Config, Network};
         use wiremock::matchers::{body_json, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -1475,5 +1477,37 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(r.amount.to_string(), "250");
+    }
+
+    /// `fund()` must refuse on a real-funds network, and must refuse *locally* —
+    /// before a request is built, so no mock server is needed to prove nothing
+    /// was sent. The guard is independent of the blanket `Mainnet` request
+    /// refusal so it keeps holding if mainnet later becomes targetable.
+    #[tokio::test]
+    async fn fund_refuses_on_real_funds_and_on_an_unknown_host() {
+        use crate::{Client, Config, Network};
+
+        // Real funds: rejected, and the message points at the explicit path.
+        let err = Client::new(Config::new(Network::Mainnet))
+            .fund("1".parse().unwrap())
+            .await
+            .expect_err("fund() must never move real collateral");
+        assert!(err.to_string().contains("deposit"), "got: {err}");
+
+        // Unknown host (no declared network) is treated the same way: the
+        // fail-safe direction is to require an explicit choice, never to assume
+        // play money.
+        let err = Client::new(Config::with_base_url("http://127.0.0.1:1"))
+            .fund("1".parse().unwrap())
+            .await
+            .expect_err("an unknown host must not be assumed to be a faucet");
+        assert!(err.to_string().contains("claim_credit"), "got: {err}");
+
+        // A non-positive amount is rejected before any of the above.
+        let err = Client::new(Config::new(Network::Local))
+            .fund("0".parse().unwrap())
+            .await
+            .expect_err("non-positive amounts are rejected");
+        assert!(err.to_string().contains("positive"), "got: {err}");
     }
 }

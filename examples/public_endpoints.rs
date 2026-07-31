@@ -7,7 +7,7 @@ use nexus_exchange::{Client, Config, Network};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new(Config::new(Network::Stable));
+    let client = Client::new(Config::new(Network::Testnet));
 
     let markets = client.fetch_markets().await?;
     println!("{} markets", markets.len());

@@ -10,7 +10,7 @@ const MARKET: &str = "BTC-USDX-PERP";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new(Config::new(Network::Stable));
+    let client = Client::new(Config::new(Network::Testnet));
 
     // `None` lets the server pick its default page size; pass `Some(n)` to cap it.
     let trades = client.fetch_trades(MARKET, Some(20)).await?;

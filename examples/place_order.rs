@@ -4,11 +4,12 @@
 //! NEXUS_API_KEY=nx_… NEXUS_API_SECRET=<hex> cargo run --example place_order
 //! ```
 //!
-//! ⚠️ This example PLACES A REAL ORDER on whichever network it targets. It
-//! defaults to `Network::Beta` so a copy-paste run with live credentials does
-//! not trade on production — switch to `Network::Stable` only when you mean to
-//! trade on the live venue. The order is priced far below the market so it rests
-//! without filling; cancel it afterwards with the `cancel_order` example.
+//! ⚠️ This example PLACES AN ORDER on whichever network it targets. It defaults
+//! to `Network::Testnet`, where balances are synthetic play funds, so a
+//! copy-paste run with live credentials cannot move real money. Trading real
+//! funds means `Network::Mainnet`, which this release deliberately refuses to
+//! target at all. The order is priced far below the market so it rests without
+//! filling; cancel it afterwards with the `cancel_order` example.
 use nexus_exchange::markets::Rounding;
 use nexus_exchange::types::{Decimal, OrderRequest, Side, TimeInForce};
 use nexus_exchange::{Client, Config, Network};
@@ -17,8 +18,8 @@ const MARKET: &str = "BTC-USDX-PERP";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Non-prod by default — placing/cancelling orders mutates real state.
-    let client = Client::new(Config::new(Network::Beta).api_key(
+    // Play funds by default — placing/cancelling orders mutates account state.
+    let client = Client::new(Config::new(Network::Testnet).api_key(
         std::env::var("NEXUS_API_KEY")?,
         std::env::var("NEXUS_API_SECRET")?,
     ));

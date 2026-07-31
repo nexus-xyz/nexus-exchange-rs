@@ -11,12 +11,13 @@
 //! NEXUS_API_KEY=nx_… NEXUS_API_SECRET=<hex> cargo run --example cancel_order
 //! ```
 //!
-//! ⚠️ Defaults to `Network::Beta` so a copy-paste run does not touch production.
+//! ⚠️ Defaults to `Network::Testnet` (play funds), so a copy-paste run cannot
+//! cancel orders that hold real money.
 use nexus_exchange::{Client, Config, Network};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new(Config::new(Network::Beta).api_key(
+    let client = Client::new(Config::new(Network::Testnet).api_key(
         std::env::var("NEXUS_API_KEY")?,
         std::env::var("NEXUS_API_SECRET")?,
     ));

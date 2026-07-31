@@ -13,7 +13,7 @@ use crate::config::{API_VERSION_HEADER, API_VERSION_RAW, DEFAULT_USER_AGENT};
 use crate::ratelimit::{RateLimiter, ThrottleInfo};
 use crate::rest::pagination::{Cursor, NEXT_CURSOR_HEADER};
 use crate::types::RateLimitStatus;
-use crate::{Config, Error, Result};
+use crate::{Config, Error, Network, Result};
 
 /// The `{ code, message }` error envelope returned by the API on failures.
 #[derive(serde::Deserialize)]
@@ -34,6 +34,15 @@ struct ApiErrorBody {
 /// full `/api/v1/...` path is what must be signed. Selecting the base off this
 /// same prefix keeps the signed path and the sent URL from ever disagreeing.
 const API_V1_PREFIX: &str = "/api/v1/";
+
+/// Why a [`Network::Mainnet`] client refuses every request. Kept as one
+/// constant so the REST path and any future caller give the identical reason.
+const MAINNET_NOT_TARGETABLE: &str = "Network::Mainnet is not targetable by this release: \
+     api.nexus.xyz does not resolve yet (ENG-8155), and its durable base carries the version in \
+     the base (`/v1`) rather than in the path, which is not the layout this SDK builds and signs. \
+     Requests are refused locally rather than sent to a real-funds host on a guessed URL or a \
+     signature over a path the server never sees. Use Network::Testnet, or Config::with_base_url \
+     to target a host you control.";
 
 /// Build the underlying HTTP client with the configured `User-Agent`.
 ///
@@ -118,12 +127,27 @@ impl Client {
     /// a v1 path to be sent to the gateway base (or vice versa) by omission. The
     /// `path` argument is unchanged by this choice, so the value signed always
     /// equals the value appended to the base.
-    fn base_for(&self, path: &str) -> &str {
-        if path.starts_with(API_V1_PREFIX) {
+    ///
+    /// # Why this returns `Result`
+    ///
+    /// This is also the single gate that refuses [`Network::Mainnet`]. Every
+    /// request builder in this module resolves its base here, so returning
+    /// `Result` makes the real-funds check **impossible to omit**: a new helper
+    /// that forgets it does not compile. A boolean checked at each call site
+    /// would be one forgotten `if` away from putting a wrongly-built,
+    /// wrongly-signed request on a real-money host.
+    ///
+    /// The rejection is local and total — it happens before any DNS, TLS or
+    /// bytes on the wire, and before any credential is used.
+    fn base_for(&self, path: &str) -> Result<&str> {
+        if self.config.network == Some(Network::Mainnet) {
+            return Err(Error::invalid_request(MAINNET_NOT_TARGETABLE));
+        }
+        Ok(if path.starts_with(API_V1_PREFIX) {
             &self.config.direct_base_url
         } else {
             &self.config.base_url
-        }
+        })
     }
 
     /// Unauthenticated `GET`, deserializing the JSON response and decoding the
@@ -168,7 +192,7 @@ impl Client {
         query: &[(&str, String)],
         cost: f64,
     ) -> Result<(T, Option<Cursor>)> {
-        let url = format!("{}{}", self.base_for(path), path);
+        let url = format!("{}{}", self.base_for(path)?, path);
 
         // Reserve the endpoint's cost once for this logical request. Retries
         // below reuse that reservation and pace off `Retry-After` instead, so a
@@ -263,7 +287,7 @@ impl Client {
         let body_bytes = serde_json::to_vec(body)?;
         let req = self
             .http
-            .post(format!("{}{}", self.base_for(path), path))
+            .post(format!("{}{}", self.base_for(path)?, path))
             .timeout(self.config.timeout)
             .header("content-type", "application/json")
             .body(body_bytes);
@@ -291,6 +315,9 @@ impl Client {
         path: &str,
         query: &[(&str, String)],
     ) -> Result<(T, Option<Cursor>)> {
+        // Resolve the base *before* signing: a refused network must not consume
+        // a nonce or produce a signature for a request that will never be sent.
+        let base = self.base_for(path)?;
         let creds = self.creds()?;
         let qs = serde_urlencoded::to_string(query).unwrap_or_default();
         let headers = creds.auth_headers(&SigningContext {
@@ -301,9 +328,9 @@ impl Client {
             timestamp_ms: self.nonce(),
         })?;
         let url = if qs.is_empty() {
-            format!("{}{}", self.base_for(path), path)
+            format!("{base}{path}")
         } else {
-            format!("{}{}?{}", self.base_for(path), path, qs)
+            format!("{base}{path}?{qs}")
         };
         let mut req = self.http.get(url).timeout(self.config.timeout);
         for (name, value) in &headers {
@@ -365,6 +392,13 @@ impl Client {
         // silently empty query would misroute the request.
         let qs = serde_urlencoded::to_string(query)
             .map_err(|e| Error::invalid_request(format!("could not encode query string: {e}")))?;
+        // Resolve through `base_for` like every other builder, and before
+        // signing. This one used to read `config.base_url` directly, which
+        // silently opted out of the `/api/v1` routing rule (harmless only
+        // because its single caller is a gateway path today) and, more
+        // importantly, out of the real-funds gate. One rule, one place — no
+        // builder gets its own base.
+        let base = self.base_for(path)?;
         let body_bytes = serde_json::to_vec(body)?;
         let headers = self.creds()?.auth_headers(&SigningContext {
             method: "PATCH",
@@ -374,9 +408,9 @@ impl Client {
             timestamp_ms: self.nonce(),
         })?;
         let url = if qs.is_empty() {
-            format!("{}{}", self.config.base_url, path)
+            format!("{base}{path}")
         } else {
-            format!("{}{}?{}", self.config.base_url, path, qs)
+            format!("{base}{path}?{qs}")
         };
         let mut req = self
             .http
@@ -413,6 +447,8 @@ impl Client {
         path: &str,
         body: &B,
     ) -> Result<T> {
+        // Resolve the base *before* signing — see `signed_get_page`.
+        let base = self.base_for(path)?;
         let body_bytes = serde_json::to_vec(body)?;
         let headers = self.creds()?.auth_headers(&SigningContext {
             method: method.as_str(),
@@ -423,7 +459,7 @@ impl Client {
         })?;
         let mut req = self
             .http
-            .request(method, format!("{}{}", self.base_for(path), path))
+            .request(method, format!("{base}{path}"))
             .timeout(self.config.timeout)
             .header("content-type", "application/json")
             .body(body_bytes);
@@ -445,6 +481,8 @@ impl Client {
         // `DELETE /orders`, defeating the very guard the scoped call exists for.
         let qs = serde_urlencoded::to_string(query)
             .map_err(|e| Error::invalid_request(format!("could not encode query string: {e}")))?;
+        // Resolve the base *before* signing — see `signed_get_page`.
+        let base = self.base_for(path)?;
         let headers = self.creds()?.auth_headers(&SigningContext {
             method: method.as_str(),
             path,
@@ -453,9 +491,9 @@ impl Client {
             timestamp_ms: self.nonce(),
         })?;
         let url = if qs.is_empty() {
-            format!("{}{}", self.base_for(path), path)
+            format!("{base}{path}")
         } else {
-            format!("{}{}?{}", self.base_for(path), path, qs)
+            format!("{base}{path}?{qs}")
         };
         // These methods semantically carry a payload even when that payload is
         // empty. Set `Content-Length: 0` explicitly; reqwest does not emit the
@@ -658,23 +696,108 @@ mod tests {
     /// relies on, so pin it directly.
     #[test]
     fn base_for_routes_v1_to_direct_and_rest_to_gateway() {
-        let client = Client::new(Config::new(crate::Network::Stable));
+        let client = Client::new(Config::new(Network::Testnet));
         assert_eq!(
-            client.base_for("/api/v1/orders"),
+            client.base_for("/api/v1/orders").unwrap(),
             "https://exchange.nexus.xyz"
         );
         assert_eq!(
-            client.base_for("/api/v1/markets/summary"),
+            client.base_for("/api/v1/markets/summary").unwrap(),
             "https://exchange.nexus.xyz"
         );
         // Legacy / not-yet-migrated routes stay on the gateway base.
         assert_eq!(
-            client.base_for("/status"),
+            client.base_for("/status").unwrap(),
             "https://exchange.nexus.xyz/api/exchange"
         );
         assert_eq!(
-            client.base_for("/orders/o1"),
+            client.base_for("/orders/o1").unwrap(),
             "https://exchange.nexus.xyz/api/exchange"
+        );
+    }
+
+    /// A `Mainnet` client resolves **no** base, for any path shape. This is the
+    /// choke point every request builder goes through, so proving it here proves
+    /// no request of any kind can reach a real-funds host.
+    #[test]
+    fn mainnet_resolves_no_base_for_any_path() {
+        let client = Client::new(Config::new(Network::Mainnet));
+        for path in [
+            "/api/v1/orders",
+            "/status",
+            "/orders/o1",
+            "/api/v1/account/credit",
+            "",
+        ] {
+            let err = client
+                .base_for(path)
+                .expect_err("mainnet must not resolve a base");
+            assert!(
+                !err.is_retryable(),
+                "the refusal is a permanent local decision, not a transient failure"
+            );
+        }
+        // The play-funds networks are unaffected by the guard.
+        assert!(Client::new(Config::new(Network::Testnet))
+            .base_for("/status")
+            .is_ok());
+        assert!(Client::new(Config::new(Network::Local))
+            .base_for("/status")
+            .is_ok());
+        // A custom base URL carries no network, so it is never gated here.
+        assert!(Client::new(Config::with_base_url("http://127.0.0.1:1"))
+            .base_for("/status")
+            .is_ok());
+    }
+
+    /// The real-funds refusal must come *before* the request is signed: no
+    /// signature computed, and no nonce drawn. A stateless `SystemTimeNonce`
+    /// wouldn't care, but a caller-supplied monotonic counter would silently
+    /// desync against the server if a never-sent request consumed a value.
+    #[tokio::test]
+    async fn mainnet_refusal_consumes_no_nonce_and_no_signature() {
+        use crate::auth::Nonce;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        #[derive(Debug, Default)]
+        struct CountingNonce(AtomicUsize);
+        impl Nonce for CountingNonce {
+            fn next(&self) -> u64 {
+                self.0.fetch_add(1, Ordering::SeqCst) as u64 + 1
+            }
+        }
+
+        let nonce = Arc::new(CountingNonce::default());
+        let client = Client::new(
+            Config::new(Network::Mainnet)
+                .api_key(
+                    "nx_test",
+                    "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+                )
+                .with_nonce(nonce.clone()),
+        );
+
+        // One representative of each signed builder shape.
+        let signed_get: Result<serde_json::Value> = client.signed_get("/account", &[]).await;
+        assert!(signed_get.is_err());
+        let signed_post: Result<serde_json::Value> =
+            client.signed_post("/orders", &serde_json::json!({})).await;
+        assert!(signed_post.is_err());
+        let signed_delete: Result<serde_json::Value> = client.signed_delete("/orders/o1").await;
+        assert!(signed_delete.is_err());
+        let patched: Result<serde_json::Value> = client
+            .signed_patch_with_query(
+                "/orders/o1",
+                &[("market_id", "BTC-USDX-PERP".to_string())],
+                &serde_json::json!({}),
+            )
+            .await;
+        assert!(patched.is_err());
+
+        assert_eq!(
+            nonce.0.load(Ordering::SeqCst),
+            0,
+            "a refused request must not draw a nonce"
         );
     }
 

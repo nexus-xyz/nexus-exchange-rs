@@ -28,12 +28,13 @@ use crate::types::{
     AccountFees, AccountPortfolioSummary, AccountState, AccountSummary, AdlEvent, AgentInfo,
     AgentRegistered, AmendOrder, ApiKeyInfo, BridgeAssetsResponse, BridgeDeposit,
     BridgeDepositAddress, CancelOnDisconnectStatus, ClosedPosition, CreatedApiKey, CreditResult,
-    Decimal, DepositResult, EquityPoint, Fill, FundingPayment, FundingSample, HealthStatus,
-    LeverageUpdate, LoginResponse, MarginAdjustment, MarginDirection, MarginMode, MarginModeUpdate,
-    MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderHistoryEntry,
-    OrderPreview, OrderRequest, OrderResponse, OrderResult, PortfolioHistory, PortfolioWindow,
-    Position, RateLimitStatus, StatsSnapshot, SubAccount, ThroughputSample, Ticker, TierOverride,
-    Trade, Transfer, TransferRequest, Withdrawal, WsToken,
+    Decimal, DepositResponse, DepositResult, EquityPoint, FaucetResponse, Fill, FundingPayment,
+    FundingSample, FundsEntry, HealthStatus, LeverageUpdate, LoginResponse, MarginAdjustment,
+    MarginDirection, MarginMode, MarginModeUpdate, MarkPrice, Market, MarketStatus, MarketSummary,
+    Ohlcv, Order, OrderBook, OrderHistoryEntry, OrderPreview, OrderRequest, OrderResponse,
+    OrderResult, PortfolioHistory, PortfolioWindow, Position, RateLimitStatus, StatsSnapshot,
+    SubAccount, ThroughputSample, Ticker, TierOverride, Trade, Transfer, TransferRequest,
+    Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
 
@@ -98,6 +99,10 @@ pub const MAX_CLOSED_POSITIONS_LIMIT: u32 = 200;
 /// would sit *below* that default and reject client-side a plain request the
 /// server accepts.
 pub const MAX_EQUITY_HISTORY_LIMIT: u32 = 720;
+
+/// Largest `limit` `GET /deposits` accepts (spec: `maximum: 100`). Also its
+/// default, so an omitted `limit` already asks for the maximum page.
+pub const MAX_DEPOSITS_LIMIT: u32 = 100;
 
 /// Reject a page size the endpoint's request schema forbids, before it is sent
 /// (and, on a signed route, before it is signed).
@@ -405,6 +410,54 @@ impl Client {
     /// [`HealthStatus::status`](crate::types::HealthStatus::status).
     pub async fn health_check(&self) -> Result<HealthStatus> {
         self.get("/status", &[], COST_DEFAULT).await
+    }
+
+    /// Funds-movement history for the authenticated account (`GET /deposits`).
+    /// Requires credentials.
+    ///
+    /// Despite the route name the rows are not all deposits — [`FundsEntry::kind`]
+    /// spans `Deposit`, `Withdrawal` and `Faucet`, so filter on it rather than
+    /// assuming. `limit` must be in `1..=`[`MAX_DEPOSITS_LIMIT`]; omitting it
+    /// asks for the server default, which is also the maximum.
+    pub async fn fetch_deposits(&self, limit: Option<u32>) -> Result<Vec<FundsEntry>> {
+        check_page_size(limit, MAX_DEPOSITS_LIMIT, "deposits")?;
+        self.signed_get("/deposits", &limit_query(limit)).await
+    }
+
+    /// Credit a deposit to the authenticated account (`POST /deposits`).
+    /// Requires credentials.
+    ///
+    /// `asset` defaults to `USDX` server-side when `None`. A non-positive amount
+    /// is rejected locally before anything is signed or sent, matching
+    /// [`deposit`](Self::deposit).
+    ///
+    /// Distinct from [`deposit`](Self::deposit), which posts to the older
+    /// `/account/deposit`. This is the spec'd route and returns the
+    /// authoritative post-deposit balance.
+    pub async fn create_deposit(
+        &self,
+        amount: Decimal,
+        asset: Option<&str>,
+    ) -> Result<DepositResponse> {
+        if amount <= Decimal::ZERO {
+            return Err(Error::invalid_request("deposit amount must be positive"));
+        }
+        let mut body = serde_json::json!({ "amount": amount.to_string() });
+        if let Some(asset) = asset {
+            require_non_empty(asset, "asset")?;
+            body["asset"] = serde_json::Value::String(asset.to_string());
+        }
+        self.signed_post("/deposits", &body).await
+    }
+
+    /// Claim the testnet faucet for the authenticated account (`POST /faucet`).
+    /// Requires credentials.
+    ///
+    /// Rate-limited server-side: a claim inside the cooldown answers `429`. The
+    /// success payload carries [`FaucetResponse::available_at_ms`], so read that
+    /// rather than assuming a cooldown length.
+    pub async fn claim_faucet(&self) -> Result<FaucetResponse> {
+        self.signed_post("/faucet", &serde_json::json!({})).await
     }
 
     /// Aggregate venue statistics (`GET /stats`). Unauthenticated.

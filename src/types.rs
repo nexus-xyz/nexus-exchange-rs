@@ -207,6 +207,96 @@ pub struct RateLimitStatus {
     pub reset_at_ms: Option<i64>,
 }
 
+/// What moved the funds in a [`FundsEntry`].
+///
+/// Closed enum, matching the spec's member set exactly — `check_spec_drift.py`
+/// polices that, so a member added upstream trips the gate rather than silently
+/// failing to decode in the field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+// `lowercase`, not `snake_case`: both produce the same wire values for these
+// single-word variants, but `check_spec_drift.py`'s `_apply_rename_all` treats
+// `snake_case` as a no-op (it is written for already-snake_case struct FIELDS,
+// not PascalCase enum VARIANTS), so `snake_case` here manufactures phantom drift
+// against the spec. `lowercase` is derived identically by serde and by the gate.
+#[serde(rename_all = "lowercase")]
+pub enum FundsKind {
+    /// A deposit credited to the account.
+    Deposit,
+    /// A withdrawal debited from the account.
+    Withdrawal,
+    /// A testnet faucet grant.
+    Faucet,
+}
+
+/// Settlement state of a [`FundsEntry`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+// `lowercase`, not `snake_case`: both produce the same wire values for these
+// single-word variants, but `check_spec_drift.py`'s `_apply_rename_all` treats
+// `snake_case` as a no-op (it is written for already-snake_case struct FIELDS,
+// not PascalCase enum VARIANTS), so `snake_case` here manufactures phantom drift
+// against the spec. `lowercase` is derived identically by serde and by the gate.
+#[serde(rename_all = "lowercase")]
+pub enum FundsStatus {
+    /// Submitted, not yet settled.
+    Pending,
+    /// Settled.
+    Confirmed,
+    /// Terminal failure.
+    Failed,
+}
+
+/// One funds-movement record (`GET /deposits`).
+///
+/// The endpoint is named for deposits but the row type is shared: `kind`
+/// distinguishes deposits, withdrawals and faucet grants, so a caller must
+/// filter rather than assume every row is a deposit.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FundsEntry {
+    /// Server-assigned row id.
+    pub id: i64,
+    /// Which operation produced this row — **not** always `Deposit`.
+    pub kind: FundsKind,
+    /// 0x-prefixed account address.
+    pub account: String,
+    /// Amount moved, as a lossless decimal.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub amount: Decimal,
+    /// Asset symbol, e.g. `USDX`.
+    pub asset: String,
+    /// Unix ms.
+    pub timestamp: i64,
+    /// Settlement state.
+    pub status: FundsStatus,
+    /// On-chain transaction hash. `None` for entries with no chain leg (a faucet
+    /// grant, or a deposit that has not been broadcast yet) — the spec models it
+    /// as `["string", "null"]`.
+    #[serde(default)]
+    pub tx_hash: Option<String>,
+}
+
+/// Result of `POST /deposits`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DepositResponse {
+    /// Authoritative post-deposit balance. Prefer this over adding the deposit
+    /// amount to a locally cached balance.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub balance: Decimal,
+}
+
+/// Result of `POST /faucet`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FaucetResponse {
+    /// Amount credited by this claim.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub amount: Decimal,
+    /// Earliest time the faucet may be claimed again, Unix ms.
+    ///
+    /// Read this rather than guessing a cooldown — it is the server's own answer,
+    /// and `POST /faucet` answers `429` before it.
+    #[serde(default)]
+    pub available_at_ms: i64,
+}
+
 /// Aggregate venue statistics (`GET /stats`). Unauthenticated.
 ///
 /// Every field is `#[serde(default)]` because the spec marks none of them

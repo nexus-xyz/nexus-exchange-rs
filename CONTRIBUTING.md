@@ -38,15 +38,48 @@ or semantics is a genuine break — keeping the old method would preserve the ol
 
 - **Batch** breaking changes into a single planned minor bump rather than
   shipping them one-per-PR.
-- The non-blocking **`semver`** CI job (`cargo-semver-checks`) flags
-  public-API breaks on the PR. If it's red, either add a `#[deprecated]` alias
-  instead, or confirm the break is intended and call it out in the PR — it then
-  shows up in the release-plz release PR's "⚠ breaking changes" section.
+- The **`semver`** CI job (`cargo-semver-checks`) flags public-API breaks on the
+  PR, judging only the delta against the base. If it's red, either add a
+  `#[deprecated]` alias instead, or **declare** the break so release-plz computes
+  the right bump — see [Merging a PR](#merging-a-pr) for how, since an undeclared
+  break fails the job. A declared one shows up in the release-plz release PR's
+  "⚠ breaking changes" section.
 
 ### Toward 1.0
 
 `0.x` is for iteration. We'll commit to a stable public surface at `1.0`; after
 that, breaking changes require a deprecation window and a major bump.
+
+## Merging a PR
+
+Squash-and-merge is the only method enabled, and the source branch is deleted on
+merge. Two consequences are worth knowing *before* you open the PR, because both
+are decided by the title you type.
+
+**The PR title becomes the squash commit's subject, verbatim**
+(`squash_merge_commit_title = PR_TITLE`). It therefore has to be a valid
+[conventional commit](https://www.conventionalcommits.org/) — `feat(rest): …`,
+`fix(docs): …`, `ci: …`. release-plz derives both the changelog section and the
+version bump from that subject, so a title it cannot parse files the change under
+"Other" and contributes nothing to the bump. Four commits on `main` predate this
+and show the symptom.
+
+**Declare a breaking change with `!` before the colon** — `feat(rest)!: …`. The
+`semver` job accepts either that or a `BREAKING CHANGE:` footer, but the two are
+not equally durable: the squash body is built from the **commit** messages and
+never from the PR description, so a footer written only in the PR description is
+silently dropped at merge. Prefer `!` in the title; if you use a footer, put it in
+a commit body.
+
+This is not hypothetical, and it is why the title is now the source of truth.
+[#14](https://github.com/nexus-xyz/nexus-exchange-rs/pull/14) was titled `feat!:`
+and CI passed on it, but single-commit PRs used to squash under the *commit*
+subject rather than the PR title, and that commit said plain `feat:`. The break
+shipped in `v0.3.0` with no `[**breaking**]` marker in the changelog. The released
+version was still correct — but only because
+[#48](https://github.com/nexus-xyz/nexus-exchange-rs/pull/48) declared its own
+break in the same release and carried the minor bump. Had #14 shipped alone, it
+would have gone out as a patch.
 
 ## Cutting a release
 

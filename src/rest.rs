@@ -25,8 +25,8 @@ use std::collections::HashMap;
 
 use crate::auth::{AgentRegistration, EthSigner};
 use crate::types::{
-    AccountFees, AccountPortfolioSummary, AccountState, AccountSummary, AdlEvent, AgentInfo,
-    AgentRegistered, AmendOrder, ApiKeyInfo, BridgeAssetsResponse, BridgeDeposit,
+    AccountFees, AccountFunding, AccountPortfolioSummary, AccountState, AccountSummary, AdlEvent,
+    AgentInfo, AgentRegistered, AmendOrder, ApiKeyInfo, BridgeAssetsResponse, BridgeDeposit,
     BridgeDepositAddress, CancelOnDisconnectStatus, ClosedPosition, CreatedApiKey, CreditResult,
     Decimal, DepositResponse, DepositResult, EquityPoint, FaucetResponse, Fill, FundingPayment,
     FundingSample, FundsEntry, HealthStatus, LeverageUpdate, LoginResponse, MarginAdjustment,
@@ -103,6 +103,9 @@ pub const MAX_EQUITY_HISTORY_LIMIT: u32 = 720;
 /// Largest `limit` `GET /deposits` accepts (spec: `maximum: 100`). Also its
 /// default, so an omitted `limit` already asks for the maximum page.
 pub const MAX_DEPOSITS_LIMIT: u32 = 100;
+/// Largest `limit` `GET /funding` accepts (spec: `maximum: 1000`). Note the
+/// server default is 100, NOT this maximum — omitting `limit` asks for 100.
+pub const MAX_ACCOUNT_FUNDING_LIMIT: u32 = 1000;
 
 /// Reject a page size the endpoint's request schema forbids, before it is sent
 /// (and, on a signed route, before it is signed).
@@ -235,6 +238,21 @@ impl Client {
         // `check_spec_drift.py` catches it if the spec changes.
         self.get(&format!("/markets/{id}/risk-params"), &[], COST_DEFAULT)
             .await
+    }
+
+    /// Funding settlements for the authenticated account (`GET /funding`).
+    /// Requires credentials.
+    ///
+    /// `limit` must be in `1..=`[`MAX_ACCOUNT_FUNDING_LIMIT`]. Unlike the
+    /// paginated readers, omitting it asks for the server default of **100**,
+    /// not the maximum — pass it explicitly if you want more.
+    ///
+    /// Richer than [`fetch_funding_payments`](Self::fetch_funding_payments)
+    /// (`GET /funding-payments`): these rows carry `direction` and
+    /// `position_size` as well.
+    pub async fn fetch_account_funding(&self, limit: Option<u32>) -> Result<Vec<AccountFunding>> {
+        check_page_size(limit, MAX_ACCOUNT_FUNDING_LIMIT, "funding")?;
+        self.signed_get("/funding", &limit_query(limit)).await
     }
 
     /// Fetch the ticker for a single market, e.g. `BTC-USDX-PERP`.

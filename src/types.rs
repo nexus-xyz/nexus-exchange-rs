@@ -408,6 +408,50 @@ pub struct MarketRiskParams {
     pub maintenance_margin_rate: Decimal,
 }
 
+/// Whether a funding payment was paid out or received.
+///
+/// `lowercase`, not `snake_case`: `check_spec_drift.py`'s `_apply_rename_all`
+/// treats `snake_case` as a no-op on PascalCase enum variants, so it would
+/// manufacture phantom drift. Both rules produce identical wire values for these
+/// single-word variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FundingDirection {
+    /// The account paid funding.
+    Paid,
+    /// The account received funding.
+    Received,
+}
+
+/// One funding settlement for the authenticated account (`GET /funding`).
+///
+/// Distinct from [`FundingPayment`] (`GET /funding-payments`), which is a
+/// narrower row without `direction` or `position_size`. Two endpoints, two
+/// shapes — this is the richer one.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AccountFunding {
+    /// Market the settlement relates to, e.g. `BTC-USDX-PERP`.
+    pub market_id: String,
+    /// Signed funding amount in the quote asset: negative when paid, positive
+    /// when received.
+    ///
+    /// [`Self::direction`] carries the same fact categorically. They are
+    /// redundant by design in the spec; if they ever disagree, prefer the sign,
+    /// because that is the number that moved the balance.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub amount: Decimal,
+    /// Categorical form of the sign on [`Self::amount`].
+    pub direction: FundingDirection,
+    /// Funding rate applied for this settlement.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub funding_rate: Decimal,
+    /// Position size the rate was applied to.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub position_size: Decimal,
+    /// Unix ms the funding was applied.
+    pub timestamp: i64,
+}
+
 /// A single order-book level, `[price, amount]` (CCXT format).
 ///
 /// Both values arrive as JSON numbers via the `float` adapter and may carry

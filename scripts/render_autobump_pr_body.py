@@ -62,11 +62,19 @@ def main():
             "its own — the PR can only merge once:\n"
         )
         out.append(
-            "- the required status checks pass: the SDK `drift` check "
-            "(code <-> endpoints <-> pinned spec) and CI `test`. An additive spec "
-            "change needs no SDK code edits, so these stay green; they fail only "
-            "if an *implemented* op was removed/renamed (which oasdiff would have "
-            "classified as breaking)."
+            "- the required status checks pass: `spec-drift` "
+            "(code <-> endpoints <-> pinned spec), `spec-pin`, and CI `test`. An "
+            "additive spec change needs no SDK code edits, so these stay green."
+        )
+        out.append(
+            "  A non-breaking verdict does **not** imply `spec-drift` is green — "
+            "the two checks are independent, and `spec-drift` is the only one that "
+            "objects to a *correctly sunset removal*. An operation the api repo "
+            "deprecated with a past `x-sunset` and then deleted is NON-breaking to "
+            "oasdiff (verified against v0.7.2, ENG-7961), so such a bump reaches "
+            "you with auto-merge armed and `spec-drift` red, because the removed op "
+            "is still listed in endpoints.txt. Read that combination as a real "
+            "removal needing a human, not as a flaky check."
         )
         out.append(
             "- the **ENG-4149 ruleset bypass** for this bot is configured to "

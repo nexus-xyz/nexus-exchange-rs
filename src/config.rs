@@ -129,6 +129,27 @@ impl Network {
     /// see [`crate::Client`] for how the base is selected per request. Local dev
     /// serves both surfaces from the same origin, so it matches [`base_url`].
     ///
+    /// # Comparing this against the other Nexus SDKs
+    ///
+    /// The two-base split here is an artifact of being **dual-stack**, not a
+    /// different target: some routes still live on the gateway, so the base has
+    /// to be chosen per path. An SDK that only speaks the `/api/v1` surface
+    /// needs no such choice and can fold the prefix into a single base instead.
+    /// The field names therefore do *not* line up one-to-one, and the pairing
+    /// that matters is:
+    ///
+    /// ```text
+    /// this SDK / Python:  direct_base_url + "/api/v1/orders"
+    /// TypeScript:         baseUrl (= host root + "/api/v1") + "/orders"
+    /// ```
+    ///
+    /// Both compose to `https://exchange.nexus.xyz/api/v1/orders` and both sign
+    /// the **full** path including `/api/v1`. So TypeScript's `baseUrl` is the
+    /// analogue of this method plus the prefix — it is *not* the analogue of
+    /// [`base_url`], which is the gateway base and carries `/api/exchange`.
+    /// Reading the two `base_url`-shaped fields as the same thing is the one
+    /// way to conclude that a prefix disagrees when it does not.
+    ///
     /// [`base_url`]: Self::base_url
     pub fn direct_base_url(self) -> &'static str {
         // Named cases, never interpolated — see the type-level note.
@@ -461,7 +482,7 @@ pub struct Config {
     /// [`Config::network`].
     pub(crate) network: Option<Network>,
     /// The WebSocket origin to stream from, or `None` when it is not known for
-    /// the configured network (production host unconfirmed — ENG-3398). A
+    /// the configured network (no usable WS origin yet — ENG-3398). A
     /// separate host from `base_url`; see [`Network::ws_base`].
     pub(crate) ws_url: Option<String>,
     pub(crate) ws: WsConfig,
@@ -792,8 +813,8 @@ mod tests {
     }
 
     /// `Config` mirrors `ws_base`: a network with a known WS host carries it,
-    /// and an unconfirmed one leaves `ws_url` unset rather than derived from
-    /// the REST base.
+    /// and one without a usable origin leaves `ws_url` unset rather than
+    /// derived from the REST base.
     #[test]
     fn config_ws_url_follows_network_and_is_not_derived_from_rest_base() {
         assert_eq!(

@@ -186,12 +186,12 @@ impl Client {
         }
 
         // The WS origin is a separate host from the REST base and isn't known
-        // for every network (production host unconfirmed — ENG-3398); fail fast
+        // for every network (no usable WS origin yet — ENG-3398); fail fast
         // rather than spawn a task that can't connect.
         let ws_url = self.config.ws_url.clone().ok_or_else(|| {
             Error::invalid_request(
-                "no WebSocket endpoint configured for this network (production WS host \
-                 not yet confirmed — ENG-3398); set one with Config::with_ws_url",
+                "no WebSocket endpoint configured for this network (no usable WS origin \
+                 yet — ENG-3398); set one with Config::with_ws_url",
             )
         })?;
 

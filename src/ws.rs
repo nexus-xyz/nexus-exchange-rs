@@ -190,7 +190,7 @@ impl Client {
     ///
     /// The stream targets the configured WebSocket origin (a separate host from
     /// the REST base — see [`Network::ws_base`](crate::Network::ws_base)). If
-    /// none is configured for the network (production host unconfirmed —
+    /// none is configured for the network (no usable WS origin yet —
     /// ENG-3398) the background task immediately emits a single
     /// [`Event::Disconnected`] explaining that and stops; set one with
     /// [`Config::with_ws_url`](crate::Config::with_ws_url) or use a network
@@ -208,7 +208,7 @@ impl Client {
     ///
     /// Requires credentials (the token mint is signed). Fails fast — before any
     /// network round-trip — if no WebSocket endpoint is configured for the
-    /// network (production host unconfirmed — ENG-3398); set one with
+    /// network (no usable WS origin yet — ENG-3398); set one with
     /// [`Config::with_ws_url`](crate::Config::with_ws_url) until it is.
     ///
     /// The minted token is short-lived and **single-use**, so it authenticates
@@ -224,8 +224,8 @@ impl Client {
         // not after spending a mint round-trip on a stream that can't connect.
         if self.config.ws_url.is_none() {
             return Err(Error::invalid_request(
-                "no WebSocket endpoint configured for this network (production WS host \
-                 not yet confirmed — ENG-3398); set one with Config::with_ws_url",
+                "no WebSocket endpoint configured for this network (no usable WS origin \
+                 yet — ENG-3398); set one with Config::with_ws_url",
             ));
         }
         // Pre-mint the first token so credential / transport problems surface
@@ -286,7 +286,7 @@ fn emit_lifecycle(event_tx: &mpsc::Sender<Event>, event: Event) -> bool {
 /// within reason.
 struct RunConfig {
     /// WebSocket origin; `None` means the network has no known WS host
-    /// (production unconfirmed — ENG-3398), reported once before stopping.
+    /// (no usable WS origin yet — ENG-3398), reported once before stopping.
     base: Option<String>,
     /// `Some` for an authenticated stream — a client clone used to re-mint a
     /// single-use token before every (re)connect.
@@ -320,8 +320,8 @@ async fn run(
         let _ = emit_lifecycle(
             &event_tx,
             Event::Disconnected(
-                "no WebSocket endpoint configured for this network (production WS host \
-                 not yet confirmed — ENG-3398); set one with Config::with_ws_url"
+                "no WebSocket endpoint configured for this network (no usable WS origin \
+                 yet — ENG-3398); set one with Config::with_ws_url"
                     .to_string(),
             ),
         );

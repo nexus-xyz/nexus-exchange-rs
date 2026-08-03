@@ -1008,8 +1008,7 @@ impl Client {
     /// Deposit **real** USDX collateral (`POST /account/deposit`). Requires
     /// credentials.
     ///
-    /// This moves real funds and is the production funding path. To fund a
-    /// non-production (testnet) account, use the faucet
+    /// This moves real collateral. To fund a play-funds account, use the faucet
     /// ([`claim_credit`](Self::claim_credit)) — or the network-aware
     /// [`fund`](Self::fund) convenience, which routes to the right primitive.
     /// A non-positive amount is rejected locally before sending.
@@ -1033,8 +1032,8 @@ impl Client {
     /// allowance (`POST /account/credit`). Omit `amount` to claim the full
     /// remaining allowance. Requires credentials.
     ///
-    /// This is the non-production funding path; the production counterpart that
-    /// moves real collateral is [`deposit`](Self::deposit). To pick between the
+    /// This is the play-funds funding path; the counterpart that moves real
+    /// collateral is [`deposit`](Self::deposit). To pick between the
     /// two by network automatically, see [`fund`](Self::fund).
     pub async fn claim_credit(&self, amount: Option<Decimal>) -> Result<CreditResult> {
         let body = match amount {
@@ -1074,9 +1073,9 @@ impl Client {
         match self.config.network {
             Some(network) if !network.is_mainnet() => self.claim_credit(Some(amount)).await,
             Some(_) => Err(Error::invalid_request(
-                "fund() claims synthetic testnet credit and refuses to move real \
-                 collateral on a production network; call deposit() explicitly to \
-                 deposit real USDX",
+                "fund() claims synthetic faucet credit and refuses to move real \
+                 collateral on a real-funds network (Network::Mainnet); call deposit() \
+                 explicitly to deposit real USDX",
             )),
             None => Err(Error::invalid_request(
                 "fund() needs a known Network to choose a funding primitive, but this \

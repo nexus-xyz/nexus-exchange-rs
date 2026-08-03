@@ -7,6 +7,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- *(config)* [**breaking**] Adopted the **network axis** the spec formalizes
+  (ENG-6442): `Network` is now `{Mainnet, Testnet, Local}`, each bundling its
+  REST bases, WebSocket origin and EIP-712 signing domain (ENG-6452).
+
+  **The rename is a bug fix, not a relabel — read the mapping before you
+  migrate.** `Stable` pointed at `https://exchange.nexus.xyz/api/exchange`, and
+  the spec's authoritative `x-nexus-networks` map records that host as
+  **testnet**: play funds, faucet-credited, no real-world value. So
+  `Stable.is_production()` returned `true` for a play-funds host, and the
+  obvious reading of the rename — `Stable → Mainnet` — would have carried that
+  mislabel onto the real-funds variant and aimed `fund()`'s safety guard at the
+  wrong network. The correct mapping is:
+
+  | before | after | note |
+  | -- | -- | -- |
+  | `Network::Stable` | `Network::Testnet` | **not** `Mainnet` — the legacy host is play funds |
+  | `Network::Beta` | `Network::Testnet`, or `Config::with_base_url` for a beta host | no beta host in the network map |
+  | `Network::is_production()` | `Network::is_mainnet()` | same predicate, honest name |
+
+  `Stable` and `Beta` are **removed outright** rather than left as deprecated
+  aliases, so the compiler makes every call site re-decide which network it
+  meant. A silent remap is exactly what must not happen here.
+
+  Testnet deliberately keeps the **legacy** base. Its durable replacement
+  `api.testnet.nexus.xyz` does not resolve yet and also changes the path layout
+  (`/v1` in the base), so the spec says to keep pinning the legacy base until
+  the hosts are live; moving is its own change.
+
+- *(config)* [**breaking**] `Config::default()` now targets `Network::Testnet`
+  (was `Stable`). Both are the same host today, so no request changes
+  destination — but the default is now *named* play funds, and the default must
+  never be a real-funds network.
+
+- *(rest)* [**breaking behaviour**] **`fund()` on the default network now claims
+  faucet credit instead of erroring.** This is the correct behaviour — that host
+  is play funds — but it is a real change for anyone who relied on `Stable`
+  erroring as a guard. `fund()` still refuses on `Mainnet` and on an unknown
+  host (`Config::with_base_url`), and still rejects a non-positive amount first.
+  If you were treating the old error as "don't fund here", switch to an explicit
+  `deposit()` / `claim_credit()` call.
+
+### Added
+
+- *(config)* `Network::Mainnet`, the real-funds network — **declared but not
+  targetable by this release.** A `Mainnet` client builds fine, and then refuses
+  every request locally, before any DNS, TLS, byte on the wire, or use of a
+  credential. Two independent reasons, either sufficient: `api.nexus.xyz` does
+  not resolve yet (ENG-8155), and its durable base carries the version *in the
+  base* (`…/v1`) rather than in the path, which is not the dual-stack layout
+  this SDK builds and signs — sending it there would produce wrong URLs *and* a
+  signature over a path the server never sees. Guessing either against a
+  real-funds host is the precise failure the network axis exists to prevent, so
+  the SDK fails closed and loudly. To target a mainnet host you control, use
+  `Config::with_base_url`.
+
+  The gate lives in the single base-resolution choke point every request builder
+  already goes through, which now returns `Result`, so **the check is enforced by
+  the compiler**: a future builder that forgets it does not compile. A boolean
+  consulted per call site would be one forgotten `if` away from putting a
+  wrongly-signed request on a real-money host.
+
+- *(config)* `Network::signing_domain()` returning the new public
+  `SigningDomain { name, version, chain_id }`, spelled as in the spec's
+  `x-nexus-networks[*].signing_domain`. **`chain_id` is always `None`**, which
+  means "this SDK does not publish the value" — *not* zero. The signing domain is
+  per-network and server-authoritative; read the chain id from `/metadata` for
+  the network you are connected to. A client that cannot obtain one must refuse
+  to sign rather than default, because a wrong domain either fails verification
+  or produces a signature valid on a *different* network. `EthSigner::register_agent`
+  keeps taking `chain_id` explicitly for the same reason. `name`/`version` are
+  sourced from the module that actually signs, so what the SDK advertises and
+  what it signs cannot drift apart.
+
+### Fixed
+
+- *(client)* The signed `PATCH`-with-query builder resolved its URL from the
+  gateway base directly instead of going through the shared per-path base
+  resolution. Not a live misroute — its only caller (`amend_order`) uses a
+  gateway path — but it silently opted out of the centralized `/api/v1` routing
+  rule, and would have opted out of the real-funds gate too. Had amend ever
+  moved to the v1 surface it would have misrouted, and signed, silently. One
+  rule, one place: no builder gets its own base.
+
+- *(client)* Signed requests resolved their base **after** signing, so a request
+  refused for its target still drew a nonce. Harmless for the stateless default
+  `SystemTimeNonce`, but a caller-supplied monotonic counter would desync against
+  the server over a request that was never sent. Bases are now resolved first,
+  pinned by a test with a counting nonce across all four signed builder shapes.
+
+- *(docs)* Retired the "production" vocabulary the rename exists to correct: the
+  `fund()` refusal message, the `deposit`/`claim_credit` docs, and the
+  no-WebSocket-endpoint errors said "production" where they meant *real funds*,
+  or "production WS host not yet confirmed" where the host is in fact published
+  but not yet usable (it is a different origin from the REST base this network
+  still targets, and the origin-scoped upgrade token cannot cross the two —
+  ENG-3398).
+
 ## [0.7.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.6.1...v0.7.0) - 2026-07-30
 
 ### Added

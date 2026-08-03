@@ -10,7 +10,7 @@ const MARKET: &str = "BTC-USDX-PERP";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new(Config::new(Network::Stable));
+    let client = Client::new(Config::new(Network::Testnet));
 
     let book = client.fetch_order_book(MARKET).await?;
     println!("{} order book (nonce {})", book.symbol, book.nonce);

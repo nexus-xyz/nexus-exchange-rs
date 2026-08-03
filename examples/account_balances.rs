@@ -9,7 +9,7 @@ use nexus_exchange::{Client, Config, Network};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new(Config::new(Network::Stable).api_key(
+    let client = Client::new(Config::new(Network::Testnet).api_key(
         std::env::var("NEXUS_API_KEY")?,
         std::env::var("NEXUS_API_SECRET")?,
     ));

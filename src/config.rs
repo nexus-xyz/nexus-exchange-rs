@@ -13,15 +13,92 @@ use reqwest::header::HeaderValue;
 /// the socket (backpressure) rather than buffering without limit.
 const DEFAULT_WS_CHANNEL_CAPACITY: usize = 1024;
 
-/// Which Nexus Exchange environment to target.
+/// The EIP-712 signing domain for a [`Network`].
+///
+/// Spelled the same as the spec's `x-nexus-networks[*].signing_domain` and the
+/// `SigningDomain` schema, so one name means one thing across the static map,
+/// the runtime `/metadata` payload, and generated clients.
+///
+/// # `chain_id` is deliberately absent
+///
+/// [`chain_id`](Self::chain_id) is **always `None` here**, and that means "this
+/// SDK does not publish the value" — *not* that it is zero. The signing domain
+/// is per-network and server-authoritative. A client that cannot obtain a chain
+/// id must **refuse to sign** rather than guess or default: a wrong domain
+/// either fails verification or, worse, produces a signature that is valid on a
+/// *different* network.
+///
+/// This is why [`EthSigner::register_agent`](crate::EthSigner::register_agent)
+/// takes `chain_id` as an explicit argument and has no default — there is no
+/// safe value for the SDK to supply on the caller's behalf.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SigningDomain {
+    /// EIP-712 domain `name` — `"Nexus Exchange"` on every network.
+    pub name: &'static str,
+    /// EIP-712 domain `version` — `"1"` on every network.
+    pub version: &'static str,
+    /// EIP-712 domain `chainId`, or `None` when unpublished — always `None`.
+    /// See the type-level note: do not substitute a default.
+    pub chain_id: Option<u64>,
+}
+
+/// Which Nexus Exchange **network** to target.
+///
+/// The public axis is [`Testnet`](Self::Testnet) (play funds) versus
+/// [`Mainnet`](Self::Mainnet) (real funds). [`Local`](Self::Local) is a
+/// developer convenience, not a public network — and never a fallback when a
+/// public host fails to resolve, since silently succeeding against localhost
+/// hides a misconfigured client.
+///
+/// # Never derive a host by interpolating the network name
+///
+/// Mainnet is deliberately **off-pattern** — `api.nexus.xyz`, not
+/// `api.mainnet.nexus.xyz`. A template like `api.{network}.nexus.xyz` resolves
+/// for every environment that *can* be tested and fails only on real funds,
+/// which is the one environment that cannot be rehearsed. Every arm below is
+/// therefore written out as a named case; keep it that way.
+///
+/// # Credentials never cross networks
+///
+/// Session tokens, HMAC API keys and agent keys are minted **per network** and
+/// are invalid on any other, so a key leaked or misconfigured on testnet cannot
+/// sign for real funds. Build a separate [`Config`] per network; never carry a
+/// signature, nonce or agent registration across them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Network {
-    /// Production / stable channel.
-    Stable,
-    /// Beta channel (tracks `main`; may break).
-    Beta,
-    /// Local development server.
+    /// **Real funds.** Collateral is USDX bridged from Ethereum Mainnet; every
+    /// order moves real money and there is no faucet.
+    ///
+    /// # Not targetable by this release
+    ///
+    /// Selecting `Mainnet` builds a [`Config`], but every request through the
+    /// resulting [`Client`](crate::Client) is **rejected locally** before any
+    /// bytes leave the process. Two independent reasons, either sufficient:
+    ///
+    /// - `api.nexus.xyz` does not resolve yet (DNS/TLS is separate infra work —
+    ///   ENG-8155).
+    /// - Its durable base carries the version in the base (`…/v1`) rather than
+    ///   in the path, which is not the dual-stack path layout this SDK builds
+    ///   and signs (see [`Config::direct_base_url`]). Sending the current
+    ///   layout there would produce wrong URLs and a signature over a path the
+    ///   server never sees.
+    ///
+    /// Guessing either one against a real-funds host is exactly the failure the
+    /// network axis exists to prevent, so the SDK fails closed and loudly
+    /// instead. Tracked by ENG-6452's follow-up.
+    Mainnet,
+    /// **Play funds** — balances are synthetic USDX credited by the faucet and
+    /// carry no real-world value. The safe target for integration work and CI,
+    /// and the [`Default`] for [`Config`].
+    ///
+    /// Served today by the legacy gateway base `exchange.nexus.xyz`. That host
+    /// is testnet: its traffic migrates to `api.testnet.nexus.xyz` and **never**
+    /// to the bare `api.nexus.xyz`, which is real funds.
+    Testnet,
+    /// A locally run indexer. Play funds, faucet available. Not a public
+    /// network and not a deployment target.
     Local,
 }
 
@@ -29,10 +106,15 @@ impl Network {
     /// Legacy gateway base URL for this network (the `/api/exchange` REST
     /// gateway). Routes that have **not** yet migrated to the direct `/api/v1`
     /// service are still served here (dual-stack — ENG-4751).
+    ///
+    /// For [`Mainnet`](Self::Mainnet) this reports the documented durable base
+    /// for completeness; requests are refused before it is ever used. See the
+    /// variant docs.
     pub fn base_url(self) -> &'static str {
+        // Named cases, never interpolated — see the type-level note.
         match self {
-            Network::Stable => "https://exchange.nexus.xyz/api/exchange",
-            Network::Beta => "https://beta.exchange.nexus.xyz/api/exchange",
+            Network::Mainnet => "https://api.nexus.xyz/v1",
+            Network::Testnet => "https://exchange.nexus.xyz/api/exchange",
             Network::Local => "http://localhost:9090",
         }
     }
@@ -47,11 +129,36 @@ impl Network {
     /// see [`crate::Client`] for how the base is selected per request. Local dev
     /// serves both surfaces from the same origin, so it matches [`base_url`].
     ///
+    /// # Comparing this against the other Nexus SDKs
+    ///
+    /// The two-base split here is an artifact of being **dual-stack**, not a
+    /// different target: some routes still live on the gateway, so the base has
+    /// to be chosen per path. An SDK that only speaks the `/api/v1` surface
+    /// needs no such choice and can fold the prefix into a single base instead.
+    /// The field names therefore do *not* line up one-to-one, and the pairing
+    /// that matters is:
+    ///
+    /// ```text
+    /// this SDK / Python:  direct_base_url + "/api/v1/orders"
+    /// TypeScript:         baseUrl (= host root + "/api/v1") + "/orders"
+    /// ```
+    ///
+    /// Both compose to `https://exchange.nexus.xyz/api/v1/orders` and both sign
+    /// the **full** path including `/api/v1`. So TypeScript's `baseUrl` is the
+    /// analogue of this method plus the prefix — it is *not* the analogue of
+    /// [`base_url`], which is the gateway base and carries `/api/exchange`.
+    /// Reading the two `base_url`-shaped fields as the same thing is the one
+    /// way to conclude that a prefix disagrees when it does not.
+    ///
     /// [`base_url`]: Self::base_url
     pub fn direct_base_url(self) -> &'static str {
+        // Named cases, never interpolated — see the type-level note.
         match self {
-            Network::Stable => "https://exchange.nexus.xyz",
-            Network::Beta => "https://beta.exchange.nexus.xyz",
+            // Mainnet's durable base already carries `/v1`; there is no separate
+            // host-root surface. Reported for completeness only — requests to
+            // this network are refused. See the `Mainnet` variant docs.
+            Network::Mainnet => "https://api.nexus.xyz/v1",
+            Network::Testnet => "https://exchange.nexus.xyz",
             Network::Local => "http://localhost:9090",
         }
     }
@@ -64,10 +171,10 @@ impl Network {
     /// `NEXT_PUBLIC_INDEXER_WS_URL`) rather than to a `/ws` path under the REST
     /// base. It therefore cannot be derived from `base_url`.
     ///
-    /// Returns `None` for networks whose production WS host is **not yet
-    /// confirmed** (ENG-3398). While it is `None`, [`Client::connect_ws`] and
-    /// [`Client::connect`] refuse to connect rather than guess a host; supply
-    /// the endpoint explicitly with [`Config::with_ws_url`] in the meantime.
+    /// Returns `None` for networks whose WS host is **not yet usable**. While
+    /// it is `None`, [`Client::connect_ws`] and [`Client::connect`] refuse to
+    /// connect rather than guess a host; supply the endpoint explicitly with
+    /// [`Config::with_ws_url`] in the meantime.
     ///
     /// [`Client::connect_ws`]: crate::Client::connect_ws
     /// [`Client::connect`]: crate::Client::connect
@@ -76,25 +183,59 @@ impl Network {
             // Local dev serves REST and WS from the same indexer process, so
             // the WS origin is this host's `/ws` and is known.
             Network::Local => Some("ws://localhost:9090/ws"),
-            // The production / beta indexer WS host is a separate origin that
-            // has not been confirmed yet — see ENG-3398. Don't ship a guess.
-            Network::Stable | Network::Beta => None,
+            // Testnet still has no usable WS origin. The spec's per-network map
+            // does publish one (`wss://api.testnet.nexus.xyz`), but that is a
+            // *different origin* from the legacy gateway this network's REST
+            // still targets, and it does not resolve yet. The upgrade token is
+            // minted over REST (`POST /ws/token`) and is scoped to the origin
+            // that issued it, so pairing the legacy REST host with that WS host
+            // would send a token to a server that never issued it. Both move
+            // together or neither does — ENG-3398.
+            Network::Testnet => None,
+            // Mainnet is not targetable at all in this release; see the variant
+            // docs. Nothing to connect to, and nothing to guess.
+            Network::Mainnet => None,
         }
     }
 
-    /// Whether this network moves **real collateral** (production), as opposed
-    /// to a non-production environment where funding comes from the synthetic
-    /// testnet faucet ([`Client::claim_credit`](crate::Client::claim_credit)).
+    /// Whether this network moves **real collateral**, as opposed to one where
+    /// funding comes from the synthetic faucet
+    /// ([`Client::claim_credit`](crate::Client::claim_credit)).
     ///
     /// This is the safety predicate behind [`Client::fund`](crate::Client::fund):
-    /// the convenience helper claims faucet credit on non-production networks
-    /// but refuses to silently deposit on production. The match is exhaustive
-    /// on purpose — a new [`Network`] variant must consciously declare whether
-    /// it is real-money before any helper will fund it.
-    pub fn is_production(self) -> bool {
+    /// the convenience helper claims faucet credit on play-funds networks but
+    /// refuses to silently deposit real collateral. The match is exhaustive on
+    /// purpose — a new [`Network`] variant must consciously declare whether it
+    /// is real-money before any helper will fund it, and the fail-safe answer
+    /// for anything unrecognized is *real funds*.
+    ///
+    /// Renamed from `is_production` in 0.8.0: the old name conflated "the
+    /// deployment we call production" with "moves real money", and the legacy
+    /// `exchange.nexus.xyz` host it returned `true` for is in fact **testnet**.
+    pub fn is_mainnet(self) -> bool {
         match self {
-            Network::Stable => true,
-            Network::Beta | Network::Local => false,
+            Network::Mainnet => true,
+            Network::Testnet | Network::Local => false,
+        }
+    }
+
+    /// The EIP-712 [`SigningDomain`] for this network.
+    ///
+    /// `name` and `version` are the values the contract has always documented
+    /// for `POST /agents/register`. `chain_id` is **always `None`** — it is
+    /// server-authoritative and must be read from `/metadata` for the network
+    /// you are connected to. See [`SigningDomain`] for why a default would be
+    /// dangerous rather than merely wrong.
+    pub fn signing_domain(self) -> SigningDomain {
+        // Identical across networks today, but returned per-network so a future
+        // divergence is a one-line change here rather than a hunt through
+        // call sites. Sourced from the auth module so the constants that
+        // actually sign and the constants we advertise cannot drift apart.
+        let _ = self;
+        SigningDomain {
+            name: crate::auth::eth::EIP712_DOMAIN_NAME,
+            version: crate::auth::eth::EIP712_DOMAIN_VERSION,
+            chain_id: None,
         }
     }
 }
@@ -341,7 +482,7 @@ pub struct Config {
     /// [`Config::network`].
     pub(crate) network: Option<Network>,
     /// The WebSocket origin to stream from, or `None` when it is not known for
-    /// the configured network (production host unconfirmed — ENG-3398). A
+    /// the configured network (no usable WS origin yet — ENG-3398). A
     /// separate host from `base_url`; see [`Network::ws_base`].
     pub(crate) ws_url: Option<String>,
     pub(crate) ws: WsConfig,
@@ -547,8 +688,11 @@ impl Config {
 }
 
 impl Default for Config {
+    /// Targets [`Network::Testnet`] — play funds. The default must never be a
+    /// real-funds network: reaching mainnet has to be a deliberate, typed
+    /// choice, not what you get by omission.
     fn default() -> Self {
-        Self::new(Network::Stable)
+        Self::new(Network::Testnet)
     }
 }
 
@@ -581,43 +725,103 @@ mod tests {
     }
 
     /// The WS origin is a separate host, never the `/api/exchange` REST
-    /// gateway (which can't proxy WS upgrades). Local is known; the production
-    /// hosts are unconfirmed (ENG-3398) and must surface as `None` rather than
-    /// a guessed URL.
+    /// gateway (which can't proxy WS upgrades). Local is known; the others must
+    /// surface as `None` rather than a guessed URL — in particular testnet must
+    /// not be paired with the durable `api.testnet.nexus.xyz` WS host while its
+    /// REST still lives on the legacy origin (ENG-3398).
     #[test]
     fn ws_base_is_known_only_for_local() {
         assert_eq!(Network::Local.ws_base(), Some("ws://localhost:9090/ws"));
-        assert_eq!(Network::Stable.ws_base(), None);
-        assert_eq!(Network::Beta.ws_base(), None);
+        assert_eq!(Network::Testnet.ws_base(), None);
+        assert_eq!(Network::Mainnet.ws_base(), None);
     }
 
-    /// Only the production channel moves real collateral; the others fund from
-    /// the testnet faucet. `fund()` keys its real-money safety guard off this.
+    /// Only mainnet moves real collateral; the others fund from the faucet.
+    /// `fund()` keys its real-money safety guard off this.
     #[test]
-    fn only_stable_is_production() {
-        assert!(Network::Stable.is_production());
-        assert!(!Network::Beta.is_production());
-        assert!(!Network::Local.is_production());
+    fn only_mainnet_is_real_funds() {
+        assert!(Network::Mainnet.is_mainnet());
+        assert!(!Network::Testnet.is_mainnet());
+        assert!(!Network::Local.is_mainnet());
+    }
+
+    /// Mainnet's host is deliberately **off-pattern**. `api.{network}.nexus.xyz`
+    /// would resolve for every environment that can be tested and fail only on
+    /// real funds — the one environment that cannot be rehearsed. This test
+    /// exists so a future "tidy-up" into an interpolated host fails loudly.
+    #[test]
+    fn mainnet_host_is_not_interpolated_from_the_network_name() {
+        for url in [
+            Network::Mainnet.base_url(),
+            Network::Mainnet.direct_base_url(),
+        ] {
+            assert!(
+                url.starts_with("https://api.nexus.xyz"),
+                "mainnet must be the bare api.nexus.xyz host, got {url}"
+            );
+            assert!(
+                !url.contains("mainnet."),
+                "mainnet host must not be derived by interpolation, got {url}"
+            );
+        }
+        // ...and testnet must never collapse onto the real-funds host.
+        for url in [
+            Network::Testnet.base_url(),
+            Network::Testnet.direct_base_url(),
+        ] {
+            assert!(
+                !url.starts_with("https://api.nexus.xyz"),
+                "testnet must never point at the real-funds host, got {url}"
+            );
+        }
+    }
+
+    /// The EIP-712 domain is per-network, and `chain_id` is deliberately
+    /// unpublished: a default would let a client sign under the wrong domain,
+    /// which can yield a signature valid on a *different* network.
+    #[test]
+    fn signing_domain_never_supplies_a_chain_id() {
+        for network in [Network::Mainnet, Network::Testnet, Network::Local] {
+            let domain = network.signing_domain();
+            assert_eq!(domain.name, "Nexus Exchange");
+            assert_eq!(domain.version, "1");
+            assert_eq!(
+                domain.chain_id, None,
+                "{network:?} must not default a chain id"
+            );
+        }
+    }
+
+    /// Reaching real funds must be a deliberate, typed choice — never what a
+    /// caller gets by omission.
+    #[test]
+    fn default_config_is_play_funds() {
+        let default = Config::default();
+        assert_eq!(default.network(), Some(Network::Testnet));
+        assert!(!default.network().expect("network").is_mainnet());
     }
 
     /// A network-built config carries its `Network`; a raw-base-URL one does
     /// not (so `fund()` can tell "known testnet" from "unknown host").
     #[test]
     fn config_retains_network_only_when_built_from_one() {
-        assert_eq!(Config::new(Network::Beta).network(), Some(Network::Beta));
+        assert_eq!(
+            Config::new(Network::Testnet).network(),
+            Some(Network::Testnet)
+        );
         assert_eq!(Config::with_base_url("http://x").network(), None);
     }
 
     /// `Config` mirrors `ws_base`: a network with a known WS host carries it,
-    /// and an unconfirmed one leaves `ws_url` unset rather than derived from
-    /// the REST base.
+    /// and one without a usable origin leaves `ws_url` unset rather than
+    /// derived from the REST base.
     #[test]
     fn config_ws_url_follows_network_and_is_not_derived_from_rest_base() {
         assert_eq!(
             Config::new(Network::Local).ws_url(),
             Some("ws://localhost:9090/ws")
         );
-        assert_eq!(Config::new(Network::Stable).ws_url(), None);
+        assert_eq!(Config::new(Network::Testnet).ws_url(), None);
         // A custom REST base does not imply a WS host.
         assert_eq!(
             Config::with_base_url("https://preview.example/api/exchange").ws_url(),
@@ -640,14 +844,18 @@ mod tests {
 
     /// Built-in networks carry both bases: the gateway base keeps `/api/exchange`,
     /// while the direct `/api/v1` base is the host root with no gateway prefix.
+    ///
+    /// Testnet keeps the **legacy** host on purpose. The spec's durable
+    /// `api.testnet.nexus.xyz` base does not resolve yet, and moving to it also
+    /// changes the path layout (`/v1` in the base), so it is a separate change.
     #[test]
     fn networks_expose_gateway_and_direct_bases() {
         assert_eq!(
-            Network::Stable.base_url(),
+            Network::Testnet.base_url(),
             "https://exchange.nexus.xyz/api/exchange"
         );
         assert_eq!(
-            Network::Stable.direct_base_url(),
+            Network::Testnet.direct_base_url(),
             "https://exchange.nexus.xyz"
         );
         // Local dev serves both surfaces from one origin.

@@ -20,7 +20,10 @@
 //! Every secret lives in a [`secrecy::SecretString`], and this module signs —
 //! it never stores sessions, refreshes tokens, or otherwise manages state.
 
-mod eth;
+// `pub(crate)` so `Network::signing_domain` can source the EIP-712 domain
+// constants from the module that actually signs with them; the module's public
+// surface is still only what is re-exported below.
+pub(crate) mod eth;
 
 pub use eth::{AgentRegistration, EthSigner, LoginRequest, SIGN_IN_MESSAGE};
 

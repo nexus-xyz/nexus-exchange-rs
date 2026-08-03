@@ -61,11 +61,15 @@ async fn deposit_rejects_non_positive_amount() {
 }
 
 #[tokio::test]
-async fn fund_on_production_refuses_to_move_real_collateral() {
+async fn fund_on_mainnet_refuses_to_move_real_collateral() {
     // The critical safety property: on a real-money network, fund() must NOT
     // silently deposit. It rejects locally and points the caller at deposit().
     // No mock server: the guard fires before any request would be sent.
-    let client = Client::new(Config::new(Network::Stable).api_key("nx_test", SECRET));
+    //
+    // This must be `Mainnet`, not `Testnet`. Testnet is play funds, so fund()
+    // there legitimately claims faucet credit — asserting the refusal against
+    // it would both test nothing and put a real request on the wire.
+    let client = Client::new(Config::new(Network::Mainnet).api_key("nx_test", SECRET));
     let err = client.fund(dec("1000")).await.unwrap_err();
     assert!(matches!(
         err,
@@ -89,7 +93,7 @@ async fn fund_with_unknown_network_refuses() {
 
 #[tokio::test]
 async fn fund_rejects_non_positive_amount() {
-    let err = Client::new(Config::new(Network::Beta).api_key("nx_test", SECRET))
+    let err = Client::new(Config::new(Network::Testnet).api_key("nx_test", SECRET))
         .fund(dec("0"))
         .await
         .unwrap_err();

@@ -19,7 +19,7 @@ const MAX_MESSAGES: usize = 10;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new(Config::new(Network::Stable));
+    let client = Client::new(Config::new(Network::Testnet));
 
     let mut sub = client.connect(vec![json!({
         "type": "subscribe",

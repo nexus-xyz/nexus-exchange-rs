@@ -224,10 +224,15 @@ impl Client {
     /// "no margin required", the most dangerous possible default here.
     pub async fn fetch_market_risk_params(&self, market_id: &str) -> Result<MarketRiskParams> {
         let id = encoded_segment(market_id, "market_id")?;
-        // Unprefixed, deliberately: unlike the other single-market reads the spec
-        // does NOT dual-mount this one under `/api/v1` — it declares only
-        // `/markets/{market_id}/risk-params`. Following the contract rather than
-        // the sibling routes' shape; `check_spec_drift.py` catches it either way.
+        // Unprefixed, deliberately: the spec does NOT dual-mount this one under
+        // `/api/v1` — it declares only `/markets/{market_id}/risk-params`. It is
+        // not the lone exception either; `/markets/{market_id}/adl-events` is
+        // also declared bare-only, while the other seven single-market reads
+        // (candles, funding, funding-samples, mark-price, orderbook, status,
+        // ticker, trades) carry both mounts. So this reads as a consistent gap in
+        // the `/api/v1` mirror rather than a property of this route. Following
+        // the contract rather than the sibling routes' shape either way;
+        // `check_spec_drift.py` catches it if the spec changes.
         self.get(&format!("/markets/{id}/risk-params"), &[], COST_DEFAULT)
             .await
     }

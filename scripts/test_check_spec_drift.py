@@ -524,6 +524,118 @@ class TestRestCallParserAgainstRealSource(unittest.TestCase):
         self.assertTrue(ops)
 
 
+class RenameAllIdentifierConventions(unittest.TestCase):
+    """`_apply_rename_all` must reproduce serde's wire name at BOTH call sites.
+
+    It is handed snake_case identifiers by the struct-field parser and PascalCase
+    identifiers by the enum-variant parser. It previously assumed snake_case, so
+    on a variant the `snake_case` rule was a no-op and `camelCase` / `kebab-case`
+    / `SCREAMING-KEBAB-CASE` mis-derived — the gate then reported every member of
+    such an enum as simultaneously missing from the SDK and absent from the spec.
+
+    Same shape as the other gaps covered in this file: a check that was loud in
+    the wrong place, sending you to look for drift that did not exist.
+
+    The expectations below are transcribed from `serde_derive`'s
+    `internals/case.rs` (1.0.229, as pinned in `Cargo.lock`) — specifically its
+    *two* functions, `apply_to_field` and `apply_to_variant`, which do not agree
+    on every rule. Where they diverge the divergence is asserted, not smoothed
+    over: deriving both from one shared word list is what this file previously
+    did, and it produced wire names serde never emits.
+    """
+
+    # (rule, snake_case field, PascalCase variant, expected field, expected variant)
+    CASES = [
+        (None, "mark_price", "PartiallyFilled", "mark_price", "PartiallyFilled"),
+        ("snake_case", "mark_price", "PartiallyFilled", "mark_price", "partially_filled"),
+        ("camelCase", "mark_price", "PartiallyFilled", "markPrice", "partiallyFilled"),
+        ("PascalCase", "mark_price", "PartiallyFilled", "MarkPrice", "PartiallyFilled"),
+        ("SCREAMING_SNAKE_CASE", "mark_price", "PartiallyFilled", "MARK_PRICE", "PARTIALLY_FILLED"),
+        ("kebab-case", "mark_price", "PartiallyFilled", "mark-price", "partially-filled"),
+        ("SCREAMING-KEBAB-CASE", "mark_price", "PartiallyFilled", "MARK-PRICE", "PARTIALLY-FILLED"),
+        # `lowercase` / `UPPERCASE` are the two rules where serde's field and
+        # variant algorithms genuinely disagree — see the dedicated test below.
+        ("lowercase", "mark_price", "PartiallyFilled", "mark_price", "partiallyfilled"),
+        ("UPPERCASE", "mark_price", "PartiallyFilled", "MARK_PRICE", "PARTIALLYFILLED"),
+    ]
+
+    def test_every_rule_handles_both_identifier_conventions(self):
+        for rule, field, variant, want_field, want_variant in self.CASES:
+            with self.subTest(rule=rule, kind="field"):
+                self.assertEqual(csd._apply_rename_all(field, rule, "field"), want_field)
+            with self.subTest(rule=rule, kind="variant"):
+                self.assertEqual(
+                    csd._apply_rename_all(variant, rule, "variant"), want_variant
+                )
+
+    def test_snake_case_lowercases_a_single_word_variant(self):
+        """The exact case that failed: `Deposit` under `snake_case` must be
+        `deposit`, not `Deposit`."""
+        for variant, want in [("Deposit", "deposit"), ("Withdrawal", "withdrawal"), ("Faucet", "faucet")]:
+            self.assertEqual(csd._apply_rename_all(variant, "snake_case", "variant"), want)
+
+    def test_lowercase_and_uppercase_keep_field_underscores_but_not_variant_words(self):
+        """serde's `apply_to_field` treats `lowercase` as identity and
+        `UPPERCASE` as a plain upcase, so a field **keeps** its underscores.
+        `apply_to_variant` uses `to_ascii_lowercase`/`to_ascii_uppercase` on a
+        PascalCase identifier, which has no separators to keep — so the same two
+        rules erase the word boundaries there.
+
+        Deriving both from a shared lowercase word list collapsed the field case
+        to `markprice`/`MARKPRICE`, which serde never emits. Nothing in `src/`
+        uses either rule on a struct today, so this was latent rather than
+        broken — pinned here so it stays that way.
+        """
+        self.assertEqual(csd._apply_rename_all("mark_price", "lowercase", "field"), "mark_price")
+        self.assertEqual(csd._apply_rename_all("mark_price", "UPPERCASE", "field"), "MARK_PRICE")
+        self.assertEqual(
+            csd._apply_rename_all("PartiallyFilled", "lowercase", "variant"), "partiallyfilled"
+        )
+        self.assertEqual(
+            csd._apply_rename_all("PartiallyFilled", "UPPERCASE", "variant"), "PARTIALLYFILLED"
+        )
+
+    def test_acronym_runs_match_serdes_naive_split(self):
+        """serde inserts a separator before *every* interior uppercase char and
+        does no acronym coalescing, so `APIKey` really does become `a_p_i_key`.
+
+        The gate must agree even though the result is ugly: computing a
+        friendlier `api_key` would be a wire name serde never produces, which
+        manufactures phantom drift — the exact failure this helper exists to
+        remove. A member with an interior acronym run wants an explicit
+        `#[serde(rename = "...")]`, which the parser honours over any rule.
+        """
+        self.assertEqual(csd._apply_rename_all("APIKey", "snake_case", "variant"), "a_p_i_key")
+        self.assertEqual(csd._apply_rename_all("APIKey", "camelCase", "variant"), "aPIKey")
+        self.assertEqual(csd._apply_rename_all("APIKey", "lowercase", "variant"), "apikey")
+        # A snake_case field carrying an acronym is unaffected: no interior
+        # uppercase to split, and `snake_case` is identity on fields.
+        self.assertEqual(csd._apply_rename_all("api_key", "snake_case", "field"), "api_key")
+        self.assertEqual(csd._apply_rename_all("api_key", "camelCase", "field"), "apiKey")
+
+    def test_digits_stay_attached_to_their_word(self):
+        self.assertEqual(
+            csd._apply_rename_all("unique_traders_24h", "snake_case", "field"),
+            "unique_traders_24h",
+        )
+        self.assertEqual(
+            csd._apply_rename_all("unique_traders_24h", "camelCase", "field"),
+            "uniqueTraders24h",
+        )
+
+    def test_an_unknown_rule_still_fails_closed(self):
+        with self.assertRaises(SystemExit):
+            csd._apply_rename_all("Whatever", "TitleCase", "variant")
+        with self.assertRaises(SystemExit):
+            csd._apply_rename_all("whatever", "TitleCase", "field")
+
+    def test_an_unknown_kind_fails_closed(self):
+        """A new call site that forgets to say which convention it is passing
+        must not silently get the field derivation."""
+        with self.assertRaises(SystemExit):
+            csd._apply_rename_all("mark_price", "snake_case", "struct_field")
+
+
 @contextlib.contextmanager
 def _patched(module, name, value):
     """Temporarily set module.<name> = value, restoring the original after."""

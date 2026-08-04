@@ -585,63 +585,124 @@ _RENAME_ALL_RE = re.compile(r'\brename_all\s*=\s*"([^"]+)"')
 _SKIP_RE = re.compile(r"\bskip(?:_serializing|_deserializing)?\b(?!_if)")
 
 
-def _identifier_words(name):
-    """Split a Rust identifier into lowercase words.
+# The `rename_all` rules serde accepts. Shared by both derivations below so an
+# unknown rule fails closed in one place rather than per-kind.
+_RENAME_ALL_RULES = frozenset(
+    {
+        "lowercase",
+        "UPPERCASE",
+        "PascalCase",
+        "camelCase",
+        "snake_case",
+        "SCREAMING_SNAKE_CASE",
+        "kebab-case",
+        "SCREAMING-KEBAB-CASE",
+    }
+)
 
-    The two callers hand this function different identifier conventions: struct
-    fields arrive snake_case (`mark_price`), enum variants arrive PascalCase
-    (`PartiallyFilled`). serde derives a wire name from the *word sequence* in
-    both cases, so normalizing to words here is what lets one rename table serve
-    both — and is what `_apply_rename_all` got wrong before: it assumed a
-    snake_case input, so every rule was a no-op or a mis-derivation on a
-    PascalCase variant.
 
-    Acronym runs stay whole (`APIKey` -> ["api", "key"]) so a future
-    `rename_all` does not split them mid-word.
+def _pascal_from_snake(field):
+    """`mark_price` -> `MarkPrice`. Mirrors serde's field `PascalCase` arm:
+    capitalize after every `_` and drop the underscores."""
+    pascal = []
+    capitalize = True
+    for ch in field:
+        if ch == "_":
+            capitalize = True
+        elif capitalize:
+            pascal.append(ch.upper())
+            capitalize = False
+        else:
+            pascal.append(ch)
+    return "".join(pascal)
+
+
+def _snake_from_pascal(variant):
+    """`PartiallyFilled` -> `partially_filled`. Mirrors serde's variant
+    `SnakeCase` arm exactly, including its lack of acronym coalescing: a
+    separator goes before *every* interior uppercase char, so `APIKey` becomes
+    `a_p_i_key`. That is genuinely what serde emits, so the gate must agree —
+    coalescing acronyms here would compute a wire name serde never produces and
+    manufacture phantom drift, which is the failure this whole helper exists to
+    avoid. A member with an interior acronym run needs an explicit
+    `#[serde(rename = "...")]`, which the parser reads in preference to any rule.
     """
-    if "_" in name or name[:1].islower():
-        return [p.lower() for p in name.split("_") if p]
-    return [
-        w.lower() for w in re.findall(r"[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+", name)
-    ]
+    snake = []
+    for i, ch in enumerate(variant):
+        if i > 0 and ch.isupper():
+            snake.append("_")
+        snake.append(ch.lower())
+    return "".join(snake)
 
 
-def _apply_rename_all(name, rule):
-    """Map a Rust field or variant identifier to its serde wire name under a
-    container `rename_all` rule. Fail closed on an unknown rule rather than
-    silently mis-deriving a name (which would manufacture phantom drift).
+def _apply_rename_all(name, rule, kind):
+    """Map a Rust identifier to its serde wire name under a container
+    `rename_all` rule. Fail closed on an unknown rule rather than silently
+    mis-deriving a name (which would manufacture phantom drift).
 
-    Accepts BOTH identifier conventions — snake_case struct fields and
-    PascalCase enum variants — because both call sites share this function.
-    That was a real gap: `rename_all = "snake_case"` on an enum returned the
-    PascalCase variant unchanged, so the gate reported every member as
-    simultaneously missing from the SDK and absent from the spec. `camelCase`,
-    `kebab-case` and `SCREAMING-KEBAB-CASE` were wrong on variants for the same
-    reason. Only PascalCase / lowercase / UPPERCASE happened to come out right,
-    which is why no existing enum had tripped it.
+    `kind` selects the derivation and is **not** a formality: serde applies two
+    genuinely different algorithms, `apply_to_field` and `apply_to_variant`
+    (`serde_derive/src/internals/case.rs`, pinned at 1.0.229 in `Cargo.lock`).
+    They disagree on real inputs, so one shared table cannot serve both:
+
+    - A **field** arrives snake_case and is already a word sequence, so serde
+      treats `lowercase` and `snake_case` as identity and only ever rewrites the
+      separators. `lowercase` therefore *keeps* the underscores:
+      `mark_price` -> `mark_price`, not `markprice`.
+    - A **variant** arrives PascalCase with no separators, so serde must split
+      it — and `lowercase` there is a plain `to_ascii_lowercase`, which does
+      strip the word boundaries: `PartiallyFilled` -> `partiallyfilled`.
+
+    Deriving both from a shared lowercase word list gets the field side of that
+    pair wrong (and mis-handles acronyms on the variant side). This function is
+    a transcription of serde's two matches rather than a generalization of them,
+    so it can be diffed against `case.rs` directly.
     """
     if rule is None:
         return name
-    parts = _identifier_words(name)
-    if rule == "snake_case":
-        return "_".join(parts)
-    if rule == "camelCase":
-        return parts[0] + "".join(p[:1].upper() + p[1:] for p in parts[1:])
-    if rule == "PascalCase":
-        return "".join(p[:1].upper() + p[1:] for p in parts)
-    if rule == "SCREAMING_SNAKE_CASE":
-        return "_".join(parts).upper()
-    if rule == "kebab-case":
-        return "-".join(parts)
-    if rule == "SCREAMING-KEBAB-CASE":
-        return "-".join(parts).upper()
-    if rule == "lowercase":
-        return "".join(parts)
-    if rule == "UPPERCASE":
-        return "".join(parts).upper()
+    if rule not in _RENAME_ALL_RULES:
+        sys.exit(
+            f"ERROR: unsupported serde rename_all rule {rule!r}; extend "
+            f"_apply_rename_all() in {os.path.basename(__file__)}."
+        )
+    if kind == "field":
+        # serde: `apply_to_field`.
+        if rule in ("lowercase", "snake_case"):
+            return name
+        if rule in ("UPPERCASE", "SCREAMING_SNAKE_CASE"):
+            return name.upper()
+        if rule == "PascalCase":
+            return _pascal_from_snake(name)
+        if rule == "camelCase":
+            pascal = _pascal_from_snake(name)
+            return pascal[:1].lower() + pascal[1:]
+        if rule == "kebab-case":
+            return name.replace("_", "-")
+        if rule == "SCREAMING-KEBAB-CASE":
+            return name.upper().replace("_", "-")
+    if kind == "variant":
+        # serde: `apply_to_variant`.
+        if rule == "PascalCase":
+            return name
+        if rule == "lowercase":
+            return name.lower()
+        if rule == "UPPERCASE":
+            return name.upper()
+        if rule == "camelCase":
+            # Note: serde lowercases only the first character here; it does
+            # *not* re-split the identifier.
+            return name[:1].lower() + name[1:]
+        if rule == "snake_case":
+            return _snake_from_pascal(name)
+        if rule == "SCREAMING_SNAKE_CASE":
+            return _snake_from_pascal(name).upper()
+        if rule == "kebab-case":
+            return _snake_from_pascal(name).replace("_", "-")
+        if rule == "SCREAMING-KEBAB-CASE":
+            return _snake_from_pascal(name).upper().replace("_", "-")
     sys.exit(
-        f"ERROR: unsupported serde rename_all rule {rule!r}; extend "
-        f"_apply_rename_all() in {os.path.basename(__file__)}."
+        f"ERROR: _apply_rename_all() called with unknown kind {kind!r}; "
+        f"expected 'field' or 'variant'."
     )
 
 
@@ -693,7 +754,9 @@ def parse_model_fields(src, rust_name):
         if _SKIP_RE.search(attrs):
             continue
         rn = _RENAME_RE.search(attrs)
-        fields.add(rn.group(1) if rn else _apply_rename_all(ident, rename_all))
+        fields.add(
+            rn.group(1) if rn else _apply_rename_all(ident, rename_all, "field")
+        )
     if not fields:
         sys.exit(
             f"ERROR: parsed zero fields from struct {rust_name!r} in {TYPES_RS}; "
@@ -979,7 +1042,9 @@ def parse_enum_members(src, rust_name):
                 f"enums. Remove it from ENUM_SCHEMA or extend parse_enum_members()."
             )
         rn = _RENAME_RE.search(attrs)
-        members.add(rn.group(1) if rn else _apply_rename_all(ident, rename_all))
+        members.add(
+            rn.group(1) if rn else _apply_rename_all(ident, rename_all, "variant")
+        )
     if not members:
         sys.exit(
             f"ERROR: parsed zero members from enum {rust_name!r}; the variant "

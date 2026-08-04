@@ -537,11 +537,12 @@ class RenameAllIdentifierConventions(unittest.TestCase):
     the wrong place, sending you to look for drift that did not exist.
 
     The expectations below are transcribed from `serde_derive`'s
-    `internals/case.rs` (1.0.229, as pinned in `Cargo.lock`) — specifically its
-    *two* functions, `apply_to_field` and `apply_to_variant`, which do not agree
-    on every rule. Where they diverge the divergence is asserted, not smoothed
-    over: deriving both from one shared word list is what this file previously
-    did, and it produced wire names serde never emits.
+    `internals/case.rs` (at `csd.SERDE_DERIVE_TRANSCRIBED_FROM`, asserted against
+    `Cargo.lock` by `TestRenameAllTranscriptionPin`) — specifically its *two*
+    functions, `apply_to_field` and `apply_to_variant`, which do not agree on
+    every rule. Where they diverge the divergence is asserted, not smoothed over:
+    deriving both from one shared word list is what this file previously did, and
+    it produced wire names serde never emits.
     """
 
     # (rule, snake_case field, PascalCase variant, expected field, expected variant)
@@ -634,6 +635,61 @@ class RenameAllIdentifierConventions(unittest.TestCase):
         must not silently get the field derivation."""
         with self.assertRaises(SystemExit):
             csd._apply_rename_all("mark_price", "snake_case", "struct_field")
+
+
+class TestRenameAllTranscriptionPin(unittest.TestCase):
+    """The transcription is only correct for the serde it was copied from.
+
+    `RenameAllIdentifierConventions` pins `_apply_rename_all` against its own
+    expected pairs, which proves the transcription is self-consistent but cannot
+    notice that the *original* moved. If a `serde_derive` upgrade changed a rule
+    in `internals/case.rs`, every test in that class would stay green while the
+    gate computed wire names serde no longer emits — silent, and in exactly the
+    phantom-drift class the helper exists to remove, just triggered by a
+    dependency bump rather than a spec rename.
+
+    Recording the verified version in a docstring cannot fail. Asserting it
+    against `Cargo.lock` can, so an upgrade stops CI until someone re-diffs the
+    two `apply_to_*` functions and moves the constant deliberately.
+    """
+
+    def test_cargo_lock_still_pins_the_transcribed_serde_derive(self):
+        lock_path = os.path.join(csd.REPO, "Cargo.lock")
+        try:
+            with open(lock_path) as f:
+                lock = f.read()
+        except OSError as e:
+            self.fail(f"cannot read {lock_path}: {e}")
+
+        # Cargo.lock keys `version` under the `name` line of the same block.
+        found = re.search(
+            r'^name = "serde_derive"\nversion = "([^"]+)"', lock, re.M
+        )
+        self.assertIsNotNone(
+            found,
+            f"no `serde_derive` entry in {lock_path} — if the dependency was "
+            f"removed, `_apply_rename_all` no longer mirrors anything real and "
+            f"this pin (plus its constant) should go with it.",
+        )
+        self.assertEqual(
+            found.group(1),
+            csd.SERDE_DERIVE_TRANSCRIBED_FROM,
+            msg=(
+                f"Cargo.lock pins serde_derive {found.group(1)}, but "
+                f"_apply_rename_all() was transcribed from "
+                f"{csd.SERDE_DERIVE_TRANSCRIBED_FROM}.\n"
+                f"This is not a version-string nit: the gate derives wire names "
+                f"by mirroring serde, and nothing else in this suite can tell "
+                f"you that serde changed.\n"
+                f"To resolve: diff `apply_to_field` and `apply_to_variant` in "
+                f"serde_derive-{found.group(1)}/src/internals/case.rs against "
+                f"_apply_rename_all() in check_spec_drift.py. If the rules are "
+                f"unchanged, bump SERDE_DERIVE_TRANSCRIBED_FROM. If any rule "
+                f"moved, fix the transcription and the CASES table first — "
+                f"otherwise the gate reports drift that does not exist, or "
+                f"misses drift that does."
+            ),
+        )
 
 
 @contextlib.contextmanager

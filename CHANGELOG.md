@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.7.0...v0.8.0) - 2026-08-04
+
+### Added
+
+- *(rest)* add fetch_account_funding for GET /funding ([#122](https://github.com/nexus-xyz/nexus-exchange-rs/pull/122))
+- *(rest)* add fetch_market_risk_params for GET /markets/{market_id}/risk-params ([#121](https://github.com/nexus-xyz/nexus-exchange-rs/pull/121))
+- *(rest)* add the spec'd funds surface — GET/POST /deposits and POST /faucet ([#119](https://github.com/nexus-xyz/nexus-exchange-rs/pull/119))
+- *(rest)* add fetch_stats and fetch_stats_history for the venue stats reads ([#118](https://github.com/nexus-xyz/nexus-exchange-rs/pull/118))
+- *(config)* [**breaking**] adopt the {Mainnet, Testnet, Local} network axis (ENG-6452) ([#126](https://github.com/nexus-xyz/nexus-exchange-rs/pull/126))
+
+### Fixed
+
+- *(spec-drift)* derive wire names correctly for enum variants, not just fields ([#120](https://github.com/nexus-xyz/nexus-exchange-rs/pull/120))
+
+### Other
+
+- *(spec-pin)* rename CI's `drift` job to `spec-pin` (ENG-7961) ([#125](https://github.com/nexus-xyz/nexus-exchange-rs/pull/125))
+- *(spec-drift)* make the drift gate unskippable and unambiguous (ENG-7961) ([#123](https://github.com/nexus-xyz/nexus-exchange-rs/pull/123))
+- *(contributing)* document the squash-merge conventions the PR title now drives ([#117](https://github.com/nexus-xyz/nexus-exchange-rs/pull/117))
+
 ### Changed
 
 - *(config)* [**breaking**] Adopted the **network axis** the spec formalizes

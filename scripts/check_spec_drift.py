@@ -219,6 +219,14 @@ NON_REST_TARGETS = {
 # payload as a raw map rather than freezing a shape. Add it here once the spec
 # gives it real properties.
 MODEL_SCHEMA = {
+    # Money-critical: carries amount + settlement status for every funds movement.
+    "FundsEntry": "FundsEntry",
+    "DepositResponse": "DepositResponse",
+    # `available_at_ms` is `#[serde(default)]`, so a spec-side rename would not
+    # fail the decode — it would silently yield `0`, i.e. the epoch, which reads
+    # as "the faucet is claimable now". Registering the model turns that into a
+    # CI failure instead of a wrong answer a caller would act on.
+    "FaucetResponse": "FaucetResponse",
     "Market": "Market",
     "MarketSummary": "MarketSummary",
     "MarketStatus": "MarketStatus",
@@ -284,6 +292,8 @@ MODEL_FIELDS_AHEAD_OF_SPEC = {
 # single-branch `allOf` wrapper (see resolve_enum below) — the spec uses the
 # latter for `PortfolioHistory.window`, so a `default` can sit alongside the ref.
 ENUM_SCHEMA = {
+    "FundsKind": ("FundsEntry", "kind"),
+    "FundsStatus": ("FundsEntry", "status"),
     "Side": ("OrderRequest", "side"),
     "OrderType": ("OrderRequest", "order_type"),
     "TimeInForce": ("OrderRequest", "time_in_force"),

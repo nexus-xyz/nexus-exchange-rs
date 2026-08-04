@@ -409,13 +409,8 @@ pub struct MarketRiskParams {
 }
 
 /// Whether a funding payment was paid out or received.
-///
-/// `lowercase`, not `snake_case`: `check_spec_drift.py`'s `_apply_rename_all`
-/// treats `snake_case` as a no-op on PascalCase enum variants, so it would
-/// manufacture phantom drift. Both rules produce identical wire values for these
-/// single-word variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum FundingDirection {
     /// The account paid funding.
     Paid,

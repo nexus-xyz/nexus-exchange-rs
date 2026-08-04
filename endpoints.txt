@@ -66,6 +66,7 @@ POST /faucet
 GET /stats
 GET /stats/history
 GET /status
+GET /funding
 GET /keys
 POST /keys
 DELETE /keys/{key_id}

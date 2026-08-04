@@ -227,6 +227,8 @@ MODEL_SCHEMA = {
     # as "the faucet is claimable now". Registering the model turns that into a
     # CI failure instead of a wrong answer a caller would act on.
     "FaucetResponse": "FaucetResponse",
+    # Money-critical: signed settlement amounts against the account balance.
+    "AccountFunding": "AccountFunding",
     "Market": "Market",
     "MarketSummary": "MarketSummary",
     "MarketStatus": "MarketStatus",
@@ -294,6 +296,7 @@ MODEL_FIELDS_AHEAD_OF_SPEC = {
 ENUM_SCHEMA = {
     "FundsKind": ("FundsEntry", "kind"),
     "FundsStatus": ("FundsEntry", "status"),
+    "FundingDirection": ("AccountFunding", "direction"),
     "Side": ("OrderRequest", "side"),
     "OrderType": ("OrderRequest", "order_type"),
     "TimeInForce": ("OrderRequest", "time_in_force"),

@@ -226,6 +226,12 @@ MODEL_SCHEMA = {
     "OrderBook": "OrderBook",
     "Trade": "Trade",
     "FundingSample": "FundingSample",
+    # Every field on both is `#[serde(default)]` (the venue stats surface reports
+    # partially), so a spec-side rename would degrade to a permanent silent
+    # `0`/`None`/`""` instead of a decode error. Registering them here is what
+    # makes that a CI failure — this invariant's whole purpose.
+    "StatsSnapshot": "StatsSnapshot",
+    "ThroughputSample": "ThroughputSample",
     "RateLimitStatus": "RateLimitStatus",
     "AccountSummary": "AccountSummary",
     "AccountPortfolioSummary": "AccountPortfolioSummary",

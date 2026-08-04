@@ -213,12 +213,7 @@ pub struct RateLimitStatus {
 /// polices that, so a member added upstream trips the gate rather than silently
 /// failing to decode in the field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-// `lowercase`, not `snake_case`: both produce the same wire values for these
-// single-word variants, but `check_spec_drift.py`'s `_apply_rename_all` treats
-// `snake_case` as a no-op (it is written for already-snake_case struct FIELDS,
-// not PascalCase enum VARIANTS), so `snake_case` here manufactures phantom drift
-// against the spec. `lowercase` is derived identically by serde and by the gate.
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum FundsKind {
     /// A deposit credited to the account.
     Deposit,
@@ -230,12 +225,7 @@ pub enum FundsKind {
 
 /// Settlement state of a [`FundsEntry`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-// `lowercase`, not `snake_case`: both produce the same wire values for these
-// single-word variants, but `check_spec_drift.py`'s `_apply_rename_all` treats
-// `snake_case` as a no-op (it is written for already-snake_case struct FIELDS,
-// not PascalCase enum VARIANTS), so `snake_case` here manufactures phantom drift
-// against the spec. `lowercase` is derived identically by serde and by the gate.
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum FundsStatus {
     /// Submitted, not yet settled.
     Pending,
@@ -258,7 +248,31 @@ pub struct FundsEntry {
     pub kind: FundsKind,
     /// 0x-prefixed account address.
     pub account: String,
-    /// Amount moved, as a lossless decimal.
+    /// Amount moved, as a lossless decimal. **Always a positive magnitude —
+    /// direction lives in [`kind`](Self::kind), never in this sign.**
+    ///
+    /// A `Withdrawal` row reports what left the account as a *positive* number,
+    /// so summing this field over a mixed `Vec<FundsEntry>` computes gross
+    /// throughput, not net flow. To get net flow, branch on `kind` and subtract
+    /// the `Withdrawal` rows.
+    ///
+    /// This crate carries two deliberate and different amount conventions, and
+    /// they must not be crossed:
+    ///
+    /// | family | convention |
+    /// | -- | -- |
+    /// | funds movement — this type, [`Withdrawal`], [`Transfer`] | positive magnitude, direction in a categorical field |
+    /// | funding settlement — [`FundingPayment`] | **signed**: negative paid, positive received |
+    ///
+    /// A caller who assumes the funding family's signed convention here would
+    /// add a withdrawal where it should subtract one. The spec does not settle
+    /// it: `FundsEntry.amount` is a bare `Decimal` `$ref` with no description,
+    /// while the funding family's `amount` is described as *"Signed funding
+    /// amount"* — so the spec marks signedness where it means it and is silent
+    /// here. This
+    /// doc records the convention the SDK reads rather than leaving each caller
+    /// to infer one, since the drift gate checks field names and types but
+    /// cannot check sign semantics.
     #[serde(with = "rust_decimal::serde::str")]
     pub amount: Decimal,
     /// Asset symbol, e.g. `USDX`.

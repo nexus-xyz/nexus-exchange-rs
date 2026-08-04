@@ -221,6 +221,12 @@ NON_REST_TARGETS = {
 MODEL_SCHEMA = {
     # Money-critical: carries amount + settlement status for every funds movement.
     "FundsEntry": "FundsEntry",
+    "DepositResponse": "DepositResponse",
+    # `available_at_ms` is `#[serde(default)]`, so a spec-side rename would not
+    # fail the decode — it would silently yield `0`, i.e. the epoch, which reads
+    # as "the faucet is claimable now". Registering the model turns that into a
+    # CI failure instead of a wrong answer a caller would act on.
+    "FaucetResponse": "FaucetResponse",
     "Market": "Market",
     "MarketSummary": "MarketSummary",
     "MarketStatus": "MarketStatus",

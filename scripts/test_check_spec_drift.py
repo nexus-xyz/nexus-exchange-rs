@@ -667,9 +667,16 @@ class TestRenameAllTranscriptionPin(unittest.TestCase):
         )
         self.assertIsNotNone(
             found,
-            f"no `serde_derive` entry in {lock_path} — if the dependency was "
-            f"removed, `_apply_rename_all` no longer mirrors anything real and "
-            f"this pin (plus its constant) should go with it.",
+            f"could not read `serde_derive`'s version from {lock_path}. Two "
+            f"different causes, so check which before acting:\n"
+            f"  (a) the block is gone — the dependency was removed, so "
+            f"`_apply_rename_all` no longer mirrors anything real and this pin "
+            f"(plus its constant) should go with it;\n"
+            f"  (b) the block is still there but `version` is no longer the "
+            f"line directly after `name` — this match assumes Cargo's current "
+            f"key order (name / version / source / checksum), so a lockfile "
+            f"format change means fixing the regex, NOT the dependency.\n"
+            f"Grep the file before concluding the dependency vanished.",
         )
         self.assertEqual(
             found.group(1),

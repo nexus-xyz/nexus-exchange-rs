@@ -207,6 +207,82 @@ pub struct RateLimitStatus {
     pub reset_at_ms: Option<i64>,
 }
 
+/// Aggregate venue statistics (`GET /stats`). Unauthenticated.
+///
+/// Every field is `#[serde(default)]` because the spec marks none of them
+/// `required`. That is decode robustness against a partial payload, NOT an
+/// invitation to read a defaulted `0` as a measurement: the indexer's own
+/// `StatsSnapshot` declares the counters as non-`Option`, so in practice they
+/// are always present, and a `0` you actually receive is a real zero. The
+/// genuinely-conditional fields are modelled as `Option` instead — see below.
+#[derive(Debug, Clone, Deserialize)]
+pub struct StatsSnapshot {
+    /// Engine events ingested since process start.
+    #[serde(default)]
+    pub events_received: u64,
+    /// Fills observed since process start.
+    #[serde(default)]
+    pub fills_total: u64,
+    /// Liquidations observed since process start.
+    #[serde(default)]
+    pub liquidations_total: u64,
+    /// Detected gaps in the engine event sequence.
+    #[serde(default)]
+    pub gap_count: u64,
+    /// Whether the indexer currently holds an engine event-stream connection.
+    #[serde(default)]
+    pub connected: bool,
+    /// Ingest time of the most recent event, Unix ms.
+    ///
+    /// `None` until the first event is observed — deliberately not `0`, because
+    /// a zero here would advertise an event at the Unix epoch rather than "no
+    /// event yet". The spec models it as `oneOf [TimestampMs, null]`.
+    #[serde(default)]
+    pub last_event_ms: Option<i64>,
+    /// Seconds since the indexer process started.
+    #[serde(default)]
+    pub uptime_seconds: u64,
+    /// Recent event ingest rate.
+    #[serde(default)]
+    pub events_per_sec: f64,
+    /// Health classification, e.g. `Healthy` / `Degraded` / `Unhealthy`.
+    #[serde(default)]
+    pub health: String,
+    /// Highest engine sequence number seen.
+    #[serde(default)]
+    pub highest_sequence_seen: u64,
+    /// Rolling 24h unique traders (DAU).
+    ///
+    /// `Option` rather than a defaulted `0`: the spec documents these three as
+    /// *"Present on `/stats`"*, i.e. they are an augmentation of the base
+    /// snapshot rather than part of it. `None` means the endpoint did not report
+    /// the figure; `Some(0)` means it reported no traders. Collapsing those two
+    /// into `0` is the distinction this crate keeps everywhere else.
+    #[serde(default)]
+    pub unique_traders_24h: Option<u64>,
+    /// Rolling 7d unique traders (WAU). See [`Self::unique_traders_24h`].
+    #[serde(default)]
+    pub unique_traders_7d: Option<u64>,
+    /// Rolling 30d unique traders (MAU). See [`Self::unique_traders_24h`].
+    #[serde(default)]
+    pub unique_traders_30d: Option<u64>,
+}
+
+/// One point in the venue throughput ring buffer (`GET /stats/history`).
+///
+/// The spec documents the buffer as 1s cadence capped at 3600 points, so a full
+/// response covers the last hour.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ThroughputSample {
+    /// Sample time in Unix **seconds** — note this endpoint is seconds, unlike
+    /// the `*_ms` fields elsewhere in this crate.
+    #[serde(default)]
+    pub timestamp: i64,
+    /// Fills recorded in this sample's interval.
+    #[serde(default)]
+    pub fills: u64,
+}
+
 /// A single order-book level, `[price, amount]` (CCXT format).
 ///
 /// Both values arrive as JSON numbers via the `float` adapter and may carry

@@ -32,8 +32,8 @@ use crate::types::{
     LeverageUpdate, LoginResponse, MarginAdjustment, MarginDirection, MarginMode, MarginModeUpdate,
     MarkPrice, Market, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderHistoryEntry,
     OrderPreview, OrderRequest, OrderResponse, OrderResult, PortfolioHistory, PortfolioWindow,
-    Position, RateLimitStatus, SubAccount, Ticker, TierOverride, Trade, Transfer, TransferRequest,
-    Withdrawal, WsToken,
+    Position, RateLimitStatus, StatsSnapshot, SubAccount, ThroughputSample, Ticker, TierOverride,
+    Trade, Transfer, TransferRequest, Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
 
@@ -405,6 +405,26 @@ impl Client {
     /// [`HealthStatus::status`](crate::types::HealthStatus::status).
     pub async fn health_check(&self) -> Result<HealthStatus> {
         self.get("/status", &[], COST_DEFAULT).await
+    }
+
+    /// Aggregate venue statistics (`GET /stats`). Unauthenticated.
+    ///
+    /// Counters are cumulative since the indexer process started, so they reset
+    /// on redeploy — difference two reads to get a rate, and treat a decrease as
+    /// a restart rather than as lost volume.
+    pub async fn fetch_stats(&self) -> Result<StatsSnapshot> {
+        self.get("/stats", &[], COST_DEFAULT).await
+    }
+
+    /// Venue throughput history (`GET /stats/history`). Unauthenticated.
+    ///
+    /// A ring buffer at 1s cadence capped at 3600 points, so a full response is
+    /// the last hour and there is no pagination. Oldest-first. An empty array is
+    /// a valid response from a freshly started indexer, and is distinct from an
+    /// error — it means the buffer has not filled yet, not that throughput is
+    /// zero.
+    pub async fn fetch_stats_history(&self) -> Result<Vec<ThroughputSample>> {
+        self.get("/stats/history", &[], COST_DEFAULT).await
     }
 
     /// Fetch the caller's current rate-limit status (tier, ceiling, remaining,

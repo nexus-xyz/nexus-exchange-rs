@@ -606,6 +606,19 @@ _SKIP_RE = re.compile(r"\bskip(?:_serializing|_deserializing)?\b(?!_if)")
 
 # The `rename_all` rules serde accepts. Shared by both derivations below so an
 # unknown rule fails closed in one place rather than per-kind.
+# The `serde_derive` release whose `internals/case.rs` the two derivations
+# below are transcribed from. `test_check_spec_drift.py` asserts `Cargo.lock`
+# still pins exactly this version, so bumping the dependency fails loudly until
+# someone re-diffs `_apply_rename_all` against the new source.
+#
+# That assertion is load-bearing, not bookkeeping. The tests pin this
+# transcription against their own expected pairs, so if serde ever changed a
+# rule, every one of them would stay green while the gate computed wire names
+# serde no longer emits — silently, and in exactly the phantom-drift class this
+# helper exists to remove, just triggered by a dependency bump instead of a
+# rename. A version recorded only in prose cannot fail.
+SERDE_DERIVE_TRANSCRIBED_FROM = "1.0.229"
+
 _RENAME_ALL_RULES = frozenset(
     {
         "lowercase",
@@ -661,8 +674,10 @@ def _apply_rename_all(name, rule, kind):
 
     `kind` selects the derivation and is **not** a formality: serde applies two
     genuinely different algorithms, `apply_to_field` and `apply_to_variant`
-    (`serde_derive/src/internals/case.rs`, pinned at 1.0.229 in `Cargo.lock`).
-    They disagree on real inputs, so one shared table cannot serve both:
+    (`serde_derive/src/internals/case.rs`, at the release recorded in
+    [`SERDE_DERIVE_TRANSCRIBED_FROM`] and asserted against `Cargo.lock` by the
+    test suite). They disagree on real inputs, so one shared table cannot serve
+    both:
 
     - A **field** arrives snake_case and is already a word sequence, so serde
       treats `lowercase` and `snake_case` as identity and only ever rewrites the

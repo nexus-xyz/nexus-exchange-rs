@@ -538,3 +538,72 @@ async fn empty_stats_history_is_ok_not_an_error() {
     let hist = client(server.uri()).fetch_stats_history().await.unwrap();
     assert!(hist.is_empty());
 }
+
+// ── GET /markets/{market_id}/risk-params ────────────────────────────────────
+
+#[tokio::test]
+async fn fetch_market_risk_params_parses_string_decimal_rates() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/markets/BTC-USDX-PERP/risk-params"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "market_id": "BTC-USDX-PERP",
+            "max_leverage": 20,
+            "initial_margin_rate": "0.05",
+            "maintenance_margin_rate": "0.03"
+        })))
+        .mount(&server)
+        .await;
+
+    let rp = client(server.uri())
+        .fetch_market_risk_params("BTC-USDX-PERP")
+        .await
+        .unwrap();
+    assert_eq!(rp.market_id, "BTC-USDX-PERP");
+    assert_eq!(rp.max_leverage, 20);
+    // Lossless decimals, not floats — a margin rate is money-adjacent.
+    assert_eq!(rp.initial_margin_rate.to_string(), "0.05");
+    assert_eq!(rp.maintenance_margin_rate.to_string(), "0.03");
+    // Maintenance is the liquidation threshold, so it must be the lower of the two.
+    assert!(rp.maintenance_margin_rate < rp.initial_margin_rate);
+}
+
+/// An unknown market is a `404` error, never an all-zero struct. A zeroed margin
+/// rate would read as "no margin required", which is the most dangerous default
+/// this payload could have.
+#[tokio::test]
+async fn unknown_market_risk_params_is_an_error_not_zeroed_rates() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/markets/NOPE-PERP/risk-params"))
+        .respond_with(
+            ResponseTemplate::new(404).set_body_json(
+                serde_json::json!({ "code": "NOT_FOUND", "message": "unknown market" }),
+            ),
+        )
+        .mount(&server)
+        .await;
+
+    assert!(client(server.uri())
+        .fetch_market_risk_params("NOPE-PERP")
+        .await
+        .is_err());
+}
+
+/// An empty market id is rejected locally, before any I/O — same contract as the
+/// other single-market reads (see
+/// `public_market_reads_reject_empty_market_id_locally`).
+///
+/// Note the guard is `is_empty()`, not `trim().is_empty()`: a whitespace-only id
+/// is percent-encoded and sent, and the server answers 404. That asymmetry with
+/// `require_non_empty` (which does reject blanks) is pre-existing and not
+/// widened here.
+#[tokio::test]
+async fn risk_params_rejects_an_empty_market_id_locally() {
+    let server = MockServer::start().await;
+    assert!(client(server.uri())
+        .fetch_market_risk_params("")
+        .await
+        .is_err());
+    assert!(server.received_requests().await.unwrap().is_empty());
+}

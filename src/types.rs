@@ -387,6 +387,27 @@ pub struct ThroughputSample {
     pub fills: u64,
 }
 
+/// Per-market risk parameters (`GET /markets/{market_id}/risk-params`).
+///
+/// These four fields also appear on [`Market`], which `fetch_markets` returns for
+/// every market at once. This route is the focused read for a single market when
+/// you only need the risk inputs — use whichever costs you less, they are the
+/// same numbers.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MarketRiskParams {
+    /// Market this applies to, e.g. `BTC-USDX-PERP`.
+    pub market_id: String,
+    /// Maximum leverage allowed for this market.
+    pub max_leverage: u32,
+    /// Initial margin requirement, as a decimal ratio (e.g. `0.05` = 5%).
+    #[serde(with = "rust_decimal::serde::str")]
+    pub initial_margin_rate: Decimal,
+    /// Maintenance margin requirement, as a decimal ratio. Lower than the
+    /// initial rate — a position is liquidatable once equity falls below this.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub maintenance_margin_rate: Decimal,
+}
+
 /// A single order-book level, `[price, amount]` (CCXT format).
 ///
 /// Both values arrive as JSON numbers via the `float` adapter and may carry

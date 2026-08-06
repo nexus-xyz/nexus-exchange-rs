@@ -132,7 +132,7 @@ through the crate's `Client`, with no transport of its own — see
 
 <!-- api-version-sync:start -->
 
-Currently targets Exchange API spec **`v0.7.2`**.
+Currently targets Exchange API spec **`v0.7.3`**.
 
 <!-- api-version-sync:end -->
 

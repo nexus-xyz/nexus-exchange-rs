@@ -71,6 +71,24 @@ pub enum Channel {
     Positions,
     /// The authenticated account's balance updates. Private.
     Balances,
+    /// The authenticated account's liquidation risk alerts and terminal
+    /// portfolio liquidations (spec v0.7.3, ENG-7341). Private.
+    ///
+    /// Payloads are externally tagged — one key naming the engine event
+    /// variant, `LiquidationAlert` (a pre-liquidation warning, `severity` one of
+    /// `Warning` / `Critical` / `Imminent`) or `PortfolioLiquidation` (terminal;
+    /// the cross-margin positions have already been closed out). Like every
+    /// other channel here, the payload is forwarded verbatim as
+    /// [`serde_json::Value`].
+    ///
+    /// Two properties differ from the other account channels and matter to a
+    /// consumer: alerts are **edge-triggered** — one frame per worsening
+    /// severity transition, nothing while a severity holds and nothing on
+    /// recovery — and subscribing does **not** seed a snapshot the way
+    /// `balances` and `positions` do. There is no REST read of the current
+    /// alert state either, so a client that reconnects sees nothing until the
+    /// next worsening transition.
+    Liquidations,
 }
 
 impl Channel {
@@ -101,7 +119,11 @@ impl Channel {
     pub fn is_private(&self) -> bool {
         matches!(
             self,
-            Channel::Orders | Channel::Fills | Channel::Positions | Channel::Balances
+            Channel::Orders
+                | Channel::Fills
+                | Channel::Positions
+                | Channel::Balances
+                | Channel::Liquidations
         )
     }
 
@@ -115,6 +137,7 @@ impl Channel {
             Channel::Fills => "fills",
             Channel::Positions => "positions",
             Channel::Balances => "balances",
+            Channel::Liquidations => "liquidations",
         }
     }
 
@@ -123,7 +146,11 @@ impl Channel {
             Channel::Trades { market }
             | Channel::Book { market }
             | Channel::Candles { market, .. } => Some(market),
-            Channel::Orders | Channel::Fills | Channel::Positions | Channel::Balances => None,
+            Channel::Orders
+            | Channel::Fills
+            | Channel::Positions
+            | Channel::Balances
+            | Channel::Liquidations => None,
         }
     }
 
@@ -338,6 +365,7 @@ fn key_of(channel: &str, market: &Option<String>, interval: &Option<String>) -> 
         "fills" => "fills",
         "positions" => "positions",
         "balances" => "balances",
+        "liquidations" => "liquidations",
         // An unknown channel can't collide with a known cursor key; keep it
         // stable so repeated frames for it still fold consistently.
         _ => "",
@@ -383,8 +411,33 @@ mod tests {
     fn private_channels_are_classified() {
         assert!(Channel::Orders.is_private());
         assert!(Channel::Positions.is_private());
+        // Account-scoped like the rest: subscribing needs a minted token, so a
+        // client with no credentials must be rejected before it connects.
+        assert!(Channel::Liquidations.is_private());
         assert!(!Channel::trades("BTC-USDX-PERP").is_private());
         assert!(!Channel::candles("BTC-USDX-PERP", "1m").is_private());
+    }
+
+    #[test]
+    fn liquidations_round_trips_through_the_cursor_key() {
+        // The channel takes neither market nor interval, so its subscribe frame
+        // is bare (plus `since` on a resume).
+        let sub: Value = serde_json::from_str(&Channel::Liquidations.subscribe_text(None)).unwrap();
+        assert_eq!(sub, json!({ "op": "subscribe", "channel": "liquidations" }));
+
+        // An inbound frame must normalize to the SAME key the outbound Channel
+        // produces, or the resume cursor is never folded and every reconnect
+        // silently replays from the live edge. `key_of` matches on a fixed name
+        // list, so a new channel that is missed there degrades to the `""` key.
+        let event: ServerMessage = serde_json::from_value(json!({
+            "op": "event", "channel": "liquidations", "market": null, "seq": 7,
+            "payload": { "LiquidationAlert": { "severity": "Critical" } }
+        }))
+        .unwrap();
+        let (key, seq) = event.cursor_advance().unwrap();
+        assert_eq!(key, Channel::Liquidations.cursor_key());
+        assert_eq!(key, ("liquidations", None, None));
+        assert_eq!(seq, 7);
     }
 
     #[test]

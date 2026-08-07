@@ -68,7 +68,7 @@ def _quiet(fn, *args, **kwargs):
 
 # Member sets that match the current SDK WS channels exactly.
 SDK_PUBLIC_CHANNELS = ["trades", "book", "candles"]
-SDK_PRIVATE_CHANNELS = ["orders", "fills", "positions", "balances"]
+SDK_PRIVATE_CHANNELS = ["orders", "fills", "positions", "balances", "liquidations"]
 
 
 def _types_src():
@@ -302,7 +302,16 @@ class TestWsChannelParser(unittest.TestCase):
     def test_channel_names(self):
         self.assertEqual(
             csd.parse_ws_channel_names(),
-            {"trades", "book", "candles", "orders", "fills", "positions", "balances"},
+            {
+                "trades",
+                "book",
+                "candles",
+                "orders",
+                "fills",
+                "positions",
+                "balances",
+                "liquidations",
+            },
         )
 
 
@@ -314,10 +323,14 @@ class TestWsChannelsVsSpec(unittest.TestCase):
 
     def test_spec_adds_channel_sdk_lacks_fails(self):
         # The Liquidations/ENG-4646 class: spec documents a channel the SDK's
-        # Channel enum can't subscribe to.
+        # Channel enum can't subscribe to. `liquidations` was this fixture's
+        # example until the SDK grew the variant for spec v0.7.3 (ENG-7341), so
+        # the stand-in is now `engine` — the other channel v0.7.3 documents and
+        # the SDK does not model. Keep this channel one the SDK genuinely lacks:
+        # naming a modelled one turns the assertion vacuous.
         errs = _quiet(
             csd.check_ws_channels_vs_spec,
-            ws_spec(private=SDK_PRIVATE_CHANNELS + ["liquidations"]),
+            ws_spec(private=SDK_PRIVATE_CHANNELS + ["engine"]),
         )
         self.assertGreater(errs, 0)
 

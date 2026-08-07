@@ -23,7 +23,7 @@ thin, idiomatic wrapper over the public REST + WebSocket API.
 ## Pagination
 
 The cursor-paginated list endpoints return one page plus an opaque cursor for the
-next, carried in the **`X-Next-Cursor`** response header (spec v0.7.2). The
+next, carried in the **`X-Next-Cursor`** response header (spec v0.7.3). The
 `*_paginated` methods hand back a `Paginator` that drives that cursor for you —
 nothing is requested until a page is asked for:
 
@@ -42,7 +42,7 @@ while let Some(page) = pager.next_page().await? {
 }
 ```
 
-All five cursor-paginated endpoints in spec v0.7.2 are covered, each with a flat
+All five cursor-paginated endpoints in spec v0.7.3 are covered, each with a flat
 first-page method and a `Paginator`:
 
 | Endpoint | First page | Whole history | `limit` max |
@@ -132,7 +132,7 @@ through the crate's `Client`, with no transport of its own — see
 
 <!-- api-version-sync:start -->
 
-Currently targets Exchange API spec **`v0.7.2`**.
+Currently targets Exchange API spec **`v0.7.3`**.
 
 <!-- api-version-sync:end -->
 

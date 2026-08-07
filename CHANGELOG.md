@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.8.0...v0.8.1) - 2026-08-07
+
+### Added
+
+- *(ws)* add the liquidations channel and bump .api-version to v0.7.3 (ENG-7341) ([#129](https://github.com/nexus-xyz/nexus-exchange-rs/pull/129))
+
+### Other
+
+- *(spec-drift)* fail when serde_derive moves out from under the transcription ([#127](https://github.com/nexus-xyz/nexus-exchange-rs/pull/127))
+
 ## [0.8.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.7.0...v0.8.0) - 2026-08-04
 
 ### Added

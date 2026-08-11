@@ -23,16 +23,27 @@ struct ApiErrorBody {
 }
 
 /// Path prefix for the direct-service (`/api/v1`) surface. A request whose path
-/// begins with this is routed to the host-root direct base
+/// begins with this is routed to the direct base
 /// ([`Config::direct_base_url`](crate::Config::direct_base_url)) rather than the
-/// legacy `/api/exchange` gateway base; everything else stays on the gateway.
+/// legacy `/api/exchange` gateway base; everything else stays on the gateway. On
+/// today's deployments those two bases are equal — the direct surface is mounted
+/// *under* the gateway prefix — so the split is about where the surface may move
+/// next, not about where it is now.
 ///
 /// The prefix is part of the `path` that is both **signed and sent**: the server
-/// verifies the HMAC over the exact path it receives, and — unlike the legacy
-/// gateway, which strips its own `/api/exchange` prefix before the indexer signs
-/// — the direct surface is served at the host root with no stripping, so the
-/// full `/api/v1/...` path is what must be signed. Selecting the base off this
-/// same prefix keeps the signed path and the sent URL from ever disagreeing.
+/// verifies the HMAC over the exact path the indexer receives. The gateway
+/// strips its own `/api/exchange` prefix before the indexer verifies, so a
+/// request sent to `…/api/exchange/api/v1/orders` is verified as
+/// `/api/v1/orders` — the full `/api/v1/...` path, and exactly what this client
+/// signs. Legacy routes reach the same indexer with the prefix likewise stripped,
+/// which is why they sign the bare `/orders`.
+///
+/// Selecting the base off this same prefix keeps the signed path and the sent
+/// URL from ever disagreeing. Note the corollary: the signed path is independent
+/// of the base, so retargeting [`Config::with_direct_base_url`] at a deployment
+/// that serves `/api/v1` somewhere else needs no signing change — but a base
+/// whose *own* path segment is not stripped server-side would, so verify before
+/// pointing this at a host that is not a gateway.
 const API_V1_PREFIX: &str = "/api/v1/";
 
 /// Why a [`Network::Mainnet`] client refuses every request. Kept as one
@@ -119,8 +130,8 @@ impl Client {
         &self.config.base_url
     }
 
-    /// Select the base URL for `path`: the host-root direct base for the
-    /// `/api/v1` surface, the legacy `/api/exchange` gateway base otherwise.
+    /// Select the base URL for `path`: the direct base for the `/api/v1`
+    /// surface, the legacy `/api/exchange` gateway base otherwise.
     ///
     /// Detection keys off the path prefix rather than a per-call flag so a single
     /// centralized rule governs every request builder below — there is no way for
@@ -691,19 +702,23 @@ mod tests {
         let _: serde_json::Value = client.get("/x", &[], 0.0).await.unwrap();
     }
 
-    /// `/api/v1/*` paths route to the host-root direct base; everything else
-    /// stays on the gateway base. This is the single rule every request builder
-    /// relies on, so pin it directly.
+    /// `/api/v1/*` paths route to the direct base; everything else stays on the
+    /// gateway base. This is the single rule every request builder relies on, so
+    /// pin it directly.
+    ///
+    /// On today's deployments the two bases are equal — `/api/v1` is mounted
+    /// under the gateway prefix — so this asserts the *routing rule*, not a
+    /// difference between the bases. See [`Network::direct_base_url`].
     #[test]
     fn base_for_routes_v1_to_direct_and_rest_to_gateway() {
         let client = Client::new(Config::new(Network::Testnet));
         assert_eq!(
             client.base_for("/api/v1/orders").unwrap(),
-            "https://exchange.nexus.xyz"
+            "https://exchange.nexus.xyz/api/exchange"
         );
         assert_eq!(
             client.base_for("/api/v1/markets/summary").unwrap(),
-            "https://exchange.nexus.xyz"
+            "https://exchange.nexus.xyz/api/exchange"
         );
         // Legacy / not-yet-migrated routes stay on the gateway base.
         assert_eq!(
@@ -801,10 +816,10 @@ mod tests {
         );
     }
 
-    /// A signed request to a `/api/v1` path must be sent to the host root (no
-    /// `/api/exchange`) AND sign the full `/api/v1/...` path — the server signs
-    /// the path it receives, and nothing strips the prefix on the direct
-    /// surface. Drive it through a mock at the host root to prove both.
+    /// A signed request to a `/api/v1` path must be sent to the **direct base**
+    /// AND sign the full `/api/v1/...` path — the indexer verifies the path it
+    /// receives, which retains `/api/v1` after the gateway strips its own prefix.
+    /// Drive it through a mock serving the direct base to prove both.
     #[tokio::test]
     async fn v1_path_is_sent_to_direct_base_and_signed_over_full_path() {
         let server = MockServer::start().await;

@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- *(config)* **`Config::direct_base_url` pointed the `/api/v1` surface at the
+  host root, which serves no API** (ENG-10063). Every `/api/v1` request landed on
+  the marketing frontend and came back as a `404` with an HTML body — 34 of the
+  SDK's 62 targeted operations, including `POST /api/v1/orders`, both cancels,
+  `/orders/batch`, `/orders/preview` and the whole authenticated account surface.
+
+  The `/api/v1` surface is mounted **under** the `/api/exchange` gateway prefix,
+  not at the host root, so the direct base and the REST base are the *same base*
+  on every deployment that exists today:
+
+  ```text
+  https://exchange.nexus.xyz/api/exchange/api/v1/markets/summary  -> 200 (JSON)
+  https://exchange.nexus.xyz/api/v1/markets/summary               -> 404 (frontend HTML)
+  ```
+
+  `/api/v2` and junk segments answer a JSON `NOT_FOUND` under the gateway, so the
+  gateway recognizes `/api/v1` specifically — a real mount, not a permissive
+  router. `Network::Testnet.direct_base_url()` is therefore now
+  `https://exchange.nexus.xyz/api/exchange`, and `with_base_url` no longer strips
+  a trailing `/api/exchange` to derive the direct base. This corrects the
+  host-root claim in the `v0.6.0` ENG-4947 entry below, which was right that the
+  full `/api/v1` path is signed but wrong about why.
+
+  **No signing change and no path literal changes.** The client signs the
+  `/api/v1/...` path literal, never base + path, and the gateway strips only its
+  own prefix before the indexer verifies — which is why today's legacy signed
+  calls, signing the bare `/orders`, work at all.
+  `Config::with_direct_base_url` remains the override for when gateway
+  elimination (ENG-4740) genuinely moves the surface.
+
+- *(config)* `with_base_url` now trims a trailing slash from the REST base as
+  well as from the derived direct base. A base passed as `…/api/exchange/` built
+  `…//orders`, which is a different path than the `/orders` the client signs, so
+  it failed verification rather than merely looking untidy.
+
 ## [0.8.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.7.0...v0.8.0) - 2026-08-04
 
 ### Added

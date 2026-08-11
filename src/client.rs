@@ -52,8 +52,9 @@ const MAINNET_NOT_TARGETABLE: &str = "Network::Mainnet is not targetable by this
      api.nexus.xyz does not resolve yet (ENG-8155), and its durable base carries the version in \
      the base (`/v1`) rather than in the path, which is not the layout this SDK builds and signs. \
      Requests are refused locally rather than sent to a real-funds host on a guessed URL or a \
-     signature over a path the server never sees. Use Network::Testnet, or Config::with_base_url \
-     to target a host you control.";
+     signature over a path the server never sees. Use Network::Testnet, or Network::Custom to \
+     target a host you control — including a real-funds one, where you supply the URL and so own \
+     its path layout.";
 
 /// Build the underlying HTTP client with the configured `User-Agent`.
 ///
@@ -151,7 +152,12 @@ impl Client {
     /// The rejection is local and total — it happens before any DNS, TLS or
     /// bytes on the wire, and before any credential is used.
     fn base_for(&self, path: &str) -> Result<&str> {
-        if self.config.network == Some(Network::Mainnet) {
+        // Keyed on the `Mainnet` *variant*, not on `funds()`. The refusal is
+        // about a URL layout this release cannot build (`/v1` in the base), not
+        // about real money, so a `Network::Custom` declaring `Funds::Real` is
+        // targetable — the caller supplied that URL and owns its layout. Money
+        // movement is guarded separately, in `Client::fund`.
+        if matches!(self.config.network, Network::Mainnet) {
             return Err(Error::invalid_request(MAINNET_NOT_TARGETABLE));
         }
         Ok(if path.starts_with(API_V1_PREFIX) {

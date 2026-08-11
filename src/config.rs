@@ -2,6 +2,7 @@
 
 use crate::auth::{Credential, Credentials, Nonce, SystemTimeNonce};
 use crate::ws::Backoff;
+use crate::{Error, Result};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -38,9 +39,249 @@ pub struct SigningDomain {
     pub name: &'static str,
     /// EIP-712 domain `version` — `"1"` on every network.
     pub version: &'static str,
-    /// EIP-712 domain `chainId`, or `None` when unpublished — always `None`.
-    /// See the type-level note: do not substitute a default.
+    /// EIP-712 domain `chainId`, or `None` when unpublished. `None` for every
+    /// built-in network; a [`CustomNetwork`] may supply one. See the type-level
+    /// note: do not substitute a default.
     pub chain_id: Option<u64>,
+}
+
+impl SigningDomain {
+    /// The signing domain for a deployment whose `chain_id` the **caller** knows
+    /// — the only way to obtain a signable domain from this SDK.
+    ///
+    /// `name` and `version` are contract-level constants, identical on every
+    /// deployment, and are supplied from the same source the signer uses so the
+    /// two cannot drift. `chain_id` is the part that is per-network and
+    /// server-authoritative, so it is the part you must pass: read it from
+    /// `GET /metadata` for the host you are pointed at.
+    ///
+    /// This type is `#[non_exhaustive]`, so this constructor — not a struct
+    /// literal — is how a [`CustomNetwork`] receives a domain.
+    pub fn new(chain_id: u64) -> Self {
+        Self {
+            name: crate::auth::eth::EIP712_DOMAIN_NAME,
+            version: crate::auth::eth::EIP712_DOMAIN_VERSION,
+            chain_id: Some(chain_id),
+        }
+    }
+}
+
+/// Whether a target moves **real collateral**.
+///
+/// Tri-state on purpose. A boolean forces a default, and both defaults are
+/// wrong: `false` makes every guardrail in the client lie in the direction that
+/// costs money, `true` makes development unusable. [`Unknown`](Self::Unknown) is
+/// the third answer — "nobody declared this" — and it is treated as *unsafe*,
+/// not as play funds.
+/// Guard money movement by matching [`Play`](Self::Play) positively — or with
+/// [`is_known_play`](Self::is_known_play) — rather than negating
+/// [`Real`](Self::Real). This enum is `#[non_exhaustive]`, so a future
+/// classification lands in your wildcard arm; make that arm the safe one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Funds {
+    /// Real collateral. Orders move real money.
+    Real,
+    /// Synthetic funds with no real-world value (faucet-credited).
+    Play,
+    /// Not declared by the caller. Real-funds-guarded helpers **refuse** rather
+    /// than assume play funds, so an undeclared target can never be mistaken for
+    /// a safe one.
+    Unknown,
+}
+
+impl Funds {
+    /// Whether this is *known* to be play funds — the only state in which a
+    /// real-funds guard may open. [`Unknown`](Self::Unknown) answers `false`, so
+    /// a target nobody classified is treated as dangerous.
+    ///
+    /// Deliberately not spelled as `!is_real()`: the negation of a tri-state is
+    /// how "unknown" silently becomes "safe".
+    pub fn is_known_play(self) -> bool {
+        matches!(self, Funds::Play)
+    }
+}
+
+/// A caller-supplied deployment: the whole safety bundle, not just a URL.
+///
+/// # Why this exists
+///
+/// A deployment that this crate does not name still has to be reachable from
+/// it — your own environment, a preview host, a sandbox. Enumerating such hosts
+/// in a **published** client would put them in the package permanently and
+/// discoverably, and the list would need extending every time one was added. So
+/// the caller supplies the URL and this type ships none.
+///
+/// # Client-side only
+///
+/// `Custom` is **not a value the server accepts** and never appears in the
+/// spec's `x-nexus-networks`. It names a target for *this process*; nothing
+/// about it is transmitted, and it is not a network identifier you can send.
+///
+/// # It carries the flags, not just the address
+///
+/// A bare base-URL override — which this SDK has always had as
+/// [`Config::with_base_url`] — points the transport somewhere new while leaving
+/// the safety metadata behind. That is what makes a client report play-funds
+/// guardrails while aimed at a real-funds host. So the [`Funds`] classification
+/// is **required and has no default**, the faucet flag defaults to *absent*, and
+/// the WS origin and signing domain default to *unknown* rather than guessed.
+///
+/// # Reaching a real-funds deployment
+///
+/// A `Custom` with [`Funds::Real`] is targetable, unlike
+/// [`Network::Mainnet`](Network::Mainnet). These are not in tension: `Mainnet`
+/// is refused because this release cannot *build* correct URLs for its durable
+/// base (the version sits in the base, `…/v1`, not in the path), which would
+/// sign a path the server never sees — a URL-layout problem, not a funds
+/// problem. With `Custom` the caller supplies the URL and therefore owns the
+/// layout. What stays guarded is money movement:
+/// [`Client::fund`](crate::Client::fund) refuses on anything that is not
+/// [`Funds::Play`].
+///
+/// ```
+/// use nexus_exchange::{Config, CustomNetwork, Funds, Network};
+///
+/// let target = CustomNetwork::new("dev", "https://exchange.example.com/api/exchange", Funds::Play)?
+///     .with_faucet(true);
+/// let config = Config::new(Network::Custom(target));
+/// # Ok::<(), nexus_exchange::Error>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomNetwork {
+    label: String,
+    base_url: String,
+    direct_base_url: String,
+    ws_url: Option<String>,
+    funds: Funds,
+    has_faucet: bool,
+    signing_domain: Option<SigningDomain>,
+}
+
+impl CustomNetwork {
+    /// Describe a deployment: a `label`, a REST `base_url`, and its `funds`
+    /// classification. All three are required — see the type docs for why
+    /// `funds` has no default.
+    ///
+    /// The direct `/api/v1` base defaults to `base_url` (on every deployment
+    /// that exists today the `/api/v1` surface is mounted *under* the gateway
+    /// prefix — see [`Network::direct_base_url`]); override it with
+    /// [`with_direct_base_url`](Self::with_direct_base_url) when a deployment
+    /// genuinely splits them. The faucet is assumed **absent**, and the WS
+    /// origin and signing domain **unknown**, until declared.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a `base_url` that is not `http(s)://host…`, that carries
+    /// `user:pass@` userinfo, or that carries a query or fragment — see
+    /// [`with_ws_url`](Self::with_ws_url) for why those last two are refused
+    /// rather than ignored. Also rejects a `label` that is not a safe key for
+    /// per-network credential storage. A trailing slash is trimmed.
+    pub fn new(
+        label: impl Into<String>,
+        base_url: impl Into<String>,
+        funds: Funds,
+    ) -> Result<Self> {
+        let label = validate_label(&label.into())?;
+        let base_url = validate_url(&base_url.into(), &["https://", "http://"], "base URL")?;
+        Ok(Self {
+            label,
+            direct_base_url: base_url.clone(),
+            base_url,
+            ws_url: None,
+            funds,
+            has_faucet: false,
+            signing_domain: None,
+        })
+    }
+
+    /// Point the direct `/api/v1` surface at a different base than the REST
+    /// base. Validated exactly like the REST base.
+    pub fn with_direct_base_url(mut self, direct_base_url: impl Into<String>) -> Result<Self> {
+        self.direct_base_url = validate_url(
+            &direct_base_url.into(),
+            &["https://", "http://"],
+            "direct base URL",
+        )?;
+        Ok(self)
+    }
+
+    /// Declare this deployment's WebSocket origin (a `ws://` or `wss://` URL).
+    ///
+    /// Left unset, [`Network::ws_base`] reports `None` and the streaming client
+    /// refuses to connect rather than guess a host — the WS origin is a
+    /// **separate host** from the REST base and cannot be derived from it.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a scheme other than `ws`/`wss`, userinfo, and a query or
+    /// fragment. A query is refused rather than ignored because the upgrade
+    /// token is appended by the streaming client; silently keeping a caller's
+    /// `?` would produce a URL whose token is not where the server looks for it.
+    pub fn with_ws_url(mut self, ws_url: impl Into<String>) -> Result<Self> {
+        self.ws_url = Some(validate_url(
+            &ws_url.into(),
+            &["wss://", "ws://"],
+            "WebSocket URL",
+        )?);
+        Ok(self)
+    }
+
+    /// Declare whether the synthetic faucet
+    /// ([`Client::claim_credit`](crate::Client::claim_credit)) exists here.
+    /// Assumed absent until declared, so [`Client::fund`](crate::Client::fund)
+    /// cannot route to a faucet that is not there.
+    pub fn with_faucet(mut self, has_faucet: bool) -> Self {
+        self.has_faucet = has_faucet;
+        self
+    }
+
+    /// Declare the EIP-712 signing domain, built with
+    /// [`SigningDomain::new`] from a `chain_id` you read off this host's
+    /// `GET /metadata`.
+    ///
+    /// Left unset, [`Network::signing_domain`] reports `None`, which means
+    /// **refuse to sign** — never fall back to a constant. A wrong domain either
+    /// fails verification or, worse, yields a signature that is valid on a
+    /// different network.
+    pub fn with_signing_domain(mut self, signing_domain: SigningDomain) -> Self {
+        self.signing_domain = Some(signing_domain);
+        self
+    }
+
+    /// The caller-supplied label. Identifies this target in diagnostics and is
+    /// the key under which per-network credentials are namespaced, which is why
+    /// it is required and constrained (see [`new`](Self::new)).
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// The target behind [`Config::with_base_url`], which predates this type.
+    ///
+    /// Two deliberate differences from [`new`](Self::new):
+    ///
+    /// - **Funds are [`Funds::Unknown`].** That is the honest reading of a bare
+    ///   URL, and it preserves the old behaviour exactly: a raw base URL has
+    ///   always refused [`Client::fund`](crate::Client::fund), previously because
+    ///   the network was absent and now because the funds are undeclared. The
+    ///   refusal must not depend on which of those encodes it.
+    /// - **The URL is not validated.** `with_base_url` returns `Self`, not
+    ///   `Result`, so there is nowhere to report a rejection; validating here
+    ///   would mean panicking on input this SDK has always accepted. A malformed
+    ///   base fails at request time, exactly as before. Callers who want the
+    ///   checks have [`CustomNetwork::new`].
+    pub(crate) fn from_legacy_base_url(base_url: String) -> Self {
+        let base_url = base_url.trim_end_matches('/').to_string();
+        Self {
+            label: "custom".to_string(),
+            direct_base_url: derive_direct_base(&base_url),
+            base_url,
+            ws_url: None,
+            funds: Funds::Unknown,
+            has_faucet: false,
+            signing_domain: None,
+        }
+    }
 }
 
 /// Which Nexus Exchange **network** to target.
@@ -49,7 +290,19 @@ pub struct SigningDomain {
 /// [`Mainnet`](Self::Mainnet) (real funds). [`Local`](Self::Local) is a
 /// developer convenience, not a public network — and never a fallback when a
 /// public host fails to resolve, since silently succeeding against localhost
-/// hides a misconfigured client.
+/// hides a misconfigured client. [`Custom`](Self::Custom) is a deployment the
+/// **caller** supplies, for the hosts this public crate deliberately does not
+/// name.
+///
+/// # What a network is, and what it is not
+///
+/// A `Network` is a bundle of facts about a target — its bases, its WebSocket
+/// origin, its signing domain, what its funds are worth — not merely an address.
+/// Everything that decides whether an operation is safe reads those facts, so a
+/// target that carries an address but not the facts is the shape of every
+/// mistake this type exists to prevent. That is why
+/// [`Custom`](Self::Custom) carries the whole bundle and why
+/// [`funds`](Self::funds) has no default.
 ///
 /// # Never derive a host by interpolating the network name
 ///
@@ -64,8 +317,20 @@ pub struct SigningDomain {
 /// Session tokens, HMAC API keys and agent keys are minted **per network** and
 /// are invalid on any other, so a key leaked or misconfigured on testnet cannot
 /// sign for real funds. Build a separate [`Config`] per network; never carry a
-/// signature, nonce or agent registration across them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// signature, nonce or agent registration across them. A
+/// [`Custom`](Self::Custom) target must therefore be labelled — the label is the
+/// key its credentials are stored under, so two stages cannot end up sharing one
+/// namespace.
+///
+/// # `Custom` is not `Copy`
+///
+/// [`Custom`](Self::Custom) carries owned strings, so `Network` is `Clone` but no
+/// longer `Copy`, and the URL accessors borrow `self` instead of returning
+/// `&'static str`. That is the price of a variant that holds a caller-supplied
+/// address rather than a literal, and it is deliberate: the alternative is
+/// leaking the string or interning it, and neither is worth it to keep a marker
+/// trait.
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Network {
     /// **Real funds.** Collateral is USDX bridged from Ethereum Mainnet; every
@@ -100,6 +365,13 @@ pub enum Network {
     /// A locally run indexer. Play funds, faucet available. Not a public
     /// network and not a deployment target.
     Local,
+    /// A **caller-supplied deployment** — your own environment, a preview host, a
+    /// sandbox. Ships no hostname; see [`CustomNetwork`] for the bundle it
+    /// carries and why it carries all of it.
+    ///
+    /// Client-side only: never a value the server accepts, and never present in
+    /// the spec's `x-nexus-networks`.
+    Custom(CustomNetwork),
 }
 
 impl Network {
@@ -110,12 +382,15 @@ impl Network {
     /// For [`Mainnet`](Self::Mainnet) this reports the documented durable base
     /// for completeness; requests are refused before it is ever used. See the
     /// variant docs.
-    pub fn base_url(self) -> &'static str {
+    pub fn base_url(&self) -> &str {
         // Named cases, never interpolated — see the type-level note.
         match self {
             Network::Mainnet => "https://api.nexus.xyz/v1",
             Network::Testnet => "https://exchange.nexus.xyz/api/exchange",
             Network::Local => "http://localhost:9090",
+            // Verbatim from the caller. Nothing is appended, rewritten or
+            // inferred — see `CustomNetwork`.
+            Network::Custom(custom) => &custom.base_url,
         }
     }
 
@@ -172,7 +447,7 @@ impl Network {
     /// that a prefix disagrees when it does not.
     ///
     /// [`base_url`]: Self::base_url
-    pub fn direct_base_url(self) -> &'static str {
+    pub fn direct_base_url(&self) -> &str {
         // Named cases, never interpolated — see the type-level note.
         match self {
             // Mainnet's durable base already carries `/v1`; there is no separate
@@ -183,6 +458,9 @@ impl Network {
             // `/api/exchange` on this deployment. See the method docs.
             Network::Testnet => "https://exchange.nexus.xyz/api/exchange",
             Network::Local => "http://localhost:9090",
+            // Defaults to the caller's REST base, since today's deployments
+            // mount `/api/v1` under it; overridden only if the caller split them.
+            Network::Custom(custom) => &custom.direct_base_url,
         }
     }
 
@@ -201,7 +479,7 @@ impl Network {
     ///
     /// [`Client::connect_ws`]: crate::Client::connect_ws
     /// [`Client::connect`]: crate::Client::connect
-    pub fn ws_base(self) -> Option<&'static str> {
+    pub fn ws_base(&self) -> Option<&str> {
         match self {
             // Local dev serves REST and WS from the same indexer process, so
             // the WS origin is this host's `/ws` and is known.
@@ -218,47 +496,113 @@ impl Network {
             // Mainnet is not targetable at all in this release; see the variant
             // docs. Nothing to connect to, and nothing to guess.
             Network::Mainnet => None,
+            // Only what the caller declared. The WS origin is a separate host
+            // from the REST base and is never derived from it, so an
+            // undeclared origin stays `None` and the stream refuses to connect.
+            Network::Custom(custom) => custom.ws_url.as_deref(),
         }
     }
 
-    /// Whether this network moves **real collateral**, as opposed to one where
-    /// funding comes from the synthetic faucet
+    /// Whether this target moves **real collateral**, as opposed to synthetic
+    /// funds from the faucet
     /// ([`Client::claim_credit`](crate::Client::claim_credit)).
     ///
     /// This is the safety predicate behind [`Client::fund`](crate::Client::fund):
-    /// the convenience helper claims faucet credit on play-funds networks but
+    /// the convenience helper claims faucet credit on play-funds targets but
     /// refuses to silently deposit real collateral. The match is exhaustive on
-    /// purpose — a new [`Network`] variant must consciously declare whether it
-    /// is real-money before any helper will fund it, and the fail-safe answer
-    /// for anything unrecognized is *real funds*.
+    /// purpose — a new [`Network`] variant must consciously declare what it moves
+    /// before any helper will fund it.
     ///
-    /// Renamed from `is_production` in 0.8.0: the old name conflated "the
-    /// deployment we call production" with "moves real money", and the legacy
-    /// `exchange.nexus.xyz` host it returned `true` for is in fact **testnet**.
-    pub fn is_mainnet(self) -> bool {
+    /// # Why this is not a `bool`
+    ///
+    /// It replaced `is_mainnet()` (itself renamed from `is_production` in 0.8.0)
+    /// when [`Custom`](Self::Custom) arrived, because neither a name nor a
+    /// boolean can answer honestly for a caller-supplied host:
+    ///
+    /// - A `Custom` pointed at a real-funds stage is **not** `Mainnet`, so
+    ///   `is_mainnet()` answered `false` for it — a guardrail lying in the
+    ///   direction that costs money.
+    /// - A `Custom` whose caller declared nothing is neither real nor play. There
+    ///   is no safe boolean for it, which is what [`Funds::Unknown`] is for.
+    ///
+    /// Callers guarding money movement must match on [`Funds::Play`] (or use
+    /// [`Funds::is_known_play`]) rather than negate the real case, so that
+    /// `Unknown` fails closed.
+    pub fn funds(&self) -> Funds {
         match self {
-            Network::Mainnet => true,
-            Network::Testnet | Network::Local => false,
+            Network::Mainnet => Funds::Real,
+            Network::Testnet | Network::Local => Funds::Play,
+            // Caller-declared and required at construction; never inferred from
+            // the URL, the label, or anything else.
+            Network::Custom(custom) => custom.funds,
         }
     }
 
-    /// The EIP-712 [`SigningDomain`] for this network.
+    /// Whether the synthetic faucet
+    /// ([`Client::claim_credit`](crate::Client::claim_credit)) exists on this
+    /// target.
     ///
-    /// `name` and `version` are the values the contract has always documented
-    /// for `POST /agents/register`. `chain_id` is **always `None`** — it is
-    /// server-authoritative and must be read from `/metadata` for the network
-    /// you are connected to. See [`SigningDomain`] for why a default would be
-    /// dangerous rather than merely wrong.
-    pub fn signing_domain(self) -> SigningDomain {
-        // Identical across networks today, but returned per-network so a future
-        // divergence is a one-line change here rather than a hunt through
-        // call sites. Sourced from the auth module so the constants that
-        // actually sign and the constants we advertise cannot drift apart.
-        let _ = self;
-        SigningDomain {
-            name: crate::auth::eth::EIP712_DOMAIN_NAME,
-            version: crate::auth::eth::EIP712_DOMAIN_VERSION,
-            chain_id: None,
+    /// Distinct from [`funds`](Self::funds): "not real money" does not imply "has
+    /// a faucet". A private play-funds stage may be seeded by other means, and
+    /// [`Client::fund`](crate::Client::fund) must not route to a faucet that is
+    /// not there. Assumed **absent** for a [`Custom`](Self::Custom) target until
+    /// declared with [`CustomNetwork::with_faucet`].
+    pub fn has_faucet(&self) -> bool {
+        match self {
+            // Real funds, no faucet — collateral is bridged, not credited.
+            Network::Mainnet => false,
+            Network::Testnet | Network::Local => true,
+            Network::Custom(custom) => custom.has_faucet,
+        }
+    }
+
+    /// A short, stable name for this target, safe to use as a key for
+    /// per-network credential storage and in diagnostics.
+    ///
+    /// Built-in networks answer with their lowercase name; a
+    /// [`Custom`](Self::Custom) target answers with its caller-supplied
+    /// [`label`](CustomNetwork::label). Provided so callers that need to *name* a
+    /// network — the CLI namespaces stored credentials this way — do not have to
+    /// match on the enum and therefore cannot silently mishandle a variant added
+    /// later.
+    pub fn label(&self) -> &str {
+        match self {
+            Network::Mainnet => "mainnet",
+            Network::Testnet => "testnet",
+            Network::Local => "local",
+            Network::Custom(custom) => custom.label(),
+        }
+    }
+
+    /// The EIP-712 [`SigningDomain`] for this target, or `None` when this SDK
+    /// has none for it — which means **refuse to sign**, never fall back to a
+    /// constant.
+    ///
+    /// For a built-in network this is always `Some`: `name` and `version` are the
+    /// values the contract has always documented for `POST /agents/register`,
+    /// and `chain_id` is `None` because it is server-authoritative and must be
+    /// read from `/metadata` for the network you are connected to.
+    ///
+    /// For a [`Custom`](Self::Custom) target it is whatever the caller declared
+    /// with [`CustomNetwork::with_signing_domain`], and `None` when they declared
+    /// nothing. `Custom` must not become the hole in the never-guess rule: there
+    /// is no host to look the domain up from, so the honest answer for an
+    /// undeclared one is "unknown". See [`SigningDomain`] for why a default would
+    /// be dangerous rather than merely wrong — a signature made under the wrong
+    /// domain may be *valid on a different network*.
+    pub fn signing_domain(&self) -> Option<SigningDomain> {
+        match self {
+            // Identical across the built-in networks today, but returned
+            // per-network so a future divergence is a one-line change here rather
+            // than a hunt through call sites. Sourced from the auth module so the
+            // constants that actually sign and the constants we advertise cannot
+            // drift apart.
+            Network::Mainnet | Network::Testnet | Network::Local => Some(SigningDomain {
+                name: crate::auth::eth::EIP712_DOMAIN_NAME,
+                version: crate::auth::eth::EIP712_DOMAIN_VERSION,
+                chain_id: None,
+            }),
+            Network::Custom(custom) => custom.signing_domain,
         }
     }
 }
@@ -494,6 +838,116 @@ fn derive_direct_base(base_url: &str) -> String {
     base_url.trim_end_matches('/').to_string()
 }
 
+/// Longest accepted [`CustomNetwork`] label. Long enough for any stage name we
+/// would plausibly use, short enough that it cannot be a smuggled payload.
+const MAX_LABEL_LEN: usize = 64;
+
+/// Validate a caller-supplied [`CustomNetwork`] label and return it trimmed.
+///
+/// The label is not decoration: the CLI namespaces **stored credentials** by it,
+/// so it ends up in a keyring entry or a path. The accepted set is therefore
+/// deliberately narrow — ASCII alphanumerics, `-`, `_`, `.` — which excludes the
+/// separators (`/`, `\`, `:`) and whitespace that could make one target's label
+/// address another target's credentials, and excludes control characters that
+/// could corrupt a log line. `.` and `..` are refused outright: they are legal
+/// under that character set but name a directory rather than a network.
+///
+/// Rejecting is the whole point. A label that cannot be stored safely must fail
+/// here, at construction, rather than at some later write that has to guess.
+fn validate_label(label: &str) -> Result<String> {
+    let label = label.trim();
+    if label.is_empty() {
+        return Err(Error::invalid_request(
+            "custom network needs a non-empty label: it identifies the target and \
+             is the key its credentials are stored under",
+        ));
+    }
+    if label.len() > MAX_LABEL_LEN {
+        return Err(Error::invalid_request(format!(
+            "custom network label must be at most {MAX_LABEL_LEN} characters"
+        )));
+    }
+    if label == "." || label == ".." {
+        return Err(Error::invalid_request(
+            "custom network label must not be `.` or `..`: it is used as a \
+             credential-storage key, not a path",
+        ));
+    }
+    if let Some(bad) = label
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
+    {
+        return Err(Error::invalid_request(format!(
+            "custom network label may contain only ASCII letters, digits, `-`, `_` \
+             and `.` (found {bad:?}): it is used as a credential-storage key"
+        )));
+    }
+    Ok(label.to_string())
+}
+
+/// Validate a caller-supplied URL against `allowed_schemes` and return it with
+/// any trailing slash trimmed. `what` names the field in the error message.
+///
+/// Every rejection here is a request that would otherwise be built wrong rather
+/// than merely fail:
+///
+/// - **Scheme** must be one of `allowed_schemes`. Anything else (`file:`,
+///   `data:`, a bare host) is not a thing this client can talk to, and an
+///   unexpected scheme is how a URL becomes a local-file read.
+/// - **Userinfo** (`user:pass@host`) is refused rather than stripped. Credentials
+///   belong in the signing path, not the URL; a URL carrying them leaks them into
+///   every log, metric label and error message that prints the base.
+/// - **Query and fragment** are refused because URLs are built here as
+///   `base + path`, so a `?` or `#` in the base does not compose — it swallows
+///   the path. The request would go somewhere other than where the signature
+///   says, which fails as a signature error rather than as an obvious bad URL.
+/// - **Whitespace and control characters** are refused so a base can never
+///   inject a newline into a header or split a log line.
+///
+/// Note what is *not* checked: the host itself. No allowlist, no denylist, no
+/// "does this look like one of ours" — that is the entire point of `Custom`, and
+/// a hostname check here would put a private host back in this public artifact.
+fn validate_url(url: &str, allowed_schemes: &[&str], what: &str) -> Result<String> {
+    let url = url.trim();
+    let rest = allowed_schemes
+        .iter()
+        .find_map(|scheme| url.strip_prefix(scheme))
+        .ok_or_else(|| {
+            Error::invalid_request(format!(
+                "custom network {what} must start with {} (got {url:?})",
+                allowed_schemes.join(" or ")
+            ))
+        })?;
+    // Authority runs to the first `/`; the remainder is an optional path.
+    // `split` always yields at least one element, so this cannot be empty-handed.
+    let authority = rest.split('/').next().unwrap_or_default();
+    if authority.is_empty() {
+        return Err(Error::invalid_request(format!(
+            "custom network {what} has no host (got {url:?})"
+        )));
+    }
+    if authority.contains('@') {
+        return Err(Error::invalid_request(format!(
+            "custom network {what} must not embed credentials (`user:pass@host`): \
+             they would leak into every log and error that prints the base"
+        )));
+    }
+    // Matched as a `char` rather than a byte index so the message can never slice
+    // a multi-byte boundary.
+    if let Some(bad) = url.chars().find(|c| matches!(c, '?' | '#')) {
+        return Err(Error::invalid_request(format!(
+            "custom network {what} must not carry a query or fragment (found {bad:?}): \
+             request URLs are built as base + path, so it would swallow the path"
+        )));
+    }
+    if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(Error::invalid_request(format!(
+            "custom network {what} must not contain whitespace or control characters"
+        )));
+    }
+    Ok(url.trim_end_matches('/').to_string())
+}
+
 /// Client configuration. Credentials are optional — public market-data
 /// endpoints need none.
 #[derive(Debug, Clone)]
@@ -504,11 +958,12 @@ pub struct Config {
     /// are sent here instead of [`base_url`](Self::base_url); everything else
     /// stays on the legacy gateway base.
     pub(crate) direct_base_url: String,
-    /// The [`Network`] this client targets, when built via [`Config::new`].
-    /// `None` when built from a raw base URL ([`Config::with_base_url`]), where
-    /// the real-money-vs-faucet character of the host is unknown — see
-    /// [`Config::network`].
-    pub(crate) network: Option<Network>,
+    /// The [`Network`] this client targets. Always present: a raw base URL
+    /// ([`Config::with_base_url`]) becomes a [`Network::Custom`] whose funds are
+    /// [`Funds::Unknown`], so "which target is this" and "what does it move" are
+    /// separate questions with separate answers, instead of both being encoded as
+    /// an absent network. See [`Config::network`].
+    pub(crate) network: Network,
     /// The WebSocket origin to stream from, or `None` when it is not known for
     /// the configured network (no usable WS origin yet — ENG-3398). A
     /// separate host from `base_url`; see [`Network::ws_base`].
@@ -524,12 +979,15 @@ pub struct Config {
 
 impl Config {
     /// Target the given [`Network`], unauthenticated.
+    ///
+    /// Every base is taken from the network — including a [`Network::Custom`],
+    /// whose URLs were validated when it was constructed.
     pub fn new(network: Network) -> Self {
         Self {
             base_url: network.base_url().to_string(),
             direct_base_url: network.direct_base_url().to_string(),
-            network: Some(network),
             ws_url: network.ws_base().map(str::to_string),
+            network,
             ws: WsConfig::default(),
             rate_limit: RateLimit::default(),
             credentials: None,
@@ -556,24 +1014,25 @@ impl Config {
     /// is a different path than the `/orders` the client signs, so it would fail
     /// verification rather than merely look untidy.
     ///
+    /// # Prefer [`Network::Custom`] for anything but a throwaway target
+    ///
+    /// This is now sugar for a [`CustomNetwork`] with [`Funds::Unknown`] and no
+    /// faucet, WS origin or signing domain — which is all a bare URL can honestly
+    /// say. [`Config::network`] therefore reports a `Custom` target rather than
+    /// nothing, and every guard reads the same fields for both paths, so there is
+    /// no second code path that can drift.
+    ///
+    /// Because the funds are undeclared, [`Client::fund`](crate::Client::fund)
+    /// refuses — as it always has for a raw base URL. Construct a
+    /// [`CustomNetwork`] instead to declare what the host moves and to get the
+    /// URL validated.
+    ///
     /// [`Client::connect`]: crate::Client::connect
     /// [`Client::connect_ws`]: crate::Client::connect_ws
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
-        let base_url = base_url.into().trim_end_matches('/').to_string();
-        let direct_base_url = derive_direct_base(&base_url);
-        Self {
-            base_url,
-            direct_base_url,
-            network: None,
-            ws_url: None,
-            ws: WsConfig::default(),
-            rate_limit: RateLimit::default(),
-            credentials: None,
-            nonce: Arc::new(SystemTimeNonce),
-            timeout: DEFAULT_TIMEOUT,
-            retry: RetryConfig::default(),
-            user_agent: DEFAULT_USER_AGENT.to_string(),
-        }
+        Self::new(Network::Custom(CustomNetwork::from_legacy_base_url(
+            base_url.into(),
+        )))
     }
 
     /// Set the per-request timeout. This bounds each individual attempt; a
@@ -708,11 +1167,23 @@ impl Config {
         &self.direct_base_url
     }
 
-    /// The [`Network`] this client targets, or `None` when it was built from a
-    /// raw base URL via [`Config::with_base_url`] (the host's real-money vs.
-    /// testnet-faucet character is then unknown to the SDK).
-    pub fn network(&self) -> Option<Network> {
-        self.network
+    /// The [`Network`] this client targets — always known.
+    ///
+    /// This used to return `Option<Network>`, with `None` meaning "built from a
+    /// raw base URL, so we know nothing about the host". That conflated two
+    /// separate facts, and the dangerous half was silent: code asking *which
+    /// target is this* got `None` and code asking *does this move real money* had
+    /// to infer the answer from the same `None`. A raw base URL is now a
+    /// [`Network::Custom`] whose [`funds`](Network::funds) are
+    /// [`Funds::Unknown`], so the second question has its own answer and every
+    /// guard reads it explicitly.
+    ///
+    /// This reports the **declared target**. The URLs requests actually go to are
+    /// [`Config::base_url`] and [`Config::direct_base_url`], which
+    /// [`Config::with_direct_base_url`] can override after the fact — so read
+    /// those two, not `network().base_url()`, when you want the effective address.
+    pub fn network(&self) -> &Network {
+        &self.network
     }
 
     /// The configured WebSocket origin, or `None` if none is known for this
@@ -780,9 +1251,25 @@ mod tests {
     /// `fund()` keys its real-money safety guard off this.
     #[test]
     fn only_mainnet_is_real_funds() {
-        assert!(Network::Mainnet.is_mainnet());
-        assert!(!Network::Testnet.is_mainnet());
-        assert!(!Network::Local.is_mainnet());
+        assert_eq!(Network::Mainnet.funds(), Funds::Real);
+        assert_eq!(Network::Testnet.funds(), Funds::Play);
+        assert_eq!(Network::Local.funds(), Funds::Play);
+
+        // Faucet availability is a *separate* question from funds: mainnet has
+        // real collateral and no faucet, so `fund()` must consult both.
+        assert!(!Network::Mainnet.has_faucet());
+        assert!(Network::Testnet.has_faucet());
+        assert!(Network::Local.has_faucet());
+    }
+
+    /// `Unknown` must never satisfy a real-funds guard. This is the whole reason
+    /// [`Funds`] is a tri-state, and the reason guards ask `is_known_play()`
+    /// instead of negating the real case — `!is_real()` would answer `true` here.
+    #[test]
+    fn unknown_funds_are_not_treated_as_play_funds() {
+        assert!(Funds::Play.is_known_play());
+        assert!(!Funds::Real.is_known_play());
+        assert!(!Funds::Unknown.is_known_play());
     }
 
     /// Mainnet's host is deliberately **off-pattern**. `api.{network}.nexus.xyz`
@@ -822,7 +1309,9 @@ mod tests {
     #[test]
     fn signing_domain_never_supplies_a_chain_id() {
         for network in [Network::Mainnet, Network::Testnet, Network::Local] {
-            let domain = network.signing_domain();
+            let domain = network
+                .signing_domain()
+                .expect("built-in networks publish name/version");
             assert_eq!(domain.name, "Nexus Exchange");
             assert_eq!(domain.version, "1");
             assert_eq!(
@@ -837,19 +1326,24 @@ mod tests {
     #[test]
     fn default_config_is_play_funds() {
         let default = Config::default();
-        assert_eq!(default.network(), Some(Network::Testnet));
-        assert!(!default.network().expect("network").is_mainnet());
+        assert_eq!(default.network(), &Network::Testnet);
+        assert_eq!(default.network().funds(), Funds::Play);
     }
 
-    /// A network-built config carries its `Network`; a raw-base-URL one does
-    /// not (so `fund()` can tell "known testnet" from "unknown host").
+    /// Every config carries a `Network`. A raw base URL is a `Custom` target
+    /// whose funds are **unknown** — which is what `fund()` refuses on, and it
+    /// must refuse for that reason rather than because the network is absent.
     #[test]
-    fn config_retains_network_only_when_built_from_one() {
-        assert_eq!(
-            Config::new(Network::Testnet).network(),
-            Some(Network::Testnet)
-        );
-        assert_eq!(Config::with_base_url("http://x").network(), None);
+    fn config_always_carries_a_network_and_a_raw_base_url_is_custom_unknown() {
+        assert_eq!(Config::new(Network::Testnet).network(), &Network::Testnet);
+
+        let raw = Config::with_base_url("http://x");
+        assert_eq!(raw.network().funds(), Funds::Unknown);
+        assert_eq!(raw.network().label(), "custom");
+        assert!(!raw.network().has_faucet());
+        assert_eq!(raw.network().ws_base(), None);
+        assert_eq!(raw.network().signing_domain(), None);
+        assert!(matches!(raw.network(), Network::Custom(_)));
     }
 
     /// `Config` mirrors `ws_base`: a network with a known WS host carries it,
@@ -969,5 +1463,246 @@ mod tests {
                 .direct_base_url(),
             "https://direct.preview.example"
         );
+    }
+
+    /// A helper for the `Custom` tests: a syntactically valid target on a host
+    /// that provably is not ours. `.invalid` is reserved by RFC 2606 and can
+    /// never resolve, so no test here can accidentally address a real deployment.
+    fn custom(funds: Funds) -> CustomNetwork {
+        CustomNetwork::new("example", "https://example.invalid/api/exchange", funds)
+            .expect("valid custom network")
+    }
+
+    /// A `Custom` target drives both bases, and the direct `/api/v1` base
+    /// defaults to the REST base — because on every deployment that exists today
+    /// `/api/v1` is mounted *under* the gateway prefix (ENG-10063). A caller that
+    /// genuinely splits them can say so, and then only that base moves.
+    #[test]
+    fn custom_network_drives_both_bases() {
+        let config = Config::new(Network::Custom(custom(Funds::Play)));
+        assert_eq!(config.base_url(), "https://example.invalid/api/exchange");
+        assert_eq!(
+            config.direct_base_url(),
+            "https://example.invalid/api/exchange"
+        );
+
+        let split = custom(Funds::Play)
+            .with_direct_base_url("https://direct.example.invalid")
+            .expect("valid direct base");
+        let config = Config::new(Network::Custom(split));
+        assert_eq!(config.base_url(), "https://example.invalid/api/exchange");
+        assert_eq!(config.direct_base_url(), "https://direct.example.invalid");
+
+        // A trailing slash is trimmed on both, so `base + path` never doubles the
+        // separator into a path that differs from the one signed.
+        let slashed =
+            CustomNetwork::new("dev", "https://example.invalid/api/exchange/", Funds::Play)
+                .expect("valid custom network");
+        assert_eq!(slashed.base_url, "https://example.invalid/api/exchange");
+        assert_eq!(
+            slashed.direct_base_url,
+            "https://example.invalid/api/exchange"
+        );
+    }
+
+    /// The WS origin is **never derived** from the REST base: it is a separate
+    /// host, so an undeclared one stays `None` and the streaming client refuses
+    /// to connect rather than guessing. Declared, it is carried verbatim.
+    #[test]
+    fn custom_ws_url_is_declared_never_derived() {
+        // Undeclared: no origin, and nothing invented from the REST host.
+        let config = Config::new(Network::Custom(custom(Funds::Play)));
+        assert_eq!(config.ws_url(), None);
+
+        let with_ws = custom(Funds::Play)
+            .with_ws_url("wss://stream.example.invalid/ws")
+            .expect("valid ws url");
+        let config = Config::new(Network::Custom(with_ws));
+        assert_eq!(config.ws_url(), Some("wss://stream.example.invalid/ws"));
+    }
+
+    /// `Custom` must not become the hole in the never-guess-a-signing-domain
+    /// rule. Undeclared means `None` — refuse to sign — not a fallback to the
+    /// built-in constants, because a signature under the wrong domain can be
+    /// valid on a *different* network.
+    #[test]
+    fn custom_refuses_to_supply_a_signing_domain_it_was_not_given() {
+        assert_eq!(
+            Network::Custom(custom(Funds::Play)).signing_domain(),
+            None,
+            "an undeclared domain must be absent, never defaulted"
+        );
+
+        let declared = custom(Funds::Play).with_signing_domain(SigningDomain::new(31_337));
+        let domain = Network::Custom(declared)
+            .signing_domain()
+            .expect("declared domain is reported");
+        assert_eq!(domain.chain_id, Some(31_337));
+        // Name and version still come from the signer's own constants, so the
+        // value we advertise and the value that signs cannot drift apart.
+        assert_eq!(domain.name, "Nexus Exchange");
+        assert_eq!(domain.version, "1");
+    }
+
+    /// No hostname of ours is baked in for `Custom`, in either direction: what
+    /// the caller passes is what resolves, and nothing from the built-in map
+    /// leaks into it. This is the property that keeps unpublished hosts out of
+    /// this public artifact — the whole point of the variant.
+    #[test]
+    fn custom_hardcodes_no_hostname() {
+        let network = Network::Custom(custom(Funds::Real));
+        for url in [network.base_url(), network.direct_base_url()] {
+            assert!(
+                url.starts_with("https://example.invalid"),
+                "custom must resolve to exactly the caller's host, got {url}"
+            );
+            assert!(
+                !url.contains("nexus"),
+                "no built-in host may leak into a custom target, got {url}"
+            );
+        }
+        // And a custom target never collides with a built-in one.
+        assert_ne!(network.base_url(), Network::Testnet.base_url());
+        assert_ne!(network.base_url(), Network::Mainnet.base_url());
+    }
+
+    /// `funds` is caller-declared with no default, and a real-funds `Custom` says
+    /// so. The faucet is assumed **absent** until declared, so `fund()` can never
+    /// route to one that is not there.
+    #[test]
+    fn custom_funds_are_declared_and_the_faucet_is_opt_in() {
+        assert_eq!(Network::Custom(custom(Funds::Real)).funds(), Funds::Real);
+        assert_eq!(Network::Custom(custom(Funds::Play)).funds(), Funds::Play);
+        assert_eq!(
+            Network::Custom(custom(Funds::Unknown)).funds(),
+            Funds::Unknown
+        );
+
+        assert!(!Network::Custom(custom(Funds::Play)).has_faucet());
+        assert!(Network::Custom(custom(Funds::Play).with_faucet(true)).has_faucet());
+    }
+
+    /// The label is required and constrained, because the CLI namespaces stored
+    /// **credentials** by it: a label containing a separator or traversal could
+    /// make one target's label address another target's credentials.
+    #[test]
+    fn custom_rejects_labels_that_are_unsafe_as_credential_keys() {
+        let ok = "https://example.invalid";
+        for bad in [
+            "",            // nothing to key on
+            "   ",         // whitespace-only, empty once trimmed
+            ".",           // a directory, not a network
+            "..",          // parent directory — traversal
+            "../other",    // traversal into another target's keys
+            "one/two",     // path separator
+            "one\\two",    // Windows separator
+            "one two",     // whitespace
+            "one:two",     // namespace separator
+            "one\ntwo",    // control character; could split a log line
+            "one\u{0}two", // NUL
+            "présente",    // non-ASCII: normalization makes keys ambiguous
+        ] {
+            assert!(
+                CustomNetwork::new(bad, ok, Funds::Play).is_err(),
+                "label {bad:?} must be rejected"
+            );
+        }
+        // Over-long labels are refused rather than silently truncated into a
+        // *different* key than the caller asked for.
+        assert!(CustomNetwork::new("x".repeat(65), ok, Funds::Play).is_err());
+        assert!(CustomNetwork::new("x".repeat(64), ok, Funds::Play).is_ok());
+
+        // Ordinary names pass — each accepted character class, and a short one —
+        // and surrounding space is trimmed.
+        for good in ["dev", "one-two", "one_two", "one.two", "s1"] {
+            assert_eq!(
+                CustomNetwork::new(good, ok, Funds::Play)
+                    .expect("valid label")
+                    .label(),
+                good
+            );
+        }
+        assert_eq!(
+            CustomNetwork::new("  dev  ", ok, Funds::Play)
+                .expect("valid label")
+                .label(),
+            "dev"
+        );
+    }
+
+    /// Every URL rejection is a request that would otherwise be built *wrong*
+    /// rather than merely fail — see `validate_url` for why each one is refused
+    /// instead of sanitized.
+    #[test]
+    fn custom_rejects_urls_that_would_build_a_wrong_request() {
+        for bad in [
+            "",                                     // no scheme, no host
+            "example.invalid",                      // scheme-less
+            "//example.invalid",                    // protocol-relative
+            "https://",                             // no host
+            "file:///etc/passwd",                   // not a network target
+            "data:text/plain,x",                    // not a network target
+            "javascript:alert(1)",                  // not a network target
+            "ftp://example.invalid",                // unsupported scheme
+            "ws://example.invalid",                 // a WS origin is not a REST base
+            "https://user:pw@example.invalid",      // userinfo leaks into logs
+            "https://example.invalid?x=1",          // query swallows the path
+            "https://example.invalid/api#frag",     // fragment swallows the path
+            "https://stage .invalid",               // whitespace
+            "https://example.invalid/\nHost: evil", // header injection
+        ] {
+            assert!(
+                CustomNetwork::new("dev", bad, Funds::Play).is_err(),
+                "base URL {bad:?} must be rejected"
+            );
+        }
+
+        // The direct base is held to the same standard as the REST base...
+        assert!(custom(Funds::Play)
+            .with_direct_base_url("https://user:pw@example.invalid")
+            .is_err());
+
+        // ...and the WS origin to the WS schemes. A REST base is not a WS origin.
+        for bad in [
+            "https://stream.example.invalid",
+            "stream.example.invalid",
+            "wss://user:pw@stream.example.invalid",
+            "wss://stream.example.invalid?token=leaked",
+        ] {
+            assert!(
+                custom(Funds::Play).with_ws_url(bad).is_err(),
+                "ws URL {bad:?} must be rejected"
+            );
+        }
+        for good in ["ws://localhost:9090/ws", "wss://stream.example.invalid/ws"] {
+            assert!(custom(Funds::Play).with_ws_url(good).is_ok());
+        }
+    }
+
+    /// A rejected URL or label must leave nothing behind. `CustomNetwork::new`
+    /// returns `Result`, so there is no half-built target to accidentally use —
+    /// this pins that the error path yields no value at all.
+    #[test]
+    fn a_rejected_custom_network_yields_no_config() {
+        let err = CustomNetwork::new("dev", "file:///etc/passwd", Funds::Play)
+            .expect_err("rejected scheme");
+        assert!(err.to_string().contains("http"), "got: {err}");
+    }
+
+    /// The config types stay `Send + Sync` now that `Network` carries owned data,
+    /// so a `Client` is still shareable across tasks and threads.
+    ///
+    /// `CustomNetwork` is plain immutable data — no interior mutability, no locks,
+    /// nothing to contend on — so there is no ordering to get wrong and no
+    /// deadlock to reach. This is a compile-time assertion; it fails to build,
+    /// not to run, if that ever stops being true.
+    #[test]
+    fn config_types_stay_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync + 'static>() {}
+        assert_send_sync::<Funds>();
+        assert_send_sync::<CustomNetwork>();
+        assert_send_sync::<Network>();
+        assert_send_sync::<Config>();
+        assert_send_sync::<crate::Client>();
     }
 }

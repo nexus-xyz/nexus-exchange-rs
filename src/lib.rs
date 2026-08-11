@@ -20,7 +20,7 @@ pub mod ws;
 
 pub use auth::{Credential, Credentials, EthSigner, Nonce, SystemTimeNonce};
 pub use client::Client;
-pub use config::{Config, Network, RateLimit, RetryConfig, SigningDomain};
+pub use config::{Config, CustomNetwork, Funds, Network, RateLimit, RetryConfig, SigningDomain};
 pub use error::{Error, TerminalError, TransientError};
 pub use markets::{OrderError, Rounding};
 // Re-exported so callers can read a [`types::CreatedApiKey`] secret without

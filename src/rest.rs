@@ -4,12 +4,15 @@
 //! admin. Skeleton.
 //!
 //! **Dual-stack routing (ENG-4947 / gateway elimination ENG-4740).** Endpoints
-//! whose path begins with `/api/v1/` are served directly by the indexer at the
-//! host root ([`Config::direct_base_url`](crate::Config::direct_base_url));
-//! every other path stays on the legacy `/api/exchange` gateway base. The
-//! [`Client`] picks the base off the path prefix, so the method here just names
-//! the full path it targets. Market-data and account/trading endpoints have been
-//! migrated to `/api/v1`; endpoints without a `/api/v1` variant yet (health,
+//! whose path begins with `/api/v1/` are served by the indexer's direct-service
+//! surface ([`Config::direct_base_url`](crate::Config::direct_base_url)); every
+//! other path stays on the legacy `/api/exchange` gateway base. On today's
+//! deployments that surface is mounted *under* the gateway prefix rather than at
+//! the host root, so the two bases are equal and the split records where the
+//! surface may move next, not where it is now (ENG-10063). The [`Client`] picks
+//! the base off the path prefix, so the method here just names the full path it
+//! targets. Market-data and account/trading endpoints have been migrated to
+//! `/api/v1`; endpoints without a `/api/v1` variant yet (health,
 //! keys, agents, wallet auth, deposits/withdrawals, ADL, admin, WebSocket-token,
 //! `GET /orders/{id}`, and the tier-3 endpoints) remain on the gateway until the
 //! spec grows those variants.

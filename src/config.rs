@@ -550,10 +550,16 @@ impl Config {
     /// [`Client::connect_ws`] report that no endpoint is configured rather than
     /// connect to a guessed host.
     ///
+    /// A trailing slash is trimmed from the base before any path is joined:
+    /// request URLs are built as `base + path` with `path` carrying its own
+    /// leading slash, so `…/api/exchange/` would otherwise send `…//orders`. That
+    /// is a different path than the `/orders` the client signs, so it would fail
+    /// verification rather than merely look untidy.
+    ///
     /// [`Client::connect`]: crate::Client::connect
     /// [`Client::connect_ws`]: crate::Client::connect_ws
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
-        let base_url = base_url.into();
+        let base_url = base_url.into().trim_end_matches('/').to_string();
         let direct_base_url = derive_direct_base(&base_url);
         Self {
             base_url,
@@ -940,9 +946,14 @@ mod tests {
             "https://preview.example/api/exchange"
         );
 
-        // Trailing slash trimmed, so joining a path never doubles the separator.
+        // Trailing slash trimmed on BOTH bases, so joining a path never doubles
+        // the separator. `//orders` is a different path than the `/orders` the
+        // client signs, so a doubled separator fails verification rather than
+        // just looking untidy — pin both halves.
+        let slashed = Config::with_base_url("https://preview.example/api/exchange/");
+        assert_eq!(slashed.base_url(), "https://preview.example/api/exchange");
         assert_eq!(
-            Config::with_base_url("https://preview.example/api/exchange/").direct_base_url(),
+            slashed.direct_base_url(),
             "https://preview.example/api/exchange"
         );
 

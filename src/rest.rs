@@ -1164,20 +1164,26 @@ impl Client {
     /// collateral) vs [`claim_credit`](Self::claim_credit) (testnet faucet)
     /// applies. Requires credentials.
     ///
-    /// Routing:
-    /// - **Play-funds** network ([`Network::is_mainnet`](crate::Network::is_mainnet) is `false`,
-    ///   i.e. [`Testnet`](crate::Network::Testnet) / [`Local`](crate::Network::Local)):
+    /// Routing — it claims from the faucet in exactly one case and refuses in
+    /// every other, because the cost of the two mistakes is not symmetric:
+    /// - **[`Funds::Play`](crate::Funds::Play) *and* a faucet**
+    ///   ([`Testnet`](crate::Network::Testnet) / [`Local`](crate::Network::Local),
+    ///   or a [`Custom`](crate::Network::Custom) target declared that way):
     ///   claims `amount` from the faucet ([`claim_credit`](Self::claim_credit)).
-    /// - **Real funds** ([`Network::Mainnet`](crate::Network::Mainnet)): rejected
-    ///   locally. `fund` will **never silently move real collateral** — depositing
-    ///   real funds must be an explicit, deliberate [`deposit`](Self::deposit)
-    ///   call, not a side effect of a convenience helper. (A `Mainnet` client
-    ///   refuses every request anyway; this guard is independent of that, so
-    ///   `fund` stays safe if mainnet later becomes targetable.)
-    /// - **Unknown** network (client built with [`Config::with_base_url`](crate::Config::with_base_url),
-    ///   so the host's real-money character is unknown): rejected locally; call
-    ///   [`deposit`](Self::deposit) or [`claim_credit`](Self::claim_credit)
-    ///   explicitly.
+    /// - **[`Funds::Real`](crate::Funds::Real)**: rejected locally. `fund` will
+    ///   **never silently move real collateral** — depositing real funds must be
+    ///   an explicit, deliberate [`deposit`](Self::deposit) call, not a side
+    ///   effect of a convenience helper. (A [`Mainnet`](crate::Network::Mainnet)
+    ///   client refuses every request anyway; this guard is independent of that,
+    ///   so `fund` stays safe both if mainnet later becomes targetable and for a
+    ///   `Custom` real-funds target, which *is* targetable today.)
+    /// - **[`Funds::Unknown`](crate::Funds::Unknown)** (a `Custom` target whose
+    ///   caller declared nothing — including one built by
+    ///   [`Config::with_base_url`](crate::Config::with_base_url)): rejected
+    ///   locally. An undeclared host is treated as dangerous, never as play
+    ///   funds.
+    /// - **Play funds but no faucet**: rejected locally rather than sent to an
+    ///   endpoint that is not there.
     ///
     /// A non-positive `amount` is rejected locally. All rejections happen before
     /// any request is sent.
@@ -1185,19 +1191,30 @@ impl Client {
         if amount <= Decimal::ZERO {
             return Err(Error::invalid_request("fund amount must be positive"));
         }
-        match self.config.network {
-            Some(network) if !network.is_mainnet() => self.claim_credit(Some(amount)).await,
-            Some(_) => Err(Error::invalid_request(
+        let network = self.config.network();
+        // Matched positively on the one safe case. Phrased as `is_known_play()`
+        // rather than `!is_real()` on purpose: negating a tri-state is how
+        // `Unknown` turns into "safe" without anyone deciding that it should.
+        if !network.funds().is_known_play() {
+            return Err(Error::invalid_request(format!(
                 "fund() claims synthetic faucet credit and refuses to move real \
-                 collateral on a real-funds network (Network::Mainnet); call deposit() \
-                 explicitly to deposit real USDX",
-            )),
-            None => Err(Error::invalid_request(
-                "fund() needs a known Network to choose a funding primitive, but this \
-                 client was built with a custom base URL; call claim_credit() (testnet \
-                 faucet) or deposit() (real collateral) explicitly",
-            )),
+                 collateral: target {:?} ({}) reports funds={:?}. Call deposit() \
+                 explicitly to deposit real USDX, or claim_credit() for a faucet",
+                network.label(),
+                network.base_url(),
+                network.funds(),
+            )));
         }
+        if !network.has_faucet() {
+            return Err(Error::invalid_request(format!(
+                "fund() needs a faucet, and target {:?} ({}) declares none; \
+                 credit it by whatever means it is seeded, or call claim_credit() \
+                 explicitly if the faucet does exist there",
+                network.label(),
+                network.base_url(),
+            )));
+        }
+        self.claim_credit(Some(amount)).await
     }
 
     /// Set an account's rate-limit tier (admin). Requires admin credentials.
@@ -1556,14 +1573,15 @@ mod tests {
         assert_eq!(encode_path_segment("k#frag"), "k%23frag");
     }
 
-    // Routing a play-funds `fund()` to the faucet needs both a declared
-    // `Network` and a mock-server base URL — a combination the public builders
-    // can't express (`with_base_url` carries no network). This in-crate test
-    // sets the `pub(crate)` base URL directly to assert the wiring: a
-    // play-funds fund() POSTs the amount to the credit/faucet endpoint.
+    // A play-funds `fund()` routes to the faucet: it POSTs the amount to the
+    // credit endpoint. Driven entirely through the **public** builders — a
+    // `Custom` network expresses "this URL, play funds, has a faucet", which is
+    // exactly the combination that used to require poking `pub(crate)` fields
+    // because a raw base URL carried no network. That it can be said out loud now
+    // is the point of the variant.
     #[tokio::test]
     async fn fund_on_play_funds_network_claims_faucet_credit() {
-        use crate::{Client, Config, Network};
+        use crate::{Client, Config, CustomNetwork, Funds, Network};
         use wiremock::matchers::{body_json, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1578,14 +1596,16 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut config = Config::new(Network::Local).api_key(
+        // `account/credit` lives on the `/api/v1` surface, which routes to the
+        // direct base; a `Custom` target defaults that to its REST base, so one
+        // URL points both at the mock.
+        let stage = CustomNetwork::new("mock", server.uri(), Funds::Play)
+            .expect("mock server uri is a valid base")
+            .with_faucet(true);
+        let config = Config::new(Network::Custom(stage)).api_key(
             "nx_test",
             "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
         );
-        // `account/credit` lives on the `/api/v1` surface, which routes to
-        // `direct_base_url`; point both bases at the mock.
-        config.base_url = server.uri();
-        config.direct_base_url = server.uri();
         let r = Client::new(config)
             .fund("250".parse().unwrap())
             .await
@@ -1623,5 +1643,55 @@ mod tests {
             .await
             .expect_err("non-positive amounts are rejected");
         assert!(err.to_string().contains("positive"), "got: {err}");
+    }
+
+    /// The same guard, over every `Custom` shape — the variant that made `fund()`
+    /// stop being a question about *which network* and start being a question
+    /// about *what the caller declared*.
+    ///
+    /// A real-funds `Custom` is the case worth being explicit about: unlike
+    /// `Mainnet` it **is** targetable, so nothing else in the client stops a
+    /// request to it, and this guard is the only thing standing between a
+    /// convenience helper and real collateral. The URLs here are `.invalid`
+    /// (RFC 2606), which can never resolve, and every rejection is local anyway —
+    /// no request is built, so nothing could be sent even if one did.
+    #[tokio::test]
+    async fn fund_refuses_every_custom_target_that_is_not_a_declared_play_faucet() {
+        use crate::{Client, Config, CustomNetwork, Funds, Network};
+
+        let stage = |funds| {
+            CustomNetwork::new("example", "https://example.invalid/api/exchange", funds)
+                .expect("valid custom network")
+        };
+        let fund = |network| async move {
+            Client::new(Config::new(network))
+                .fund("1".parse().unwrap())
+                .await
+        };
+
+        // Real funds: refused, however the caller reached it.
+        let err = fund(Network::Custom(stage(Funds::Real).with_faucet(true)))
+            .await
+            .expect_err("fund() must never move real collateral");
+        assert!(err.to_string().contains("deposit"), "got: {err}");
+
+        // Undeclared funds: refused. `Unknown` must fail closed rather than be
+        // read as play money — the direction of that mistake costs money.
+        let err = fund(Network::Custom(stage(Funds::Unknown).with_faucet(true)))
+            .await
+            .expect_err("undeclared funds must not be assumed safe");
+        assert!(err.to_string().contains("deposit"), "got: {err}");
+
+        // Play funds but no declared faucet: refused rather than POSTed to an
+        // endpoint that is not there.
+        let err = fund(Network::Custom(stage(Funds::Play)))
+            .await
+            .expect_err("no faucet means no faucet call");
+        assert!(err.to_string().contains("faucet"), "got: {err}");
+
+        // The refusal names the target, so a misconfigured stage is diagnosable
+        // without a debugger — and never prints a credential.
+        assert!(err.to_string().contains("example"), "got: {err}");
+        assert!(err.to_string().contains("example.invalid"), "got: {err}");
     }
 }

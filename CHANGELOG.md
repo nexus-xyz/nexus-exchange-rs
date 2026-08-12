@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(config)* [**breaking**] **`Network::Custom` — a caller-supplied deployment**
+  (ENG-9824). Targets this crate does not name — your own environment, a preview
+  host, a sandbox — still have to be reachable from it. Enumerating such hosts in
+  a published client would put them in the package permanently and discoverably,
+  and the list would need extending every time one was added. So the caller
+  supplies the URL and `Custom` ships none. It is **client-side only**: never a
+  value the server accepts, and never present in the spec's `x-nexus-networks`.
+
+  `Custom` carries the whole safety bundle rather than just an address — a bare
+  URL is what makes a client report play-funds guardrails while aimed at a
+  real-funds host:
+
+  ```rust
+  let target = CustomNetwork::new("dev", "https://exchange.example.com/api/exchange", Funds::Play)?
+      .with_faucet(true)
+      .with_ws_url("wss://stream.example.com/ws")?;
+  let client = Client::new(Config::new(Network::Custom(target)));
+  ```
+
+  New `Funds` classification — `Real`, `Play`, `Unknown` — is **required with no
+  default**, because both booleans are wrong: `false` makes every guardrail lie
+  in the direction that costs money, `true` makes development unusable.
+  `Unknown` fails closed. The faucet, WS origin and signing domain are likewise
+  absent until declared, never guessed, and the label is required because it is
+  the key per-network credentials are stored under.
+
+  A `Custom` target is reachable even when it declares `Funds::Real`, unlike
+  `Network::Mainnet`. These are not in tension: `Mainnet` is refused because this
+  release cannot *build* correct URLs for its durable base (the version sits in
+  the base, `…/v1`, not the path), which is a URL-layout problem rather than a
+  funds problem. With `Custom` the caller supplies the URL and owns the layout.
+  What stays guarded is money movement — `Client::fund` claims faucet credit only
+  for a declared play-funds target that declares a faucet, and refuses otherwise.
+
+  Caller-supplied URLs are validated at construction: `http(s)` (or `ws(s)`)
+  scheme only, a host, no `user:pass@` userinfo, no query or fragment, no
+  whitespace or control characters. Each rejection is a URL that would otherwise
+  build a *wrong* request rather than merely fail — a query swallows the appended
+  path, so the request would go somewhere other than where the signature says.
+  Labels are restricted to `[A-Za-z0-9._-]` and reject `.`/`..`, so a label can
+  never traverse into another target's stored credentials. No hostname is checked
+  against an allowlist, which is the entire point of the variant.
+
+### Changed
+
+- *(config)* [**breaking**] `Network::is_mainnet()` is **replaced by
+  `Network::funds() -> Funds`**, and `Network::signing_domain()` now returns
+  `Option<SigningDomain>`. Both are removals rather than deprecated aliases
+  because both change *semantics*, which CONTRIBUTING calls out as the case where
+  an alias preserves the old, wrong behaviour: a kept `is_mainnet()` would answer
+  `false` for a `Custom` real-funds target — a guardrail failing silently in the
+  money-losing direction, with only a warning to say so. Guards should match
+  `Funds::Play` positively (or call `Funds::is_known_play()`) rather than negate
+  the real case, so `Unknown` cannot become "safe" by default.
+
+  Also breaking, all consequences of `Custom` carrying data: `Network` is no
+  longer `Copy` (still `Clone`); `base_url()`, `direct_base_url()` and
+  `ws_base()` borrow `&self` and return `&str`/`Option<&str>` rather than
+  `&'static str`; and `Config::network()` returns `&Network` instead of
+  `Option<Network>`. That last `Option` conflated two facts and hid the dangerous
+  one — code asking *which target is this* got `None`, and code asking *does this
+  move real money* had to infer its answer from the same `None`. New
+  `Network::has_faucet()` and `Network::label()`; `label()` lets callers name a
+  network without matching on the enum, so a variant added later cannot be
+  silently mishandled.
+
+- *(config)* `Config::with_base_url` is now sugar for a `Network::Custom` with
+  `Funds::Unknown` — all a bare URL can honestly claim — so there is one
+  mechanism for pointing at a host instead of two, and every guard reads the same
+  fields either way. Behaviour is unchanged for existing callers: a raw base URL
+  has always refused `Client::fund`, previously because the network was absent and
+  now because the funds are undeclared. The URL is still not validated there,
+  since the method returns `Self` and cannot report a rejection; use
+  `CustomNetwork::new` for the checked path.
+
 ### Fixed
 
 - *(config)* **`Config::direct_base_url` pointed the `/api/v1` surface at the

@@ -107,11 +107,37 @@ funds — so a copy-paste run cannot move real money.
 ## Networks
 
 `Network` is the target axis: `Testnet` (play funds, the default), `Mainnet`
-(real funds) and `Local` (a developer convenience, never a fallback). Each
-bundles its REST bases, WebSocket origin and EIP-712 signing domain, and each
-host is written out as a named case — mainnet is `api.nexus.xyz`, deliberately
-*not* `api.mainnet.nexus.xyz`, so no host is ever derived by interpolating a
-network name.
+(real funds), `Local` (a developer convenience, never a fallback) and `Custom`
+(a deployment you supply). Each bundles its REST bases, WebSocket origin and
+EIP-712 signing domain, and each built-in host is written out as a named case —
+mainnet is `api.nexus.xyz`, deliberately *not* `api.mainnet.nexus.xyz`, so no
+host is ever derived by interpolating a network name.
+
+### Pointing at your own deployment
+
+`Network::Custom` targets a host this crate does not ship — your own environment, a
+preview deployment, a sandbox. It carries the whole safety bundle rather than
+just an address, because a bare URL is what makes a client report play-funds
+guardrails while aimed at a real-funds host:
+
+```rust
+use nexus_exchange::{Client, Config, CustomNetwork, Funds, Network};
+
+let target = CustomNetwork::new("dev", "https://exchange.example.com/api/exchange", Funds::Play)?
+    .with_faucet(true)
+    .with_ws_url("wss://stream.example.com/ws")?;
+let client = Client::new(Config::new(Network::Custom(target)));
+```
+
+`Funds` is required and has no default. It is a tri-state — `Real`, `Play`,
+`Unknown` — because both boolean defaults are wrong: `false` makes every
+guardrail lie in the direction that costs money, and `true` makes development
+unusable. `Unknown` is treated as dangerous, so `Client::fund` refuses on it
+rather than assuming a faucet. The faucet, WebSocket origin and signing domain
+are likewise absent until you declare them, never guessed.
+
+`Config::with_base_url` still works and is now sugar for a `Custom` with
+`Funds::Unknown` — all a bare URL can honestly claim.
 
 Two properties worth knowing before you wire anything up:
 
@@ -122,7 +148,8 @@ Two properties worth knowing before you wire anything up:
 - **Credentials never cross networks.** API keys, session tokens and agent keys
   are minted per network and are invalid on any other. Build a separate
   `Config` per network; never reuse a signature, nonce or agent registration
-  across them.
+  across them. This is why a `Custom` target requires a label: it is the key its
+  credentials are stored under, so two targets cannot share one namespace.
 
 For a complete command-line application built on the SDK — every request goes
 through the crate's `Client`, with no transport of its own — see

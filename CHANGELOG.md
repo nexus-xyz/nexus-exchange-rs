@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.8.0...v0.9.0) - 2026-08-12
+
+### Added
+
+- *(config)* [**breaking**] add a Custom network with a caller-supplied base URL (ENG-9824) ([#133](https://github.com/nexus-xyz/nexus-exchange-rs/pull/133))
+- *(ws)* add the liquidations channel and bump .api-version to v0.7.3 (ENG-7341) ([#129](https://github.com/nexus-xyz/nexus-exchange-rs/pull/129))
+
+### Fixed
+
+- *(config)* route /api/v1 to the gateway base, not the host root (ENG-10063) ([#131](https://github.com/nexus-xyz/nexus-exchange-rs/pull/131))
+
+### Other
+
+- *(changelog)* note that Custom labels reject built-in network names (ENG-9824) ([#135](https://github.com/nexus-xyz/nexus-exchange-rs/pull/135))
+- bump dtolnay/rust-toolchain from 2c7215f132e9ebf062739d9130488b56d53c060c to 6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 ([#130](https://github.com/nexus-xyz/nexus-exchange-rs/pull/130))
+- bump the pinned Exchange API spec to v0.8.1 (ENG-10482) ([#134](https://github.com/nexus-xyz/nexus-exchange-rs/pull/134))
+- *(spec-drift)* fail when serde_derive moves out from under the transcription ([#127](https://github.com/nexus-xyz/nexus-exchange-rs/pull/127))
+
 ### Added
 
 - *(config)* [**breaking**] **`Network::Custom` — a caller-supplied deployment**

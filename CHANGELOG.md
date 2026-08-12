@@ -48,9 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whitespace or control characters. Each rejection is a URL that would otherwise
   build a *wrong* request rather than merely fail — a query swallows the appended
   path, so the request would go somewhere other than where the signature says.
-  Labels are restricted to `[A-Za-z0-9._-]` and reject `.`/`..`, so a label can
-  never traverse into another target's stored credentials. No hostname is checked
-  against an allowlist, which is the entire point of the variant.
+  Labels are restricted to `[A-Za-z0-9._-]`, reject `.`/`..`, and reject the
+  built-in network names (`mainnet`, `testnet`, `local` and the `custom` that
+  `with_base_url` targets carry) case-insensitively, so a label can never address
+  another target's stored credentials — neither by traversing to it nor by naming
+  it. No hostname is checked against an allowlist, which is the entire point of
+  the variant.
 
 ### Changed
 

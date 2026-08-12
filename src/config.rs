@@ -273,7 +273,7 @@ impl CustomNetwork {
     pub(crate) fn from_legacy_base_url(base_url: String) -> Self {
         let base_url = base_url.trim_end_matches('/').to_string();
         Self {
-            label: "custom".to_string(),
+            label: LEGACY_BASE_URL_LABEL.to_string(),
             direct_base_url: derive_direct_base(&base_url),
             base_url,
             ws_url: None,
@@ -842,6 +842,12 @@ fn derive_direct_base(base_url: &str) -> String {
 /// would plausibly use, short enough that it cannot be a smuggled payload.
 const MAX_LABEL_LEN: usize = 64;
 
+/// Label carried by the target [`CustomNetwork::from_legacy_base_url`] builds for
+/// [`Config::with_base_url`]. Shared with [`reserved_labels`], which refuses it
+/// as a caller-supplied label so a declared target cannot land on the same
+/// credential key as the legacy bare-URL one.
+const LEGACY_BASE_URL_LABEL: &str = "custom";
+
 /// Validate a caller-supplied [`CustomNetwork`] label and return it trimmed.
 ///
 /// The label is not decoration: the CLI namespaces **stored credentials** by it,
@@ -851,6 +857,11 @@ const MAX_LABEL_LEN: usize = 64;
 /// address another target's credentials, and excludes control characters that
 /// could corrupt a log line. `.` and `..` are refused outright: they are legal
 /// under that character set but name a directory rather than a network.
+///
+/// A built-in network's own name is refused for the same reason (see
+/// [`RESERVED_LABELS`]): under that character set it is a perfectly legal label,
+/// and it addresses another target's credentials by *naming* it rather than by
+/// pathing to it.
 ///
 /// Rejecting is the whole point. A label that cannot be stored safely must fail
 /// here, at construction, rather than at some later write that has to guess.
@@ -882,8 +893,44 @@ fn validate_label(label: &str) -> Result<String> {
              and `.` (found {bad:?}): it is used as a credential-storage key"
         )));
     }
+    if let Some(reserved) = RESERVED_LABELS
+        .iter()
+        .find(|reserved| label.eq_ignore_ascii_case(reserved))
+    {
+        return Err(Error::invalid_request(format!(
+            "custom network label {label:?} is reserved: it is the name {reserved:?} \
+             already answers to, and per-network credentials are stored under that \
+             name, so this target would address another network's keys"
+        )));
+    }
     Ok(label.to_string())
 }
+
+/// Labels a caller may not claim for a [`CustomNetwork`]: every built-in
+/// [`Network`]'s own [`label`](Network::label), plus the one
+/// [`CustomNetwork::from_legacy_base_url`] uses. Compared case-insensitively by
+/// [`validate_label`], since a keyring entry or a path need not be
+/// case-sensitive, and `Mainnet` must not slip past a check on `mainnet`.
+///
+/// The hazard is the same one the traversal and separator refusals in
+/// [`validate_label`] exist to stop, reached by naming rather than pathing.
+/// `Network::label()` is documented as safe to key per-network credential
+/// storage on, and the CLI does exactly that (ENG-9827). A `Custom` target
+/// labelled `mainnet` therefore answers the *same key* as
+/// [`Network::Mainnet`] while pointing at a caller-supplied host — so it reads
+/// and writes the real network's stored credentials. `../other` is refused;
+/// this must be too.
+///
+/// Kept in step with [`Network::label`] by
+/// `reserved_labels_cover_every_built_in_network`, which walks the built-in
+/// variants and asserts each one's label is listed here — so a network added
+/// later fails that test rather than silently becoming claimable. The list is
+/// literals rather than calls to `label()` because that method borrows from
+/// `&self`, and a `Custom` target's label borrows from its `String` field: only
+/// the built-in arms are `'static`, and leaning on that distinction to build a
+/// `&'static` array would make this security check depend on a lifetime subtlety
+/// instead of on something plain to read.
+const RESERVED_LABELS: &[&str] = &["mainnet", "testnet", "local", LEGACY_BASE_URL_LABEL];
 
 /// Validate a caller-supplied URL against `allowed_schemes` and return it with
 /// any trailing slash trimmed. `what` names the field in the error message.
@@ -921,7 +968,13 @@ fn validate_url(url: &str, allowed_schemes: &[&str], what: &str) -> Result<Strin
     // Authority runs to the first `/`; the remainder is an optional path.
     // `split` always yields at least one element, so this cannot be empty-handed.
     let authority = rest.split('/').next().unwrap_or_default();
-    if authority.is_empty() {
+    // Checked without the optional `:port`, because the authority being non-empty
+    // is not the same as there being a host: `https://:8080` has a port and no
+    // host, contains no `@` for the userinfo check to catch, and would otherwise
+    // be accepted here and refused only later, at request time, as an opaque
+    // URL-parse error instead of naming the reason. Splitting at the first `:`
+    // leaves an IPv6 literal (`[::1]:8080`) non-empty, so those still pass.
+    if authority.split(':').next().unwrap_or_default().is_empty() {
         return Err(Error::invalid_request(format!(
             "custom network {what} has no host (got {url:?})"
         )));
@@ -1582,6 +1635,33 @@ mod tests {
         assert!(Network::Custom(custom(Funds::Play).with_faucet(true)).has_faucet());
     }
 
+    /// `RESERVED_LABELS` is a hand-written list, so nothing but this test stops a
+    /// network added later from being claimable as a `Custom` label — which would
+    /// let it address that network's stored credentials. Walks the built-in
+    /// variants through `label()` (the name storage is keyed on) and requires each
+    /// to be listed. A new variant makes this fail rather than open the hole.
+    #[test]
+    fn reserved_labels_cover_every_built_in_network() {
+        for built_in in [Network::Mainnet, Network::Testnet, Network::Local] {
+            assert!(
+                RESERVED_LABELS.contains(&built_in.label()),
+                "built-in network {:?} is missing from RESERVED_LABELS, so a custom \
+                 target could claim its credential-storage key",
+                built_in.label()
+            );
+        }
+        // The legacy bare-URL target is keyed the same way, so its label is
+        // reserved too — asserted against the constant both sites share.
+        assert!(RESERVED_LABELS.contains(&LEGACY_BASE_URL_LABEL));
+        assert_eq!(
+            Network::Custom(CustomNetwork::from_legacy_base_url(
+                "https://example.invalid".to_string()
+            ))
+            .label(),
+            LEGACY_BASE_URL_LABEL
+        );
+    }
+
     /// The label is required and constrained, because the CLI namespaces stored
     /// **credentials** by it: a label containing a separator or traversal could
     /// make one target's label address another target's credentials.
@@ -1601,10 +1681,39 @@ mod tests {
             "one\ntwo",    // control character; could split a log line
             "one\u{0}two", // NUL
             "présente",    // non-ASCII: normalization makes keys ambiguous
+            // A built-in network's own name: legal under the character set, but
+            // it is the key that network's credentials are stored under, so a
+            // custom target answering it would address them. Case-insensitively,
+            // since a keyring or filesystem key need not be case-sensitive.
+            "mainnet",
+            "MAINNET",
+            "Testnet",
+            "local",
+            // The label `Config::with_base_url` targets carry, for the same reason.
+            "custom",
         ] {
             assert!(
                 CustomNetwork::new(bad, ok, Funds::Play).is_err(),
                 "label {bad:?} must be rejected"
+            );
+        }
+        // Asserted through `Network::label()` rather than only on the literals
+        // above, so the rejection is pinned to the name the accessor actually
+        // answers — which is the name credentials would be stored under.
+        for built_in in [Network::Mainnet, Network::Testnet, Network::Local] {
+            assert!(
+                CustomNetwork::new(built_in.label(), ok, Funds::Play).is_err(),
+                "label {:?} must be rejected",
+                built_in.label()
+            );
+        }
+        // Names that merely *contain* a reserved one stay usable: the collision is
+        // an exact key match, and over-rejecting would make plausible stage names
+        // ("mainnet-shadow") unavailable for no safety gain.
+        for good in ["mainnet-shadow", "pre-testnet", "local2", "customer"] {
+            assert!(
+                CustomNetwork::new(good, ok, Funds::Play).is_ok(),
+                "label {good:?} must be accepted"
             );
         }
         // Over-long labels are refused rather than silently truncated into a
@@ -1640,6 +1749,8 @@ mod tests {
             "example.invalid",                      // scheme-less
             "//example.invalid",                    // protocol-relative
             "https://",                             // no host
+            "https://:8080",                        // a port is not a host
+            "https://:8080/api",                    // ...nor with a path after it
             "file:///etc/passwd",                   // not a network target
             "data:text/plain,x",                    // not a network target
             "javascript:alert(1)",                  // not a network target

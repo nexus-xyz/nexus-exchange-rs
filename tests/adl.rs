@@ -8,6 +8,7 @@ use wiremock::matchers::{header, header_exists, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// Client authenticated with an HMAC API key (the ADL-read credential).
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn hmac(uri: String) -> Client {
     Client::new(Config::with_base_url(uri).api_key(
         "nx_test",
@@ -92,6 +93,7 @@ async fn fetch_account_adl_history_signs_for_address() {
 }
 
 #[tokio::test]
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 async fn adl_reads_require_credentials() {
     // Unauthenticated client: each ADL read must surface Auth before any I/O,
     // so a port that refuses connections is never even dialed.

@@ -9,6 +9,7 @@ const TEST_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7b
 const TEST_ADDR: &str = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
 
 #[tokio::test]
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 async fn signed_request_sends_hmac_headers_and_parses() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -32,6 +33,7 @@ async fn signed_request_sends_hmac_headers_and_parses() {
 }
 
 #[tokio::test]
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 async fn signed_request_without_credentials_errors() {
     let client = Client::new(Config::with_base_url("http://localhost:1"));
     match client.fetch_api_keys().await.unwrap_err() {
@@ -41,6 +43,7 @@ async fn signed_request_without_credentials_errors() {
 }
 
 #[tokio::test]
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 async fn sign_in_posts_eip191_body_and_parses_token() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -65,6 +68,7 @@ async fn sign_in_posts_eip191_body_and_parses_token() {
 }
 
 #[tokio::test]
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 async fn register_agent_posts_eip712_body_and_parses() {
     let server = MockServer::start().await;
     let agent = "0x1234567890abcdef1234567890abcdef12345678";

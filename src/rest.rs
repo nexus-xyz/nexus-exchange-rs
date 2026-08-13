@@ -1618,6 +1618,9 @@ mod tests {
     /// was sent. The guard is independent of the blanket `Mainnet` request
     /// refusal so it keeps holding if mainnet later becomes targetable.
     #[tokio::test]
+    // The bare-URL selector is deprecated but still builds a `Funds::Unknown`
+    // target, which is precisely the "unknown host" half this test pins.
+    #[allow(deprecated)]
     async fn fund_refuses_on_real_funds_and_on_an_unknown_host() {
         use crate::{Client, Config, Network};
 

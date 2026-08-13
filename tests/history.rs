@@ -27,6 +27,7 @@ const ORDER_HISTORY_PATH: &str = "/api/v1/orders/history";
 const CLOSED_POSITIONS_PATH: &str = "/api/v1/positions/closed";
 const EQUITY_HISTORY_PATH: &str = "/api/v1/account/equity-history";
 
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn authed(uri: String) -> Client {
     Client::new(Config::with_base_url(uri).api_key(
         "nx_test",

@@ -5,6 +5,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const SECRET: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
 
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn authed(uri: String) -> Client {
     Client::new(Config::with_base_url(uri).api_key("nx_test", SECRET))
 }

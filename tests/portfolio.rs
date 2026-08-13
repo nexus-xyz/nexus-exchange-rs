@@ -8,6 +8,7 @@ use nexus_exchange::{Client, Config, RetryConfig};
 use wiremock::matchers::{header, method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn authed_config(uri: String) -> Config {
     Config::with_base_url(uri).api_key(
         "nx_test",
@@ -762,6 +763,7 @@ async fn account_fees_defaults_absent_discounts_but_is_strict_elsewhere() {
 // --- Auth ------------------------------------------------------------------
 
 #[tokio::test]
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 async fn portfolio_endpoints_require_credentials() {
     // All four are HMAC-gated; without credentials the SDK must refuse locally
     // rather than send an unauthenticated request.

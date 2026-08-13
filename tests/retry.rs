@@ -20,6 +20,7 @@ fn fast_retry() -> RetryConfig {
     }
 }
 
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn client(uri: String, retry: RetryConfig) -> Client {
     Client::new(Config::with_base_url(uri).with_retry(retry))
 }
@@ -86,6 +87,7 @@ async fn retries_transient_408_then_succeeds() {
 }
 
 #[tokio::test]
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 async fn per_attempt_timeout_is_transient_and_retried() {
     let server = MockServer::start().await;
     // The first attempt's response is delayed past the per-request timeout, so
@@ -169,6 +171,7 @@ async fn does_not_retry_non_transient_4xx() {
 }
 
 #[tokio::test]
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 async fn does_not_retry_429_owned_by_rate_limit_layer() {
     let server = MockServer::start().await;
     // 429 is owned end-to-end by the rate-limit layer, not this generic retry

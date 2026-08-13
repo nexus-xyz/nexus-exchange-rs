@@ -2,6 +2,7 @@ use nexus_exchange::{Client, Config};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn client(uri: String) -> Client {
     Client::new(Config::with_base_url(uri))
 }

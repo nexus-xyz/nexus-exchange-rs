@@ -7,6 +7,7 @@ use nexus_exchange::{Client, Config, Error};
 use wiremock::matchers::{body_json, header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn authed(uri: String) -> Client {
     Client::new(Config::with_base_url(uri).api_key(
         "nx_test",
@@ -59,6 +60,7 @@ async fn set_cancel_on_disconnect_puts_body_and_parses() {
 // --- Bridge Phase A ----------------------------------------------------------
 
 #[tokio::test]
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 async fn fetch_bridge_assets_parses_public() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

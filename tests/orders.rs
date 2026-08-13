@@ -6,6 +6,7 @@ use wiremock::matchers::{
 };
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn authed(uri: String) -> Client {
     Client::new(Config::with_base_url(uri).api_key(
         "nx_test",

@@ -21,10 +21,12 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 const TRADES_PATH: &str = "/api/v1/markets/BTC-USDX-PERP/trades";
 const FILLS_PATH: &str = "/api/v1/fills";
 
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn public(uri: String) -> Client {
     Client::new(Config::with_base_url(uri))
 }
 
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn authed(uri: String) -> Client {
     Client::new(Config::with_base_url(uri).api_key(
         "nx_test",

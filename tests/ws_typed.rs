@@ -17,6 +17,7 @@ use tokio_tungstenite::WebSocketStream;
 
 /// A client wired to a local ws:// server with a fast, deterministic backoff so
 /// reconnect tests don't actually wait seconds.
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn client_for(addr: std::net::SocketAddr, capacity: usize) -> Client {
     let cfg = Config::with_base_url("http://unused")
         .with_ws_url(format!("ws://{addr}/ws"))
@@ -214,6 +215,7 @@ async fn out_of_sync_is_surfaced_and_clears_the_resume_cursor() {
 }
 
 #[tokio::test]
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 async fn private_channel_without_credentials_fails_fast() {
     let client = Client::new(Config::with_base_url("http://unused"));
     let err = client.subscribe(vec![Channel::Orders]).unwrap_err();

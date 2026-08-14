@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Deprecated
+
+- *(config)* **`Config::with_base_url` is deprecated in favour of
+  `Network::Custom`** (ENG-10951). It is the *selector* — the argument that picks
+  a target without declaring what that target moves — and a bare URL cannot say
+  what a deployment is: whether its funds are real, whether it has a faucet,
+  where it streams from, what domain it signs under. `Network::Custom` carries
+  that bundle, so the guardrails read declared facts rather than an absence.
+
+  ```rust
+  // Before
+  let config = Config::with_base_url("https://exchange.example.com/api/exchange");
+
+  // After
+  let target = CustomNetwork::new("dev", "https://exchange.example.com/api/exchange", Funds::Play)?;
+  let config = Config::new(Network::Custom(target));
+  ```
+
+  **Behaviour is unchanged and nothing is removed.** `with_base_url` has been
+  sugar for a `Network::Custom` with `Funds::Unknown` and no faucet, WS origin or
+  signing domain since 0.9.0, so the guarded paths — `Client::fund` above all —
+  already refuse on it; this release only adds the marker that says so at build
+  time. The method keeps working, and removing it would be a breaking change that
+  needs its own release, so downstreams are not obliged to migrate on this one.
+
+  The *modifiers* are untouched: `Config::with_direct_base_url` and
+  `Config::with_ws_url` refine a target that has already been chosen and carry no
+  funds claim, so they are not deprecated.
+
 ## [0.9.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.8.0...v0.9.0) - 2026-08-12
 
 ### Added

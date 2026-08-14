@@ -8,6 +8,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 ///
 /// Credentials are attached so the signed `/account/rate-limit` endpoint works;
 /// the public-endpoint tests don't sign, so they're simply unused there.
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn client(uri: String, max_retries: u32) -> Client {
     let cfg = Config::with_base_url(uri)
         .api_key(

@@ -786,6 +786,9 @@ mod tests {
     /// client sends and extracts its `User-Agent`, proving the configured UA
     /// actually rides the WS handshake (not just REST).
     #[tokio::test]
+    // Throwaway loopback target built through the deprecated bare-URL selector,
+    // which stays supported. Silenced here, never for callers.
+    #[allow(deprecated)]
     async fn connect_handshake_carries_configured_user_agent() {
         use tokio::io::AsyncReadExt;
         use tokio::net::TcpListener;

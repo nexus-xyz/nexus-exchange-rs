@@ -11,6 +11,7 @@ use nexus_exchange::{Client, Config, Error};
 use wiremock::matchers::{body_json, header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn authed(uri: String) -> Client {
     Client::new(Config::with_base_url(uri).api_key(
         "nx_test",

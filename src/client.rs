@@ -640,6 +640,10 @@ mod tests {
     /// The SDK sends its descriptive default `User-Agent` so the server can
     /// attribute traffic to the Rust SDK rather than reqwest's generic default.
     #[tokio::test]
+    // These tests point at a wiremock origin, which is exactly the throwaway
+    // target the deprecated selector still serves. Silenced here, never for
+    // callers.
+    #[allow(deprecated)]
     async fn sends_default_user_agent() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -658,6 +662,7 @@ mod tests {
     /// sourced from the repo-root `.api-version` file, so the server can meter
     /// edge usage per spec version (ENG-4804). Capture it off a normal request.
     #[tokio::test]
+    #[allow(deprecated)] // Throwaway wiremock target; see above.
     async fn sends_api_version_header() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -675,6 +680,7 @@ mod tests {
     /// An embedding application (CLI, web frontend) can override the UA to
     /// identify itself — this is what unlocks the per-client breakdown.
     #[tokio::test]
+    #[allow(deprecated)] // Throwaway wiremock target; see above.
     async fn sends_overridden_user_agent() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -693,6 +699,7 @@ mod tests {
     /// A UA with bytes illegal in an HTTP header must not panic construction;
     /// the client falls back to the always-valid default UA instead.
     #[tokio::test]
+    #[allow(deprecated)] // Throwaway wiremock target; see above.
     async fn invalid_user_agent_falls_back_to_default() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -741,6 +748,7 @@ mod tests {
     /// choke point every request builder goes through, so proving it here proves
     /// no request of any kind can reach a real-funds host.
     #[test]
+    #[allow(deprecated)] // Throwaway bare-URL target; see above.
     fn mainnet_resolves_no_base_for_any_path() {
         let client = Client::new(Config::new(Network::Mainnet));
         for path in [
@@ -827,6 +835,7 @@ mod tests {
     /// receives, which retains `/api/v1` after the gateway strips its own prefix.
     /// Drive it through a mock serving the direct base to prove both.
     #[tokio::test]
+    #[allow(deprecated)] // Throwaway wiremock target; see above.
     async fn v1_path_is_sent_to_direct_base_and_signed_over_full_path() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -847,6 +856,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)] // Throwaway wiremock target; see above.
     async fn signed_get_signs_and_sends_query() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))

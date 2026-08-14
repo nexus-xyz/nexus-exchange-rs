@@ -21,6 +21,7 @@ const TEST_SECRET: &str = "00112233445566778899aabbccddeeff00112233445566778899a
 
 /// A client wired to a local ws:// server with a fast, deterministic backoff so
 /// reconnect tests don't actually wait seconds.
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn client_for(addr: std::net::SocketAddr, capacity: usize) -> Client {
     let cfg = Config::with_base_url("http://unused")
         .with_ws_url(format!("ws://{addr}/ws"))
@@ -217,6 +218,7 @@ async fn connect_failure_surfaces_disconnected_and_keeps_retrying() {
 // return `Ok`, so the lint doesn't apply here.
 #[allow(clippy::result_large_err)]
 #[tokio::test]
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 async fn connect_ws_mints_token_and_presents_it_on_upgrade() {
     // REST: the signed token mint (`POST /ws/token`).
     let rest = MockServer::start().await;

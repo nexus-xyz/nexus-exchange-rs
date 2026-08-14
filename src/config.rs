@@ -1067,9 +1067,9 @@ impl Config {
     /// is a different path than the `/orders` the client signs, so it would fail
     /// verification rather than merely look untidy.
     ///
-    /// # Prefer [`Network::Custom`] for anything but a throwaway target
+    /// # Deprecated: prefer [`Network::Custom`]
     ///
-    /// This is now sugar for a [`CustomNetwork`] with [`Funds::Unknown`] and no
+    /// This is sugar for a [`CustomNetwork`] with [`Funds::Unknown`] and no
     /// faucet, WS origin or signing domain — which is all a bare URL can honestly
     /// say. [`Config::network`] therefore reports a `Custom` target rather than
     /// nothing, and every guard reads the same fields for both paths, so there is
@@ -1078,10 +1078,38 @@ impl Config {
     /// Because the funds are undeclared, [`Client::fund`](crate::Client::fund)
     /// refuses — as it always has for a raw base URL. Construct a
     /// [`CustomNetwork`] instead to declare what the host moves and to get the
-    /// URL validated.
+    /// URL validated:
+    ///
+    /// ```
+    /// use nexus_exchange::{Config, CustomNetwork, Funds, Network};
+    ///
+    /// let target = CustomNetwork::new("dev", "https://exchange.example.com/api/exchange", Funds::Play)?;
+    /// let config = Config::new(Network::Custom(target));
+    /// # Ok::<(), nexus_exchange::Error>(())
+    /// ```
+    ///
+    /// Note the label. The target this builds is keyed `custom`, which is
+    /// reserved and so cannot be claimed by a caller, meaning a
+    /// [`CustomNetwork`] must pick a different one — and because credentials are
+    /// stored per label, saved credentials do not carry over to the new name.
+    ///
+    /// # Nothing is removed here
+    ///
+    /// The behaviour is **unchanged** and this method keeps working: the marker
+    /// only says at build time what the docs above already said. Removing it is
+    /// a breaking change and needs its own release, so existing callers are not
+    /// obliged to migrate on this one.
     ///
     /// [`Client::connect`]: crate::Client::connect
     /// [`Client::connect_ws`]: crate::Client::connect_ws
+    #[deprecated(
+        since = "0.9.1",
+        note = "a bare URL cannot declare what the target moves, so this builds a \
+                `Network::Custom` with `Funds::Unknown` and `Client::fund` refuses. \
+                Use `Config::new(Network::Custom(CustomNetwork::new(label, base_url, funds)?))` \
+                to declare the funds (and get the URL validated). Still supported; \
+                not removed in this release."
+    )]
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
         Self::new(Network::Custom(CustomNetwork::from_legacy_base_url(
             base_url.into(),
@@ -1387,6 +1415,9 @@ mod tests {
     /// whose funds are **unknown** — which is what `fund()` refuses on, and it
     /// must refuse for that reason rather than because the network is absent.
     #[test]
+    // Exercises the deprecated bare-URL selector on purpose: it stays supported,
+    // so its behaviour still has to be pinned. Silenced here, never for callers.
+    #[allow(deprecated)]
     fn config_always_carries_a_network_and_a_raw_base_url_is_custom_unknown() {
         assert_eq!(Config::new(Network::Testnet).network(), &Network::Testnet);
 
@@ -1403,6 +1434,7 @@ mod tests {
     /// and one without a usable origin leaves `ws_url` unset rather than
     /// derived from the REST base.
     #[test]
+    #[allow(deprecated)] // Pins the deprecated selector's behaviour; see above.
     fn config_ws_url_follows_network_and_is_not_derived_from_rest_base() {
         assert_eq!(
             Config::new(Network::Local).ws_url(),
@@ -1459,6 +1491,7 @@ mod tests {
     /// serves no API. Asserting the resolved URL is what fails when the two
     /// agree with each other but disagree with the deployment.
     #[test]
+    #[allow(deprecated)] // Pins the deprecated selector's behaviour; see above.
     fn v1_surface_resolves_under_the_gateway_prefix() {
         assert_eq!(
             format!(
@@ -1485,6 +1518,7 @@ mod tests {
     /// keeps the wiremock tests, which pass a bare `http://127.0.0.1:PORT`,
     /// working).
     #[test]
+    #[allow(deprecated)] // Pins the deprecated selector's behaviour; see above.
     fn direct_base_keeps_the_gateway_prefix() {
         let cfg = Config::with_base_url("https://preview.example/api/exchange");
         assert_eq!(cfg.base_url(), "https://preview.example/api/exchange");

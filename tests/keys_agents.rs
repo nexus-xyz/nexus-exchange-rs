@@ -12,16 +12,19 @@ use wiremock::matchers::{body_json, body_string, header, header_exists, method, 
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// Unauthenticated client (login needs no credentials).
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn anon(uri: String) -> Client {
     Client::new(Config::with_base_url(uri))
 }
 
 /// Client authenticated with a session bearer token (the `/keys` credential).
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn session(uri: String) -> Client {
     Client::new(Config::with_base_url(uri).session_token("sess_tok_123"))
 }
 
 /// Client authenticated with an HMAC API key (the `/agents` credential).
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn hmac(uri: String) -> Client {
     Client::new(Config::with_base_url(uri).api_key(
         "nx_test",
@@ -143,6 +146,7 @@ async fn revoke_agent_is_hmac_signed_delete_with_no_body() {
 }
 
 #[tokio::test]
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 async fn key_and_agent_endpoints_require_credentials() {
     // Unauthenticated client: each method must surface Auth before any I/O,
     // so a port that refuses connections is never even dialed.

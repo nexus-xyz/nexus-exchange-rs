@@ -136,8 +136,12 @@ unusable. `Unknown` is treated as dangerous, so `Client::fund` refuses on it
 rather than assuming a faucet. The faucet, WebSocket origin and signing domain
 are likewise absent until you declare them, never guessed.
 
-`Config::with_base_url` still works and is now sugar for a `Custom` with
-`Funds::Unknown` — all a bare URL can honestly claim.
+`Config::with_base_url` is **deprecated as of 0.9.1** and still works: it is
+sugar for a `Custom` with `Funds::Unknown` — all a bare URL can honestly claim —
+so `Client::fund` refuses on it for the same reason as above. Nothing is removed
+and the behaviour is unchanged, so migrating is not urgent; construct a
+`CustomNetwork` as shown above to declare what the host moves and to get the URL
+validated.
 
 Two properties worth knowing before you wire anything up:
 

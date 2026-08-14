@@ -143,6 +143,11 @@ and the behaviour is unchanged, so migrating is not urgent; construct a
 `CustomNetwork` as shown above to declare what the host moves and to get the URL
 validated.
 
+One migration cost worth knowing: the legacy target is labelled `custom` and
+that label is reserved, so a `CustomNetwork` must choose a different one.
+Because credentials are keyed by label, saved credentials do not carry over —
+you re-authenticate under the new name.
+
 Two properties worth knowing before you wire anything up:
 
 - **`Mainnet` is not targetable by this release.** Its host does not resolve

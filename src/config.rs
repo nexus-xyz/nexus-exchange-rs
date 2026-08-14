@@ -1088,6 +1088,11 @@ impl Config {
     /// # Ok::<(), nexus_exchange::Error>(())
     /// ```
     ///
+    /// Note the label. The target this builds is keyed `custom`, which is
+    /// reserved and so cannot be claimed by a caller, meaning a
+    /// [`CustomNetwork`] must pick a different one — and because credentials are
+    /// stored per label, saved credentials do not carry over to the new name.
+    ///
     /// # Nothing is removed here
     ///
     /// The behaviour is **unchanged** and this method keeps working: the marker

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.9.0...v0.9.1) - 2026-08-14
+
+### Added
+
+- *(config)* deprecate Config::with_base_url in favour of Network::Custom (ENG-10951)
+
+### Other
+
+- bump the cargo-minor group with 3 updates ([#137](https://github.com/nexus-xyz/nexus-exchange-rs/pull/137))
+
 ### Deprecated
 
 - *(config)* **`Config::with_base_url` is deprecated in favour of

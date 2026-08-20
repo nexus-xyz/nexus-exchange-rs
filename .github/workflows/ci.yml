@@ -242,9 +242,20 @@ jobs:
       # never silently passes — the job fails either way), but the error message
       # would be wrong. Pinning keeps the summary string stable; when bumping,
       # re-verify the summary text below still matches.
+      #
+      # THE PIN HAS A COST, and it came due on 2026-08-20 (ENG-11844): the
+      # toolchain above is `stable`, unpinned, so rustdoc's JSON format moves
+      # underneath a pinned tool that can only read the formats it shipped
+      # knowing about. 0.48.0 could not read v60 and every PR failed with
+      # `error: unsupported rustdoc format v60`. 0.50.0 reads v60 and v61.
+      #
+      # So this pin needs bumping roughly whenever rustdoc's format bumps — it is
+      # maintenance, not set-and-forget. Verified when bumping to 0.50.0: the
+      # summary string in the tool's src/check_release.rs is byte-identical to
+      # 0.48.0's, so the classifier below is unaffected.
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-semver-checks@0.48.0
+          tool: cargo-semver-checks@0.50.0
       # Run the check, capturing combined output and exit code without aborting
       # the step (we classify the result ourselves in the next step).
       - id: semver
@@ -284,6 +295,18 @@ jobs:
           # it is NOT misread as an undeclared break (and vice versa).
           if [ "$EXIT_CODE" != "1" ] \
             || ! grep -Eq 'semver requires new (major|minor) version' semver-output.txt; then
+            # Name the one tooling failure that is neither transient nor a
+            # baseline problem, because the generic advice below ("re-run",
+            # "check the baseline") is actively wrong for it: rustdoc's JSON
+            # format moved and the PINNED tool above cannot read the new one.
+            # Re-running never helps; the baseline was never broken. This cost
+            # real debugging time once (ENG-11844) — the point of the check is
+            # to tell you what happened, so it should say so.
+            if grep -q 'unsupported rustdoc format' semver-output.txt; then
+              fmt="$(grep -o 'unsupported rustdoc format v[0-9]*' semver-output.txt | head -1)"
+              echo "::error::cargo-semver-checks cannot read this toolchain's rustdoc JSON (${fmt:-unknown format}). This is NOT a breaking change and NOT transient — the tool is pinned in the install step above and Rust stable has moved past it. Bump the pin to a cargo-semver-checks release that supports this format, and re-verify the summary string this step greps for (see ENG-11844)."
+              exit 1
+            fi
             echo "::error::cargo-semver-checks did not run successfully (exit ${EXIT_CODE}); this is a tooling/infra failure, not a detected breaking change. Re-run; if it persists, investigate the baseline fetch / build."
             exit 1
           fi

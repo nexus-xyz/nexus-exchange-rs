@@ -50,6 +50,7 @@ Run: python3 scripts/test_check_spec_drift.py   (stdlib unittest; no pytest need
 """
 import contextlib
 import io
+import json
 import os
 import re
 import sys
@@ -1032,6 +1033,174 @@ class TestInvariant4LoginMessage(unittest.TestCase):
         # Fails closed if the constant is renamed or stops being a plain literal.
         self.assertIsInstance(csd.sdk_login_message(), str)
         self.assertTrue(csd.sdk_login_message())
+
+
+class TestCoverageCanonicalization(unittest.TestCase):
+    """The coverage report counts operations, not path spellings (ENG-11842).
+
+    The spec documents many operations twice — bare and `/api/v1`-prefixed —
+    pending ENG-8155. Comparing path strings literally reported the spelling the
+    SDK did not pick as an uncovered gap: 33 of 39 reported "gaps" were phantom,
+    and the count did not even shrink when an op was wrapped, because the other
+    spelling stayed in the list.
+
+    The risk in fixing that is over-correcting into a report that hides real
+    gaps, so every test here checks a genuine gap still SURVIVES the
+    deduplication.
+    """
+
+    def test_the_two_spellings_collapse_to_one_operation(self):
+        self.assertEqual(
+            csd.canonical_op(("GET", "/api/v1/orders")),
+            csd.canonical_op(("GET", "/orders")),
+        )
+
+    def test_a_bare_path_is_left_alone(self):
+        self.assertEqual(csd.canonical_op(("GET", "/orders")), ("GET", "/orders"))
+
+    def test_the_prefix_is_only_stripped_as_a_whole_segment(self):
+        # `/api/v1foo` and `/api/v1` are not the prefix followed by a path, and
+        # stripping a partial match would invent an operation that does not
+        # exist. Anchored on the trailing slash for exactly that reason.
+        for path in ("/api/v1foo", "/api/v1", "/apiv1/orders", "/v1/orders"):
+            self.assertEqual(csd.canonical_op(("GET", path)), ("GET", path), path)
+
+    def test_the_method_still_separates_operations(self):
+        # Dedup is per (method, path): collapsing on path alone would merge
+        # GET and POST on the same route into one "covered" op.
+        self.assertNotEqual(
+            csd.canonical_op(("GET", "/api/v1/orders")),
+            csd.canonical_op(("POST", "/orders")),
+        )
+
+    def test_a_real_gap_survives_deduplication(self):
+        # The test that keeps this fix honest: an op present under BOTH spellings
+        # and targeted under NEITHER must still be reported.
+        spec = csd.spec_ops(
+            {
+                "paths": {
+                    "/orders": {"get": {}},
+                    "/api/v1/orders": {"get": {}},
+                    "/widgets": {"get": {}},
+                    "/api/v1/widgets": {"get": {}},
+                }
+            }
+        )
+        canon_spec = {csd.canonical_op(op) for op in spec}
+        targeted = {csd.canonical_op(("GET", "/api/v1/orders"))}
+        self.assertEqual(
+            sorted(canon_spec - targeted - {csd.canonical_op(op) for op in csd.NOT_TARGETED}),
+            [("GET", "/widgets")],
+        )
+
+    def test_deduplication_does_not_change_which_ops_are_covered(self):
+        # Four paths, two operations, one targeted under each spelling: coverage
+        # is 2/2, and the count of spec operations is 2 rather than 4.
+        spec = csd.spec_ops(
+            {
+                "paths": {
+                    "/orders": {"get": {}},
+                    "/api/v1/orders": {"get": {}},
+                    "/fills": {"get": {}},
+                    "/api/v1/fills": {"get": {}},
+                }
+            }
+        )
+        canon_spec = {csd.canonical_op(op) for op in spec}
+        targeted = {
+            csd.canonical_op(op)
+            for op in [("GET", "/api/v1/orders"), ("GET", "/fills")]
+        }
+        self.assertEqual(len(canon_spec), 2)
+        self.assertEqual(canon_spec, targeted)
+
+
+class TestNotTargetedAllowlistIntegrity(unittest.TestCase):
+    """`NOT_TARGETED` moves ops out of the gap headline, so it can hide a gap.
+
+    Same staleness contract the model and enum allowlists carry (ENG-7961): an
+    entry that no longer means what it says must fail, not sit there.
+    """
+
+    def test_every_entry_carries_a_reason(self):
+        for op, reason in csd.NOT_TARGETED.items():
+            self.assertTrue(reason and reason.strip(), op)
+
+    def test_no_entry_is_actually_targeted_by_the_sdk(self):
+        # The damaging direction: an op both excluded from the gap count AND
+        # implemented understates coverage, and stops invariant 1 from checking
+        # that its path still exists.
+        targeted = {csd.canonical_op(op) for op in csd.load_targeted()}
+        overlap = sorted(
+            {csd.canonical_op(op) for op in csd.NOT_TARGETED} & targeted
+        )
+        self.assertEqual(overlap, [], f"NOT_TARGETED entries that ARE targeted: {overlap}")
+
+    def test_an_entry_the_spec_dropped_is_reported_as_stale(self):
+        # Synthetic spec, so this pins the rule rather than today's spec content.
+        spec_canon = {csd.canonical_op(op) for op in csd.spec_ops({"paths": {"/kept": {"get": {}}}})}
+        table = {("GET", "/kept"): "reason", ("GET", "/gone"): "reason"}
+        orphans = sorted({csd.canonical_op(op) for op in table} - spec_canon)
+        self.assertEqual(orphans, [("GET", "/gone")])
+
+    def test_reason_lookup_handles_either_spelling(self):
+        table = {("GET", "/api/v1/thing"): "prefixed spelling"}
+        canon = csd.canonical_op(("GET", "/thing"))
+        self.assertEqual(csd._reason_key(canon, table), ("GET", "/api/v1/thing"))
+
+
+class TestCoverageReportEndToEnd(unittest.TestCase):
+    """Runs the checker as a process, so `main` itself is under test.
+
+    The logic tests above compare set expressions the tests build themselves, so
+    they pass even if `main` stops using `coverage_sets` entirely — I proved that
+    by hardcoding `uncovered = []` and watching all 84 stay green. A report that
+    hides every gap and a report with no gaps print the same reassuring line, so
+    the only test that distinguishes them runs the real entry point.
+
+    Hermetic: a synthetic spec on disk, no network. Invariant 1 fails against a
+    synthetic spec (the real manifest's paths are absent), so this asserts on
+    stdout and deliberately ignores the exit code.
+    """
+
+    SPEC = {
+        "info": {"version": "0.0.0-test"},
+        "paths": {
+            # Present under both spellings, targeted under neither: a real gap
+            # that must appear exactly once.
+            "/widgets": {"get": {}},
+            "/api/v1/widgets": {"get": {}},
+        },
+    }
+
+    def _run(self):
+        import subprocess
+
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(csd.__file__)))
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(self.SPEC, f)
+            spec_path = f.name
+        try:
+            return subprocess.run(
+                [sys.executable, os.path.join(repo, "scripts", "check_spec_drift.py"), spec_path],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+            ).stdout
+        finally:
+            os.unlink(spec_path)
+
+    def test_a_genuine_gap_is_printed_once(self):
+        out = self._run()
+        self.assertIn("Not yet covered by the SDK (1):", out)
+        self.assertEqual(out.count("- GET /widgets"), 1, out)
+        self.assertNotIn("/api/v1/widgets", out)
+
+    def test_the_headline_counts_operations_not_paths(self):
+        out = self._run()
+        # Two paths, one operation, zero covered.
+        self.assertIn("SDK covers 0/1 targetable operation(s)", out)
+        self.assertIn("(2 paths, 1 of them a second spelling", out)
 
 
 if __name__ == "__main__":

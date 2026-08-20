@@ -27,6 +27,7 @@ GET /api/v1/markets/{market_id}/orderbook
 GET /api/v1/markets/{market_id}/trades
 GET /api/v1/markets/{market_id}/candles
 GET /api/v1/markets/{market_id}/funding
+GET /api/v1/markets/{market_id}/funding-samples
 GET /api/v1/markets/{market_id}/mark-price
 GET /markets/{market_id}/risk-params
 GET /api/v1/markets/{market_id}/status

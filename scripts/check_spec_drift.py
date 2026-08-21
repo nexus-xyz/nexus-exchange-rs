@@ -196,11 +196,43 @@ NON_REST_TARGETS = {
     ("GET", "/ws"),
 }
 
-# Spec operations that exist but the SDK deliberately does not target. These show
-# up in the informational "not yet covered" list and that is fine; documented
-# here so the exclusion is intentional, not an oversight:
-#   POST /ws-tokens — deprecated; superseded by POST /ws/token.
-#   GET  /stream    — deprecated SSE stream; superseded by the /ws upgrade.
+# Spec operations that exist but the SDK deliberately does not target. Listing
+# them here takes them OUT of the coverage-gap headline and into a separate,
+# labelled section — an unexplained 39-line gap list is a list nobody reads, and
+# a genuine new gap appearing in one changes nothing visually (ENG-11842).
+#
+# Each entry carries its reason. The reason is checked for staleness the same way
+# the model/enum allowlists are: an entry the SDK now implements is a
+# contradiction and fails, so an exemption cannot outlive its cause.
+NOT_TARGETED = {
+    ("POST", "/ws-tokens"): "deprecated; superseded by POST /ws/token",
+    ("GET", "/stream"): "deprecated SSE stream; superseded by the /ws upgrade",
+    ("GET", "/bridge/wallets"): "EX-Bridge, wrapped under ENG-5639 not here",
+    ("POST", "/bridge/wallets"): "EX-Bridge, wrapped under ENG-5639 not here",
+    ("POST", "/bridge/wallets/challenge"): "EX-Bridge, wrapped under ENG-5639 not here",
+}
+
+# The spec documents many operations under TWO path spellings — bare (`/orders`)
+# and `/api/v1`-prefixed (`/api/v1/orders`) — pending the layout decision in
+# ENG-8155. They are one operation, and the SDK targets exactly one spelling of
+# each, so comparing path strings literally reported the other spelling as an
+# uncovered gap: 33 of 39 "gaps" were phantom, and wrapping an op did not even
+# shrink the list, because the spelling the SDK did not pick stayed in it
+# (ENG-11842).
+#
+# Canonicalizing is applied ONLY to the coverage comparison. Invariant 1 — every
+# targeted endpoint exists in the spec — keeps comparing literal paths: the SDK
+# must call a path the spec actually defines, and that check must not be
+# loosened into "some spelling of it exists".
+_API_V1_PREFIX = "/api/v1"
+
+
+def canonical_op(op):
+    """One (method, path) per operation, regardless of which spelling is used."""
+    method, path = op
+    if path.startswith(_API_V1_PREFIX + "/"):
+        path = path[len(_API_V1_PREFIX):]
+    return (method, path)
 
 
 # --- Invariant 3: SDK models <-> spec schemas (ENG-3377) ---------------------
@@ -347,6 +379,35 @@ def load_targeted(path="endpoints.txt"):
             seen[op] = lineno
             out.append(op)
     return out
+
+
+def coverage_sets(targeted, available):
+    """Canonical coverage sets for the report.
+
+    Split out of `main` so it is directly testable, and so a change that stops
+    `main` from using it shows up as a test failure rather than as a suspiciously
+    clean gap list — "no gaps" and "not looking" print identically (ENG-11842).
+    """
+    canon_available = {canonical_op(op) for op in available}
+    canon_targeted = {canonical_op(op) for op in targeted}
+    canon_not_targeted = {canonical_op(op) for op in NOT_TARGETED}
+    return {
+        "spec": canon_available,
+        "targeted": canon_targeted,
+        "not_targeted": canon_not_targeted,
+        "uncovered": sorted(canon_available - canon_targeted - canon_not_targeted),
+        "excluded": sorted(canon_available & canon_not_targeted),
+        "contradictions": sorted(canon_not_targeted & canon_targeted),
+        "orphans": sorted(canon_not_targeted - canon_available),
+    }
+
+
+def _reason_key(canon, table):
+    """The NOT_TARGETED key whose canonical form is `canon`."""
+    for key in table:
+        if canonical_op(key) == canon:
+            return key
+    raise KeyError(canon)
 
 
 def spec_ops(spec):
@@ -1353,17 +1414,58 @@ def main():
     available = spec_ops(spec)
 
     missing = [op for op in targeted if op not in available]
-    uncovered = sorted(available - set(targeted))
+
+    cov = coverage_sets(targeted, available)
+    canon_available = cov["spec"]
+    canon_targeted = cov["targeted"]
+    canon_not_targeted = cov["not_targeted"]
+    uncovered = cov["uncovered"]
+    excluded = cov["excluded"]
+    countable = len(canon_available) - len(excluded)
 
     print(f"Spec version: {version}")
-    print(f"SDK targets {len(targeted)} endpoints; spec has {len(available)}.")
+    spellings = len(available) - len(canon_available)
+    print(
+        f"SDK covers {len(canon_available & canon_targeted)}/{countable} "
+        f"targetable operation(s); spec declares {len(canon_available)} "
+        f"({len(available)} paths, {spellings} of them a second spelling of one "
+        f"already counted), {len(excluded)} deliberately not targeted."
+    )
+
+    failures = 0
+
+    if excluded:
+        print(f"\nDeliberately not targeted ({len(excluded)}):")
+        for op in excluded:
+            print(f"  - {op[0]} {op[1]} — {NOT_TARGETED[_reason_key(op, NOT_TARGETED)]}")
 
     if uncovered:
         print(f"\nNot yet covered by the SDK ({len(uncovered)}):")
         for m, p in uncovered:
             print(f"  - {m} {p}")
+    else:
+        print("\nOK: every targetable spec operation is covered by the SDK.")
 
-    failures = 0
+    # A NOT_TARGETED entry the SDK now implements is a contradiction, and the
+    # damaging direction: the op is excluded from the gap count, so the coverage
+    # number would understate reality exactly as the phantom gaps overstated it.
+    contradictions = cov["contradictions"]
+    if contradictions:
+        failures += len(contradictions)
+        print(f"\nERROR: {len(contradictions)} NOT_TARGETED entr(ies) ARE targeted "
+              f"by the SDK — remove them from NOT_TARGETED:")
+        for m, p in contradictions:
+            print(f"  - {m} {p}")
+
+    # And an entry for an op the spec no longer declares is a stale exemption
+    # suppressing nothing, waiting to hide a real gap if the path comes back.
+    orphans = cov["orphans"]
+    if orphans:
+        failures += len(orphans)
+        print(f"\nERROR: {len(orphans)} NOT_TARGETED entr(ies) are not in the spec "
+              f"at all — stale exemption(s):")
+        for m, p in orphans:
+            print(f"  - {m} {p}")
     if missing:
         failures += len(missing)
         print(f"\nERROR: {len(missing)} targeted endpoint(s) are NOT in the spec "

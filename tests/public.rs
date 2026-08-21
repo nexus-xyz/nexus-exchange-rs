@@ -1,5 +1,6 @@
+use nexus_exchange::rest::MAX_FUNDING_SAMPLES_LIMIT;
 use nexus_exchange::{Client, Config};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[allow(deprecated)] // Throwaway test origin; the selector stays supported.
@@ -151,6 +152,66 @@ async fn fetch_funding_parses_string_decimals() {
         .unwrap();
     assert_eq!(f[0].funding_rate.to_string(), "0.0001");
     assert_eq!(f[0].mark_price.to_string(), "50011.60");
+}
+
+#[tokio::test]
+async fn fetch_funding_premium_samples_parses_and_passes_limit() {
+    let server = MockServer::start().await;
+    let body = serde_json::json!([
+        { "timestamp": 1776033900000i64, "premium_index": "0.00012" },
+        { "timestamp": 1776033960000i64, "premium_index": "-0.00004" },
+    ]);
+    Mock::given(method("GET"))
+        .and(path("/api/v1/markets/BTC-USDX-PERP/funding-samples"))
+        .and(query_param("limit", "2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .mount(&server)
+        .await;
+
+    let s = client(server.uri())
+        .fetch_funding_premium_samples("BTC-USDX-PERP", Some(2))
+        .await
+        .unwrap();
+    assert_eq!(s[0].timestamp, 1776033900000);
+    // Decimal, not f64: a premium of 0.00012 read through a float would not
+    // round-trip to this string.
+    assert_eq!(s[0].premium_index.to_string(), "0.00012");
+    // Signed — the perpetual can trade below the index.
+    assert_eq!(s[1].premium_index.to_string(), "-0.00004");
+}
+
+#[tokio::test]
+async fn fetch_funding_premium_samples_rejects_an_out_of_range_limit_before_sending() {
+    // No mock is mounted: if the clamp did not fire, the request would go out
+    // and fail as a connection error instead, so this also proves the check runs
+    // before the send rather than after the response.
+    let c = client("http://127.0.0.1:1".to_string());
+    for limit in [0, MAX_FUNDING_SAMPLES_LIMIT + 1] {
+        let err = c
+            .fetch_funding_premium_samples("BTC-USDX-PERP", Some(limit))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                nexus_exchange::Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+            ),
+            "limit {limit} must be rejected locally, got {err:?}"
+        );
+    }
+    // And the boundary is inclusive — 480 is a legal ask, so it must NOT be
+    // rejected locally (it fails on connect instead).
+    let err = c
+        .fetch_funding_premium_samples("BTC-USDX-PERP", Some(MAX_FUNDING_SAMPLES_LIMIT))
+        .await
+        .unwrap_err();
+    assert!(
+        !matches!(
+            err,
+            nexus_exchange::Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
+        ),
+        "the maximum itself must be accepted, got {err:?}"
+    );
 }
 
 #[tokio::test]
@@ -395,6 +456,7 @@ async fn public_market_reads_reject_empty_market_id_locally() {
         c.fetch_trades("", None).await.unwrap_err(),
         c.fetch_ohlcv("", None, None).await.unwrap_err(),
         c.fetch_funding_rate_history("", None).await.unwrap_err(),
+        c.fetch_funding_premium_samples("", None).await.unwrap_err(),
         c.fetch_mark_price("").await.unwrap_err(),
         c.fetch_market_status("").await.unwrap_err(),
     ] {

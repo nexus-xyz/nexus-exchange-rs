@@ -32,12 +32,12 @@ use crate::types::{
     AgentInfo, AgentRegistered, AmendOrder, ApiKeyInfo, BridgeAssetsResponse, BridgeDeposit,
     BridgeDepositAddress, CancelOnDisconnectStatus, ClosedPosition, CreatedApiKey, CreditResult,
     Decimal, DepositResponse, DepositResult, EquityPoint, FaucetResponse, Fill, FundingPayment,
-    FundingSample, FundsEntry, HealthStatus, LeverageUpdate, LoginResponse, MarginAdjustment,
-    MarginDirection, MarginMode, MarginModeUpdate, MarkPrice, Market, MarketRiskParams,
-    MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderHistoryEntry, OrderPreview,
-    OrderRequest, OrderResponse, OrderResult, PortfolioHistory, PortfolioWindow, Position,
-    RateLimitStatus, StatsSnapshot, SubAccount, ThroughputSample, Ticker, TierOverride, Trade,
-    Transfer, TransferRequest, Withdrawal, WsToken,
+    FundingPremiumSample, FundingSample, FundsEntry, HealthStatus, LeverageUpdate, LoginResponse,
+    MarginAdjustment, MarginDirection, MarginMode, MarginModeUpdate, MarkPrice, Market,
+    MarketRiskParams, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderHistoryEntry,
+    OrderPreview, OrderRequest, OrderResponse, OrderResult, PortfolioHistory, PortfolioWindow,
+    Position, RateLimitStatus, StatsSnapshot, SubAccount, ThroughputSample, Ticker, TierOverride,
+    Trade, Transfer, TransferRequest, Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
 
@@ -109,6 +109,11 @@ pub const MAX_DEPOSITS_LIMIT: u32 = 100;
 /// Largest `limit` `GET /funding` accepts (spec: `maximum: 1000`). Note the
 /// server default is 100, NOT this maximum — omitting `limit` asks for 100.
 pub const MAX_ACCOUNT_FUNDING_LIMIT: u32 = 1000;
+/// Largest `limit` `GET /markets/{market_id}/funding-samples` accepts (spec:
+/// `maximum: 480`). Also its default, and 480 samples at the documented 60s
+/// cadence is exactly the 8h window the endpoint retains — so an omitted `limit`
+/// asks for everything there is.
+pub const MAX_FUNDING_SAMPLES_LIMIT: u32 = 480;
 
 /// Reject a page size the endpoint's request schema forbids, before it is sent
 /// (and, on a signed route, before it is signed).
@@ -377,6 +382,35 @@ impl Client {
         }
         self.get(
             &format!("/api/v1/markets/{id}/funding"),
+            &query,
+            COST_DEFAULT,
+        )
+        .await
+    }
+
+    /// Dense premium-index samples for a market (60s cadence, up to 8h).
+    ///
+    /// The intra-window counterpart to
+    /// [`fetch_funding_rate_history`](Self::fetch_funding_rate_history): that
+    /// returns settled windows ([`FundingSample`]), this returns the premium
+    /// observations taken between them ([`FundingPremiumSample`]). Public — no
+    /// authentication.
+    ///
+    /// `limit` must be in `1..=`[`MAX_FUNDING_SAMPLES_LIMIT`]; an out-of-range
+    /// value fails before the request is sent.
+    pub async fn fetch_funding_premium_samples(
+        &self,
+        market_id: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<FundingPremiumSample>> {
+        let id = encoded_segment(market_id, "market_id")?;
+        check_page_size(limit, MAX_FUNDING_SAMPLES_LIMIT, "funding-samples")?;
+        let mut query = Vec::new();
+        if let Some(limit) = limit {
+            query.push(("limit", limit.to_string()));
+        }
+        self.get(
+            &format!("/api/v1/markets/{id}/funding-samples"),
             &query,
             COST_DEFAULT,
         )

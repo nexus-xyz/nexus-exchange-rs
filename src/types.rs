@@ -672,6 +672,31 @@ pub struct FundingSample {
     pub oracle_price: Decimal,
 }
 
+/// One intra-window premium-index observation (`GET /markets/{market_id}/funding-samples`).
+///
+/// Deliberately narrower than [`FundingSample`]: it carries the premium and its
+/// timestamp and nothing else. A settled funding rate, mark price and oracle
+/// price are properties of a settled *window*, not of a sample taken inside one,
+/// and the event these are folded from does not carry them. Read
+/// [`Client::fetch_funding_rate_history`](crate::Client::fetch_funding_rate_history)
+/// for those.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FundingPremiumSample {
+    /// Unix timestamp (ms) of the sample.
+    pub timestamp: i64,
+    /// `(trade_reference_price - oracle_price) / oracle_price` at the sample
+    /// instant — the perpetual's own traded reference against the index, not the
+    /// mark price.
+    ///
+    /// Reads `0` until the market has traded: with no trade reference available
+    /// the value falls back to the oracle price, making the numerator exactly
+    /// zero. **A long run of zeroes means the market has not traded, not that
+    /// the perpetual is at parity with spot** — do not average them into a
+    /// funding estimate without checking for that case.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub premium_index: Decimal,
+}
+
 /// Current mark price for a market.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MarkPrice {

@@ -33,9 +33,10 @@ comparison logic was never exercised at all — only invariant 5 and invariant 2
   properly, because oasdiff classifies that as non-breaking and the autobump
   therefore arms auto-merge.
 * **Invariant 2's set comparison** (`TestInvariant2SetEquality`) — real
-  bidirectional equality, plus every integrity check on both allowlists,
-  including the two ENG-7961 added: a CODE_ONLY_OPS entry the spec has CAUGHT UP
-  with, and a NON_REST_TARGETS entry that suppresses nothing.
+  bidirectional equality, plus every integrity check, including the
+  NON_REST_TARGETS entry that suppresses nothing (ENG-7961) and the
+  revert-with-the-test-kept pin for ENG-8617: CODE_ONLY_OPS is sealed empty, so
+  ANY entry must go red, whether or not the pinned spec defines the op.
 * **Invariant 3** (`TestInvariant3ModelsVsSpec`) — a model still reading a field
   the spec dropped, the `mark_price` -> `last_trade_price` (PR #48) class.
 * **Invariant 4** (`TestInvariant4LoginMessage`) — LOGIN_MESSAGE drift. Those
@@ -65,6 +66,15 @@ def _quiet(fn, *args, **kwargs):
     """Run a check fn, swallowing its stdout; return its error count."""
     with contextlib.redirect_stdout(io.StringIO()):
         return fn(*args, **kwargs)
+
+
+def _capture(fn, *args, **kwargs):
+    """Run a check fn and return its stdout, for asserting on a diagnostic's
+    wording rather than only on the error count."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        fn(*args, **kwargs)
+    return buf.getvalue()
 
 
 # Member sets that match the current SDK WS channels exactly.
@@ -176,7 +186,7 @@ class TestEnumParser(unittest.TestCase):
 
     def test_lowercase_rename_all(self):
         self.assertEqual(
-            csd.parse_enum_members(self.src, "MarginMode"), {"cross", "isolated"}
+            csd.parse_enum_members(self.src, "MarginDirection"), {"add", "remove"}
         )
 
     def test_missing_enum_fails_closed(self):
@@ -747,19 +757,21 @@ class TestFixtureTracksTheRegistry(unittest.TestCase):
     """
 
     def test_registering_an_enum_does_not_break_the_matching_spec(self):
-        # `MarginMode` is a real lowercase serde enum in types.rs that is not in
-        # ENUM_SCHEMA today, so it stands in for "the next enum someone registers".
+        # `MarginDirection` is a real lowercase serde enum in types.rs that is not
+        # in ENUM_SCHEMA today, so it stands in for "the next enum someone
+        # registers". (It replaced `MarginMode`, which ENG-8617 deleted along with
+        # the phantom margin-mode endpoint that was its only wire use.)
         registry = dict(csd.ENUM_SCHEMA)
-        registry["MarginMode"] = ("AccountState", "margin_mode")
+        registry["MarginDirection"] = ("MarginAdjustment", "direction")
         with _patched(csd, "ENUM_SCHEMA", registry):
             self.assertEqual(_quiet(csd.check_enums_vs_spec, enum_spec()), 0)
 
     def test_a_newly_registered_enum_is_actually_policed(self):
         # The flip side: auto-covering the new enum must not mean ignoring it.
         registry = dict(csd.ENUM_SCHEMA)
-        registry["MarginMode"] = ("AccountState", "margin_mode")
+        registry["MarginDirection"] = ("MarginAdjustment", "direction")
         with _patched(csd, "ENUM_SCHEMA", registry):
-            errs = _quiet(csd.check_enums_vs_spec, enum_spec(MarginMode=["cross"]))
+            errs = _quiet(csd.check_enums_vs_spec, enum_spec(MarginDirection=["add"]))
         self.assertGreater(errs, 0)
 
     def test_an_override_for_an_unregistered_enum_is_rejected(self):
@@ -835,10 +847,10 @@ class TestInvariant1TargetedVsSpec(unittest.TestCase):
 
 
 class TestInvariant2SetEquality(unittest.TestCase):
-    """Invariant 2: implemented ops == endpoints.txt, modulo the allowlists.
+    """Invariant 2: implemented ops == endpoints.txt, modulo NON_REST_TARGETS.
 
     `implemented_ops` (the parser) was already covered; `check_code_vs_targets`
-    (the set comparison, and both allowlists' integrity checks) was not.
+    (the set comparison and the allowlist integrity checks) was not.
     """
 
     IMPL = {("GET", "/markets"), ("POST", "/orders")}
@@ -876,13 +888,74 @@ class TestInvariant2SetEquality(unittest.TestCase):
             )
         self.assertGreater(errs, 0)
 
-    def test_code_only_ops_suppresses_an_unlisted_op(self):
-        # The allowlisted op must be genuinely AHEAD of the spec — `/ahead` is
-        # absent from SPEC. (Using a spec-declared op here instead correctly
-        # trips the landed-entry check below, which is the point of that check.)
+    def test_any_code_only_ops_entry_fails(self):
+        # ENG-8617, revert-with-the-test-kept: CODE_ONLY_OPS is sealed empty, so
+        # ANY entry goes red. Before, an entry here was the supported way to
+        # implement an op and keep it out of endpoints.txt — which is how ten
+        # methods for routes no spec defines shipped under a green gate. This is
+        # the exact case that used to pass: the op IS implemented and IS absent
+        # from the spec, i.e. the most defensible "ahead of spec" claim there is.
         ahead = ("POST", "/ahead")
         with self._world(impl=self.IMPL | {ahead}, code_only={ahead}):
-            self.assertEqual(self._run([("GET", "/markets"), ("POST", "/orders")]), 0)
+            self.assertGreater(
+                self._run([("GET", "/markets"), ("POST", "/orders")]), 0
+            )
+
+    def test_a_code_only_entry_does_not_suppress_the_unlisted_op(self):
+        # Two distinct failures, deliberately: the sealed-list error AND the
+        # implemented-but-unlisted error. Were the entry still subtracted from
+        # (a), removing the seal later would silently restore the hole.
+        ahead = ("POST", "/ahead")
+        targeted = [("GET", "/markets"), ("POST", "/orders")]
+        with self._world(impl=self.IMPL | {ahead}, code_only={ahead}):
+            with_entry = self._run(targeted)
+        with self._world(impl=self.IMPL | {ahead}):
+            without_entry = self._run(targeted)
+        self.assertGreater(without_entry, 0)
+        self.assertGreater(with_entry, without_entry)
+
+    def test_a_code_only_entry_the_spec_defines_also_fails(self):
+        # The other direction: even when the pinned spec DOES define the op,
+        # parking it is not a fix — it belongs in endpoints.txt.
+        with self._world(code_only={("POST", "/orders")}):
+            self.assertGreater(self._run([("GET", "/markets")]), 0)
+
+    def test_a_code_only_entry_nothing_implements_also_fails(self):
+        # The seal does not depend on implementation status: an entry that names
+        # nothing at all is still an entry, so it is still red. (This replaces the
+        # old stale-entry check, which only fired in this one case.)
+        with self._world(code_only={("DELETE", "/vanished")}):
+            self.assertGreater(
+                self._run([("GET", "/markets"), ("POST", "/orders")]), 0
+            )
+
+    def test_the_shipped_allowlist_is_empty(self):
+        # Guards the real module constant, not a patched one: the suite above
+        # patches CODE_ONLY_OPS, so nothing else would notice a re-parked entry
+        # landing in check_spec_drift.py itself.
+        self.assertEqual(set(csd.CODE_ONLY_OPS), set())
+
+    def test_an_unlisted_op_the_spec_defines_is_reported_as_listable(self):
+        # The delete-or-list diagnostic: `available` decides which fix is named,
+        # so a genuinely contracted op must not be told to delete itself.
+        with self._world():
+            out = _capture(
+                csd.check_code_vs_targets,
+                [("GET", "/markets")],
+                csd.spec_ops(self.SPEC),
+            )
+        self.assertIn("DEFINES it", out)
+        self.assertNotIn("DELETE the client method", out)
+
+    def test_an_unlisted_op_the_spec_lacks_is_reported_as_deletable(self):
+        ghost = ("POST", "/ghost")
+        with self._world(impl=self.IMPL | {ghost}):
+            out = _capture(
+                csd.check_code_vs_targets,
+                [("GET", "/markets"), ("POST", "/orders")],
+                csd.spec_ops(self.SPEC),
+            )
+        self.assertIn("DELETE the client method", out)
 
     def test_non_rest_targets_suppresses_an_unimplemented_entry(self):
         with self._world(non_rest={("GET", "/ws")}):
@@ -890,20 +963,6 @@ class TestInvariant2SetEquality(unittest.TestCase):
                 [("GET", "/markets"), ("POST", "/orders"), ("GET", "/ws")]
             )
         self.assertEqual(errs, 0)
-
-    def test_stale_code_only_entry_fails(self):
-        # Allowlisted but no longer implemented anywhere.
-        with self._world(code_only={("DELETE", "/vanished")}):
-            self.assertGreater(
-                self._run([("GET", "/markets"), ("POST", "/orders")]), 0
-            )
-
-    def test_code_only_entry_the_spec_now_defines_fails(self):
-        # The damaging rot direction (ENG-7961): the op is deliberately kept OUT
-        # of endpoints.txt, so once the spec declares it, invariant 1 stops
-        # checking that its path exists and coverage silently understates.
-        with self._world(code_only={("POST", "/orders")}):
-            self.assertGreater(self._run([("GET", "/markets")]), 0)
 
     def test_stale_non_rest_entry_fails(self):
         # Allowlisted as "targeted without a REST helper" but not targeted at all.

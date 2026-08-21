@@ -1,8 +1,7 @@
 //! `GET /funding` — funding settlements for the authenticated account.
 //!
-//! Distinct from `GET /funding-payments` (`fetch_funding_payments`), which is a
-//! narrower row. Every test starts from a `Client` method against a mock server
-//! so it fails on unreachability, not only on a wrong type.
+//! Every test starts from a `Client` method against a mock server so it fails on
+//! unreachability, not only on a wrong type.
 
 use nexus_exchange::rest::MAX_ACCOUNT_FUNDING_LIMIT;
 use nexus_exchange::types::{Decimal, FundingDirection};

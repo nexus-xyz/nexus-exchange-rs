@@ -261,8 +261,8 @@ pub struct FundsEntry {
     ///
     /// | family | convention |
     /// | -- | -- |
-    /// | funds movement — this type, [`Withdrawal`], [`Transfer`] | positive magnitude, direction in a categorical field |
-    /// | funding settlement — [`FundingPayment`] | **signed**: negative paid, positive received |
+    /// | funds movement — this type, [`Withdrawal`] | positive magnitude, direction in a categorical field |
+    /// | funding settlement — [`AccountFunding`] | **signed**: negative paid, positive received |
     ///
     /// A caller who assumes the funding family's signed convention here would
     /// add a withdrawal where it should subtract one. The spec does not settle
@@ -419,10 +419,6 @@ pub enum FundingDirection {
 }
 
 /// One funding settlement for the authenticated account (`GET /funding`).
-///
-/// Distinct from [`FundingPayment`] (`GET /funding-payments`), which is a
-/// narrower row without `direction` or `position_size`. Two endpoints, two
-/// shapes — this is the richer one.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AccountFunding {
     /// Market the settlement relates to, e.g. `BTC-USDX-PERP`.
@@ -1409,10 +1405,7 @@ pub struct OrderRequest {
     /// flip one. Omitted from the wire payload when `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reduce_only: Option<bool>,
-    /// Caller-assigned client order id, echoed back on the resulting order and
-    /// usable to look it up or cancel it via
-    /// [`Client::fetch_order_by_client_id`](crate::Client::fetch_order_by_client_id)
-    /// / [`Client::cancel_order_by_client_id`](crate::Client::cancel_order_by_client_id).
+    /// Caller-assigned client order id, echoed back on the resulting order.
     /// Omitted from the wire payload when `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_order_id: Option<String>,
@@ -1888,39 +1881,6 @@ pub struct WsToken {
     pub token: String,
 }
 
-/// How a position is collateralized.
-///
-/// Serializes lowercase (`cross` / `isolated`), as the margin endpoints expect,
-/// and deserializes case-insensitively so a response in any casing decodes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum MarginMode {
-    /// Positions share the account's whole collateral pool.
-    #[serde(alias = "Cross", alias = "CROSS")]
-    Cross,
-    /// Each position is margined from its own isolated collateral.
-    #[serde(alias = "Isolated", alias = "ISOLATED")]
-    Isolated,
-}
-
-/// Result of setting a market's leverage (`POST /account/leverage`).
-#[derive(Debug, Clone, Deserialize)]
-pub struct LeverageUpdate {
-    /// Market the leverage applies to, e.g. `BTC-USDX-PERP`.
-    pub market_id: String,
-    /// Leverage now in effect for the market.
-    pub leverage: u32,
-}
-
-/// Result of setting a market's margin mode (`POST /account/margin-mode`).
-#[derive(Debug, Clone, Deserialize)]
-pub struct MarginModeUpdate {
-    /// Market the margin mode applies to, e.g. `BTC-USDX-PERP`.
-    pub market_id: String,
-    /// Margin mode now in effect for the market.
-    pub margin_mode: MarginMode,
-}
-
 /// Whether an isolated-margin adjustment adds collateral to a position or
 /// removes it (`POST /account/margin`).
 ///
@@ -2017,82 +1977,6 @@ impl AmendOrder {
             || self.time_in_force.is_some()
             || self.client_order_id.is_some()
     }
-}
-
-/// A funding payment booked against the account (`GET /funding-payments`).
-#[derive(Debug, Clone, Deserialize)]
-pub struct FundingPayment {
-    /// Market the payment relates to, e.g. `BTC-USDX-PERP`.
-    pub market_id: String,
-    /// Amount paid (negative) or received (positive), in the quote asset.
-    #[serde(with = "rust_decimal::serde::str")]
-    pub amount: Decimal,
-    /// Funding rate applied for this payment, when reported.
-    #[serde(default, with = "rust_decimal::serde::str_option")]
-    pub funding_rate: Option<Decimal>,
-    /// Unix timestamp (ms) the funding was applied.
-    pub timestamp: i64,
-}
-
-/// A request to move collateral between accounts (`POST /transfers`), e.g.
-/// to or from a sub-account. Construct with [`TransferRequest::new`].
-#[derive(Debug, Clone, Serialize)]
-pub struct TransferRequest {
-    /// Account id to debit (the source).
-    pub from_account: String,
-    /// Account id to credit (the destination).
-    pub to_account: String,
-    /// Amount of collateral to move; must be positive.
-    #[serde(with = "rust_decimal::serde::str")]
-    pub amount: Decimal,
-}
-
-impl TransferRequest {
-    /// A transfer of `amount` from `from_account` to `to_account`.
-    pub fn new(
-        from_account: impl Into<String>,
-        to_account: impl Into<String>,
-        amount: Decimal,
-    ) -> Self {
-        Self {
-            from_account: from_account.into(),
-            to_account: to_account.into(),
-            amount,
-        }
-    }
-}
-
-/// A collateral transfer record (`GET /transfers`, `POST /transfers`).
-#[derive(Debug, Clone, Deserialize)]
-pub struct Transfer {
-    /// Exchange-assigned transfer identifier.
-    pub id: String,
-    /// Account that was debited.
-    pub from_account: String,
-    /// Account that was credited.
-    pub to_account: String,
-    /// Amount moved, in the quote asset.
-    #[serde(with = "rust_decimal::serde::str")]
-    pub amount: Decimal,
-    /// Unix timestamp (ms) of the transfer.
-    pub timestamp: i64,
-    /// Transfer status, e.g. `pending`, `completed`.
-    #[serde(default)]
-    pub status: String,
-}
-
-/// A sub-account belonging to the authenticated master account
-/// (`GET`/`POST /sub-accounts`).
-#[derive(Debug, Clone, Deserialize)]
-pub struct SubAccount {
-    /// Exchange-assigned sub-account identifier.
-    pub account_id: String,
-    /// Human-readable label, if one was set.
-    #[serde(default)]
-    pub label: String,
-    /// Sub-account equity, when reported.
-    #[serde(default, with = "rust_decimal::serde::str_option")]
-    pub equity: Option<Decimal>,
 }
 
 /// One counterparty's forced closure within an ADL settlement. All numeric

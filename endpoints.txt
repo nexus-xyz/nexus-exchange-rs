@@ -3,12 +3,15 @@
 # targets; the check validates it BOTH ways:
 #   * every line must exist in the pinned spec (no removed/renamed/typo'd op);
 #   * the set must equal the REST operations implemented in src/rest.rs, modulo
-#     the two documented allowlists in check_spec_drift.py:
-#       - CODE_ONLY_OPS    — implemented but ahead of the pinned spec, so kept
-#         OUT of this file (adding them here would fail the spec check); e.g.
-#         /account/leverage, /orders/by-client-id/*, /transfers, /sub-accounts.
+#     the one documented allowlist in check_spec_drift.py:
 #       - NON_REST_TARGETS — targeted but reached without a REST helper call;
 #         e.g. GET /ws (the WebSocket upgrade, opened by the ws client).
+#
+# There is no ahead-of-spec parking (ENG-8617). Every REST wrapper in src/rest.rs
+# is listed here, and every line here exists in the pinned spec — so an operation
+# the pinned spec does not define must not be wrapped at all. Wrap it once the
+# spec version defining it is PUBLISHED and pinned, not before.
+#
 # So: add a line here whenever you add a REST wrapper for a spec operation, or
 # the drift check fails. Format:
 #   METHOD /path   (path placeholders match the spec, e.g. {market_id})

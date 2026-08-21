@@ -17,30 +17,38 @@ Five independent invariants are enforced:
    actually implements from src/rest.rs (the path-literal arguments to the
    get/signed_get/signed_post/get_page/... helper calls, on either a `self` or a
    `client` receiver — see _RECEIVER_ALT) and assert it equals the endpoints.txt
-   set, modulo two explicit, documented allowlists:
+   set, modulo one explicit, documented allowlist:
 
-     * CODE_ONLY_OPS    — implemented in the client but intentionally NOT in
-                          endpoints.txt (ahead-of-spec; they would break the
-                          endpoints.txt<->spec check above until the spec ships).
      * NON_REST_TARGETS — listed in endpoints.txt but reached without a REST
                           helper call (e.g. the WebSocket upgrade).
 
-   The check fails if (a) the code implements an op that is neither in
-   endpoints.txt nor in CODE_ONLY_OPS, or (b) endpoints.txt lists an op that has
-   no implementing method and is not in NON_REST_TARGETS.
+   The check fails if (a) the code implements an op that is not in endpoints.txt,
+   or (b) endpoints.txt lists an op that has no implementing method and is not in
+   NON_REST_TARGETS. For (a) the diagnostic reads the pinned spec to say which
+   fix applies: the spec defines the op, so list it — or it does not, so delete
+   the method.
 
-   Both allowlists also carry the stale-entry checks the model/enum allowlists
-   have, so an exemption cannot quietly outlive its reason (ENG-7961):
+   There is deliberately NO ahead-of-spec escape hatch for operations (ENG-8617).
+   CODE_ONLY_OPS was one: an op could be implemented and kept out of
+   endpoints.txt on the claim that the pinned spec would catch up. The claim was
+   never verified and did not hold — re-checked against the pinned spec (v0.8.1,
+   also the latest release), not one of the ten parked entries was defined
+   (leverage / margin-mode setters, batch cancel, client-order-id lookup and
+   cancel, funding payments, transfers, sub-accounts), and several route nowhere
+   on the venue either (ENG-7319, ENG-7800). The SDK shipped ten methods no
+   caller could use, and the allowlist is precisely what kept this gate green
+   over them.
 
-     * a CODE_ONLY_OPS entry no longer implemented in the client;
-     * a CODE_ONLY_OPS entry the pinned spec now DEFINES — the allowlist means
-       "implemented but ahead of the pinned spec", so once the spec catches up
-       the op belongs in endpoints.txt. Leaving it parked is the damaging case:
-       the op is deliberately kept OUT of endpoints.txt, so invariant 1 stops
-       checking that its path still exists, and the SDK's coverage number
-       understates reality;
-     * a NON_REST_TARGETS entry that is not in endpoints.txt, which therefore
-       suppresses nothing and is a stale exemption waiting to hide a regression.
+   The policy is now: an operation absent from the pinned spec must not be
+   implemented. CODE_ONLY_OPS survives only as an EMPTY, SEALED set whose
+   invariant is its own emptiness — ANY entry fails the check — so re-opening the
+   hatch has to be a deliberate, reviewed change to the check itself rather than
+   a one-line addition to a list.
+
+   NON_REST_TARGETS keeps the stale-entry check the model/enum allowlists have,
+   so an exemption cannot quietly outlive its reason (ENG-7961): an entry that is
+   not in endpoints.txt suppresses nothing and is a stale exemption waiting to
+   hide a regression.
 
    The code parser reads the path *literal* passed inline to each helper call, so
    it relies on an inline-literal convention (every helper call passes its path
@@ -70,10 +78,17 @@ Five independent invariants are enforced:
    struct's serde renames (`rename_all` + per-field `rename`), so the comparison
    is against the actual wire names, not the Rust identifiers.
 
-   Modulo one documented allowlist, mirroring CODE_ONLY_OPS:
+   Modulo one documented allowlist:
 
      * MODEL_FIELDS_AHEAD_OF_SPEC — (struct, wire_field) pairs the SDK
                           intentionally carries ahead of the pinned spec.
+
+   Note the asymmetry with invariant 2, which has no such hatch (see
+   CODE_ONLY_OPS): an extra FIELD on a contracted operation degrades gracefully —
+   the server ignores what it does not know, and the op itself still works — so
+   carrying one ahead of the spec is a bet on a shape, not on a route. An
+   operation the contract does not define has no such fallback: every call to it
+   fails, for every caller. Fields get an allowlist; operations do not.
 
    Spec fields a model does not surface are reported as an informational gap,
    not a failure: serde ignores unknown fields, so omitting one is
@@ -169,23 +184,28 @@ HELPER_METHOD = {
     "signed_patch_with_query": "PATCH",
 }
 
-# Implemented in src/rest.rs but intentionally absent from endpoints.txt: these
-# Tier 3 operations are AHEAD OF the pinned spec, so adding them to endpoints.txt
-# would (correctly) fail the endpoints.txt<->spec invariant above until the spec
-# ships them. Move a line out of here and into endpoints.txt once the pinned
-# spec gains the operation. Paths use the normalized `{}` placeholder form.
-CODE_ONLY_OPS = {
-    ("POST", "/account/leverage"),       # set_leverage
-    ("POST", "/account/margin-mode"),    # set_margin_mode
-    ("POST", "/orders/batch-cancel"),    # cancel_orders
-    ("GET", "/orders/by-client-id/{}"),  # fetch_order_by_client_id
-    ("DELETE", "/orders/by-client-id/{}"),  # cancel_order_by_client_id
-    ("GET", "/funding-payments"),        # fetch_funding_payments
-    ("POST", "/transfers"),              # create_transfer
-    ("GET", "/transfers"),               # fetch_transfers
-    ("GET", "/sub-accounts"),            # fetch_sub_accounts
-    ("POST", "/sub-accounts"),           # create_sub_account
-}
+# SEALED, AND ITS INVARIANT IS THAT IT STAYS EMPTY (ENG-8617).
+#
+# This was the "ahead of the pinned spec" hatch: an op implemented in src/rest.rs
+# could be parked here instead of in endpoints.txt, on the claim that the spec
+# would ship it shortly. Nothing checked that claim, and it did not hold: of the
+# ten entries it accumulated (the leverage and margin-mode setters, batch cancel,
+# client-order-id lookup and cancel, funding payments, transfers, sub-accounts),
+# the pinned spec — v0.8.1, also the latest release — defines exactly none, and
+# several route nowhere on the venue either (ENG-7319, ENG-7800). The SDK shipped
+# ten methods that could not work for anyone, and this list is what kept the gate
+# green over them.
+#
+# The policy: an operation absent from the pinned spec must not be implemented.
+# So there is no parking. Wrap the op when the spec version defining it is
+# PUBLISHED and pinned — not before — and list it in endpoints.txt like every
+# other op.
+#
+# Kept as a named empty set, rather than deleted outright, so the prohibition is
+# enforced rather than merely documented: `check_code_vs_targets` fails on ANY
+# entry (see `parked` below). Re-opening the hatch therefore means changing that
+# check under review, not appending a line here. Do not add entries.
+CODE_ONLY_OPS = frozenset()
 
 # Listed in endpoints.txt but reached WITHOUT a REST helper call, so the code
 # parser cannot (and should not) see it. The WebSocket upgrade is opened by the
@@ -299,13 +319,21 @@ MODEL_SCHEMA = {
 }
 
 # (Rust struct, wire field) pairs the SDK reads/writes that are intentionally
-# AHEAD OF the pinned spec — the model-level analogue of CODE_ONLY_OPS. Without
-# this allowlist the field would (correctly) trip the models<->spec invariant
-# until the spec ships it. Move an entry out once the pinned spec defines the
-# field; a stale entry (field now in the spec) is flagged so the list can't rot.
-#   client_order_id — the SDK supports client-assigned order ids (place / look
-#     up / cancel by client id) ahead of the pinned spec pinning the field on
-#     the Order/OrderRequest schemas.
+# AHEAD OF the pinned spec. Without this allowlist the field would (correctly)
+# trip the models<->spec invariant until the spec ships it. Move an entry out once
+# the pinned spec defines the field; a stale entry (field now in the spec) is
+# flagged so the list can't rot.
+#
+# Unlike the operation-level CODE_ONLY_OPS (sealed empty — ENG-8617), this hatch
+# stays open, and the difference is the blast radius: an unknown field on an
+# operation the contract DOES define is ignored by the server, so the call still
+# works; an operation the contract does not define fails every time it is called.
+#
+#   client_order_id — the SDK lets a caller assign an order id on `POST /orders`
+#     (and on an amend) and echoes it back, ahead of the pinned spec pinning the
+#     field on the Order/OrderRequest schemas. The by-client-id LOOKUP and CANCEL
+#     routes were phantom ops and are gone (ENG-8617); the field rides on
+#     contracted operations, which is why it keeps its exemption.
 MODEL_FIELDS_AHEAD_OF_SPEC = {
     ("Order", "client_order_id"),
     ("OrderRequest", "client_order_id"),
@@ -320,8 +348,7 @@ MODEL_FIELDS_AHEAD_OF_SPEC = {
 # form — e.g. `Side` is mapped to OrderRequest.side (`Buy`/`Sell`), the form it
 # serializes, not Trade.side (`buy`/`sell`), which it only accepts via `alias` on
 # deserialize. Like MODEL_SCHEMA this is a curated sample, not every enum: enums
-# with no spec counterpart (e.g. `MarginMode`, whose margin-mode endpoint is
-# still a CODE_ONLY_OP ahead of spec) are intentionally omitted.
+# with no spec counterpart are intentionally omitted.
 # The property may carry its `enum` inline OR reach it through a `$ref` / a
 # single-branch `allOf` wrapper (see resolve_enum below) — the spec uses the
 # latter for `PortfolioHistory.window`, so a `default` can sit alongside the ref.
@@ -558,35 +585,32 @@ def implemented_ops(path=REST_RS):
 
 
 def check_code_vs_targets(targeted, available):
-    """Invariant 2: implemented REST ops == endpoints.txt, modulo the two
-    documented allowlists. Returns the number of errors printed.
+    """Invariant 2: implemented REST ops == endpoints.txt, modulo NON_REST_TARGETS.
+    Returns the number of errors printed.
 
-    `available` is the pinned spec's operation set (spec_ops), needed only for
-    the CODE_ONLY_OPS staleness check below — an allowlist that means "ahead of
-    the pinned spec" cannot be validated without knowing what the spec has."""
+    `available` is the pinned spec's operation set (spec_ops). It decides which
+    fix an unlisted implemented op needs — list it (the spec defines it) or delete
+    it (the spec does not) — which is the whole distinction ENG-8617 turns on, so
+    the diagnostic names it instead of leaving the reader to guess."""
     impl = implemented_ops()
     targeted_norm = {(m, normalize_path(p)) for m, p in targeted}
-    # spec_ops keeps the spec's own placeholder names; the allowlists are written
-    # in normalized `{}` form, so normalize this side before comparing.
+    # spec_ops keeps the spec's own placeholder names; the allowlist and the
+    # parser both work in normalized `{}` form, so normalize this side too.
     available_norm = {(m, normalize_path(p)) for m, p in available}
 
-    # (a) implemented but not listed (and not an intentional code-only op).
-    impl_missing_from_targets = sorted(impl - targeted_norm - CODE_ONLY_OPS)
+    # (a) implemented but not listed. There is no ahead-of-spec exemption: an op
+    # the pinned spec does not define must not be implemented at all (ENG-8617).
+    impl_missing_from_targets = sorted(impl - targeted_norm)
     # (b) listed but not implemented (and not an intentional non-REST target).
     targets_without_impl = sorted(targeted_norm - impl - NON_REST_TARGETS)
-    # Bonus integrity check: a CODE_ONLY_OPS entry that is no longer implemented
-    # is stale and should be removed — catch it so the allowlist can't rot.
-    stale_code_only = sorted(CODE_ONLY_OPS - impl)
-    # The other way CODE_ONLY_OPS rots, and the dangerous one: the pinned spec
-    # has CAUGHT UP with an op parked here. The allowlist's whole meaning is
-    # "implemented but ahead of the pinned spec"; once the spec declares the op,
-    # leaving it parked exempts a real operation from invariant 1 (nothing then
-    # checks that its path still exists) and understates the SDK's coverage
-    # number, because it is deliberately kept OUT of endpoints.txt.
-    landed_code_only = sorted(CODE_ONLY_OPS & available_norm)
-    # NON_REST_TARGETS mirrors the same rot risk from the other direction: an
-    # entry that is no longer listed in endpoints.txt suppresses nothing and is
-    # just a stale exemption waiting to hide a future regression.
+    # CODE_ONLY_OPS is sealed empty; its invariant IS its emptiness. Any entry is
+    # an op deliberately hidden from invariant 1 — exactly the ten phantom
+    # methods ENG-8617 deleted — so it fails outright, and it does NOT suppress
+    # (a) either: the op still shows up there with the delete-or-list diagnostic.
+    parked = sorted(CODE_ONLY_OPS)
+    # NON_REST_TARGETS carries the rot check from the other direction: an entry
+    # that is no longer listed in endpoints.txt suppresses nothing and is just a
+    # stale exemption waiting to hide a future regression.
     stale_non_rest = sorted(NON_REST_TARGETS - targeted_norm)
 
     errors = 0
@@ -594,11 +618,19 @@ def check_code_vs_targets(targeted, available):
         errors += len(impl_missing_from_targets)
         print(
             f"\nERROR: {len(impl_missing_from_targets)} operation(s) implemented "
-            f"in src/rest.rs are NOT in endpoints.txt (add them, or add to "
-            f"CODE_ONLY_OPS if intentionally ahead of spec):"
+            f"in src/rest.rs are NOT in endpoints.txt:"
         )
         for m, p in impl_missing_from_targets:
-            print(f"  - {m} {p}")
+            if (m, p) in available_norm:
+                fix = "the pinned spec DEFINES it — add it to endpoints.txt"
+            else:
+                fix = (
+                    "the pinned spec does NOT define it — DELETE the client "
+                    "method; an operation absent from the contract must not be "
+                    "implemented, and there is no ahead-of-spec parking "
+                    "(ENG-8617)"
+                )
+            print(f"  - {m} {p} — {fix}")
 
     if targets_without_impl:
         errors += len(targets_without_impl)
@@ -610,24 +642,16 @@ def check_code_vs_targets(targeted, available):
         for m, p in targets_without_impl:
             print(f"  - {m} {p}")
 
-    if stale_code_only:
-        errors += len(stale_code_only)
+    if parked:
+        errors += len(parked)
         print(
-            f"\nERROR: {len(stale_code_only)} CODE_ONLY_OPS entr(ies) are no "
-            f"longer implemented in src/rest.rs (remove them from the allowlist):"
+            f"\nERROR: CODE_ONLY_OPS must stay EMPTY, and has {len(parked)} "
+            f"entr(ies). It is a sealed allowlist: an operation absent from the "
+            f"pinned spec must not be implemented, so there is nothing to park "
+            f"(ENG-8617). Delete the client method, or — if the pinned spec now "
+            f"defines the operation — list it in endpoints.txt:"
         )
-        for m, p in stale_code_only:
-            print(f"  - {m} {p}")
-
-    if landed_code_only:
-        errors += len(landed_code_only)
-        print(
-            f"\nERROR: {len(landed_code_only)} CODE_ONLY_OPS entr(ies) are now "
-            f"defined by the pinned spec, so they are no longer 'ahead of spec' "
-            f"(move each into endpoints.txt and drop it from the allowlist — "
-            f"leaving it parked exempts a real operation and understates coverage):"
-        )
-        for m, p in landed_code_only:
+        for m, p in parked:
             print(f"  - {m} {p}")
 
     if stale_non_rest:
@@ -643,8 +667,8 @@ def check_code_vs_targets(targeted, available):
     if not errors:
         print(
             f"\nOK: src/rest.rs implements {len(impl)} REST op(s); all are in "
-            f"endpoints.txt or CODE_ONLY_OPS, and every endpoints.txt entry has "
-            f"an implementing method or is in NON_REST_TARGETS."
+            f"endpoints.txt, every endpoints.txt entry has an implementing method "
+            f"or is in NON_REST_TARGETS, and CODE_ONLY_OPS is empty."
         )
     return errors
 

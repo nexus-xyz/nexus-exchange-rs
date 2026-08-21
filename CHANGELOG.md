@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.9.1...v0.9.2) - 2026-08-21
+
+### Added
+
+- *(rest)* wrap GET /markets/{market_id}/funding-samples (ENG-4159) ([#139](https://github.com/nexus-xyz/nexus-exchange-rs/pull/139))
+
+### Fixed
+
+- *(ci)* count spec coverage by operation, not by path spelling (ENG-11842) ([#140](https://github.com/nexus-xyz/nexus-exchange-rs/pull/140))
+
+### Other
+
+- bump cargo-semver-checks to 0.50.0 for rustdoc format v60 (ENG-11844) ([#141](https://github.com/nexus-xyz/nexus-exchange-rs/pull/141))
+
 ## [0.9.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.9.0...v0.9.1) - 2026-08-14
 
 ### Deprecated

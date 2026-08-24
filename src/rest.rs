@@ -31,13 +31,12 @@ use crate::types::{
     AccountFees, AccountFunding, AccountPortfolioSummary, AccountState, AccountSummary, AdlEvent,
     AgentInfo, AgentRegistered, AmendOrder, ApiKeyInfo, BridgeAssetsResponse, BridgeDeposit,
     BridgeDepositAddress, CancelOnDisconnectStatus, ClosedPosition, CreatedApiKey, CreditResult,
-    Decimal, DepositResponse, DepositResult, EquityPoint, FaucetResponse, Fill, FundingPayment,
-    FundingPremiumSample, FundingSample, FundsEntry, HealthStatus, LeverageUpdate, LoginResponse,
-    MarginAdjustment, MarginDirection, MarginMode, MarginModeUpdate, MarkPrice, Market,
-    MarketRiskParams, MarketStatus, MarketSummary, Ohlcv, Order, OrderBook, OrderHistoryEntry,
-    OrderPreview, OrderRequest, OrderResponse, OrderResult, PortfolioHistory, PortfolioWindow,
-    Position, RateLimitStatus, StatsSnapshot, SubAccount, ThroughputSample, Ticker, TierOverride,
-    Trade, Transfer, TransferRequest, Withdrawal, WsToken,
+    Decimal, DepositResponse, DepositResult, EquityPoint, FaucetResponse, Fill,
+    FundingPremiumSample, FundingSample, FundsEntry, HealthStatus, LoginResponse, MarginAdjustment,
+    MarginDirection, MarkPrice, Market, MarketRiskParams, MarketStatus, MarketSummary, Ohlcv,
+    Order, OrderBook, OrderHistoryEntry, OrderPreview, OrderRequest, OrderResponse, OrderResult,
+    PortfolioHistory, PortfolioWindow, Position, RateLimitStatus, StatsSnapshot, ThroughputSample,
+    Ticker, TierOverride, Trade, Withdrawal, WsToken,
 };
 use crate::{Client, Error, Result};
 
@@ -180,8 +179,8 @@ fn encode_path_segment(value: &str) -> String {
 }
 
 /// Reject an empty identifier and percent-encode the rest for safe use as a
-/// path segment. Keeps a blank id from collapsing `/orders/by-client-id/{id}`
-/// into the parent collection route.
+/// path segment. Keeps a blank id from collapsing `/collection/{id}` into the
+/// parent collection route (e.g. `/keys/{key_id}` into `/keys`).
 fn encoded_segment(value: &str, name: &str) -> Result<String> {
     if value.is_empty() {
         return Err(Error::invalid_request(format!("{name} must not be empty")));
@@ -254,10 +253,6 @@ impl Client {
     /// `limit` must be in `1..=`[`MAX_ACCOUNT_FUNDING_LIMIT`]. Unlike the
     /// paginated readers, omitting it asks for the server default of **100**,
     /// not the maximum — pass it explicitly if you want more.
-    ///
-    /// Richer than [`fetch_funding_payments`](Self::fetch_funding_payments)
-    /// (`GET /funding-payments`): these rows carry `direction` and
-    /// `position_size` as well.
     pub async fn fetch_account_funding(&self, limit: Option<u32>) -> Result<Vec<AccountFunding>> {
         check_page_size(limit, MAX_ACCOUNT_FUNDING_LIMIT, "funding")?;
         self.signed_get("/funding", &limit_query(limit)).await
@@ -1042,8 +1037,8 @@ impl Client {
     ///
     /// To flatten a single market instead, use
     /// [`cancel_orders_for_market`](Self::cancel_orders_for_market) — it saves
-    /// the `fetch_open_orders` → filter → `cancel_orders` round-trip on the
-    /// hot reprice path.
+    /// the [`fetch_open_orders`](Self::fetch_open_orders) → filter →
+    /// [`cancel_order`](Self::cancel_order) round-trip on the hot reprice path.
     pub async fn cancel_all_orders(&self) -> Result<serde_json::Value> {
         self.signed_delete("/api/v1/orders").await
     }
@@ -1276,49 +1271,14 @@ impl Client {
         self.signed_post_empty("/ws/token").await
     }
 
-    // --- Tier 3: leverage / margin, order amend, batch, client order ids,
-    // funding & transfer history, sub-accounts. ---
-
-    /// Set the leverage used for a market (`POST /account/leverage`). Requires
-    /// credentials.
-    ///
-    /// `leverage` is the integer multiplier (e.g. `10` for 10×). Must be at
-    /// least 1 — that's checked locally before sending; the market's actual
-    /// ceiling ([`Market::max_leverage`](crate::types::Market::max_leverage)) is
-    /// enforced server-side.
-    pub async fn set_leverage(&self, market_id: &str, leverage: u32) -> Result<LeverageUpdate> {
-        require_non_empty(market_id, "market_id")?;
-        if leverage == 0 {
-            return Err(Error::invalid_request("leverage must be at least 1"));
-        }
-        self.signed_post(
-            "/account/leverage",
-            &serde_json::json!({ "market_id": market_id, "leverage": leverage }),
-        )
-        .await
-    }
-
-    /// Set the margin mode (cross or isolated) for a market
-    /// (`POST /account/margin-mode`). Requires credentials.
-    pub async fn set_margin_mode(
-        &self,
-        market_id: &str,
-        margin_mode: MarginMode,
-    ) -> Result<MarginModeUpdate> {
-        require_non_empty(market_id, "market_id")?;
-        self.signed_post(
-            "/account/margin-mode",
-            &serde_json::json!({ "market_id": market_id, "margin_mode": margin_mode }),
-        )
-        .await
-    }
+    // --- Isolated-margin adjustment and order amend (cancel-replace) ---
 
     /// Add or remove isolated margin on an open position (`POST /account/margin`).
     /// Requires credentials.
     ///
-    /// Only applies to a position in [`MarginMode::Isolated`] mode — the server
-    /// rejects a cross-margined position with `MarginModeNotIsolated`. `amount`
-    /// is the collateral to move, sent as a decimal string; it must be positive
+    /// Only applies to a position in isolated-margin mode — the server rejects a
+    /// cross-margined position with `MarginModeNotIsolated`. `amount` is the
+    /// collateral to move, sent as a decimal string; it must be positive
     /// (checked locally before sending). Removing more than the position's free
     /// isolated margin, or below the withdrawal floor, is rejected server-side
     /// (`InsufficientMargin` / `InsufficientBalance`); a market with no open
@@ -1400,88 +1360,6 @@ impl Client {
             amend,
         )
         .await
-    }
-
-    /// Cancel a batch of orders by id (`POST /orders/batch-cancel`). Requires
-    /// credentials. Sequential and non-atomic, like
-    /// [`create_orders`](Self::create_orders). The response is left untyped: this
-    /// endpoint is ahead of the pinned spec and returns a different shape from
-    /// the create batch (a cancellation summary, not a per-order result array),
-    /// so it is not modeled by [`OrderResult`]. An empty batch is rejected
-    /// locally.
-    pub async fn cancel_orders(&self, order_ids: &[&str]) -> Result<serde_json::Value> {
-        if order_ids.is_empty() {
-            return Err(Error::invalid_request(
-                "cancel_orders requires at least one order id",
-            ));
-        }
-        self.signed_post(
-            "/orders/batch-cancel",
-            &serde_json::json!({ "order_ids": order_ids }),
-        )
-        .await
-    }
-
-    /// Fetch a single order by its caller-assigned client order id
-    /// (`GET /orders/by-client-id/{client_order_id}`). Requires credentials.
-    pub async fn fetch_order_by_client_id(&self, client_order_id: &str) -> Result<Order> {
-        let id = encoded_segment(client_order_id, "client_order_id")?;
-        self.signed_get(&format!("/orders/by-client-id/{id}"), &[])
-            .await
-    }
-
-    /// Cancel a single order by its caller-assigned client order id
-    /// (`DELETE /orders/by-client-id/{client_order_id}`). Requires credentials.
-    pub async fn cancel_order_by_client_id(
-        &self,
-        client_order_id: &str,
-    ) -> Result<serde_json::Value> {
-        let id = encoded_segment(client_order_id, "client_order_id")?;
-        self.signed_delete(&format!("/orders/by-client-id/{id}"))
-            .await
-    }
-
-    /// Funding-payment history for the authenticated account
-    /// (`GET /funding-payments`), optionally filtered to a single market.
-    /// Requires credentials.
-    pub async fn fetch_funding_payments(
-        &self,
-        market_id: Option<&str>,
-    ) -> Result<Vec<FundingPayment>> {
-        let mut query = Vec::new();
-        if let Some(market_id) = market_id {
-            query.push(("market_id", market_id.to_string()));
-        }
-        self.signed_get("/funding-payments", &query).await
-    }
-
-    /// Move collateral between accounts (`POST /transfers`), e.g. to or from a
-    /// sub-account. Requires credentials. A non-positive amount is rejected
-    /// locally before sending.
-    pub async fn create_transfer(&self, transfer: &TransferRequest) -> Result<Transfer> {
-        if transfer.amount <= Decimal::ZERO {
-            return Err(Error::invalid_request("transfer amount must be positive"));
-        }
-        self.signed_post("/transfers", transfer).await
-    }
-
-    /// Collateral-transfer history for the authenticated account
-    /// (`GET /transfers`). Requires credentials.
-    pub async fn fetch_transfers(&self) -> Result<Vec<Transfer>> {
-        self.signed_get("/transfers", &[]).await
-    }
-
-    /// List the sub-accounts of the authenticated master account
-    /// (`GET /sub-accounts`). Requires credentials.
-    pub async fn fetch_sub_accounts(&self) -> Result<Vec<SubAccount>> {
-        self.signed_get("/sub-accounts", &[]).await
-    }
-
-    /// Create a new sub-account with the given label (`POST /sub-accounts`).
-    /// Requires credentials.
-    pub async fn create_sub_account(&self, label: &str) -> Result<SubAccount> {
-        self.signed_post("/sub-accounts", &serde_json::json!({ "label": label }))
-            .await
     }
 
     // --- Wallet-signed auth flows (EIP-191 / EIP-712) ---

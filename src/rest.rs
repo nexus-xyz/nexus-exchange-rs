@@ -1037,8 +1037,8 @@ impl Client {
     ///
     /// To flatten a single market instead, use
     /// [`cancel_orders_for_market`](Self::cancel_orders_for_market) — it saves
-    /// the `fetch_open_orders` → filter → `cancel_orders` round-trip on the
-    /// hot reprice path.
+    /// the [`fetch_open_orders`](Self::fetch_open_orders) → filter →
+    /// [`cancel_order`](Self::cancel_order) round-trip on the hot reprice path.
     pub async fn cancel_all_orders(&self) -> Result<serde_json::Value> {
         self.signed_delete("/api/v1/orders").await
     }

@@ -385,7 +385,10 @@ impl Network {
     pub fn base_url(&self) -> &str {
         // Named cases, never interpolated — see the type-level note.
         match self {
-            Network::Mainnet => "https://api.nexus.xyz/v1",
+            // Host root, not `/v1` (ENG-9963). ENG-9134 settled the layout as
+            // path-versioned `/api/v1`, which is what this SDK builds and signs, so a
+            // base carrying `/v1` would compose `/v1/api/v1/orders`.
+            Network::Mainnet => "https://api.nexus.xyz",
             Network::Testnet => "https://exchange.nexus.xyz/api/exchange",
             Network::Local => "http://localhost:9090",
             // Verbatim from the caller. Nothing is appended, rewritten or
@@ -450,10 +453,11 @@ impl Network {
     pub fn direct_base_url(&self) -> &str {
         // Named cases, never interpolated — see the type-level note.
         match self {
-            // Mainnet's durable base already carries `/v1`; there is no separate
-            // direct surface. Reported for completeness only — requests to this
-            // network are refused. See the `Mainnet` variant docs.
-            Network::Mainnet => "https://api.nexus.xyz/v1",
+            // Host root, same as `base_url` (ENG-9963): mainnet is path-versioned
+            // per ENG-9134, so there is no separate direct surface to point at and
+            // nothing for this to differ on. Reported for completeness only —
+            // requests to this network are refused. See the `Mainnet` variant docs.
+            Network::Mainnet => "https://api.nexus.xyz",
             // The gateway base, NOT the host root: `/api/v1` is mounted under
             // `/api/exchange` on this deployment. See the method docs.
             Network::Testnet => "https://exchange.nexus.xyz/api/exchange",
@@ -1372,6 +1376,20 @@ mod tests {
                 "mainnet host must not be derived by interpolation, got {url}"
             );
         }
+        // The layout ENG-9134 settled, pinned (ENG-9963): the version lives in the
+        // PATH, so the base must be the host root. A `/v1` base would send
+        // `/v1/api/v1/orders` while signing `/api/v1/orders` — a wrong URL, not a
+        // wrong signature, because `base_for()` and `SigningContext` are independent.
+        for url in [
+            Network::Mainnet.base_url(),
+            Network::Mainnet.direct_base_url(),
+        ] {
+            assert_eq!(
+                url, "https://api.nexus.xyz",
+                "mainnet base must be the host root, with no version segment, got {url}"
+            );
+        }
+
         // ...and testnet must never collapse onto the real-funds host.
         for url in [
             Network::Testnet.base_url(),

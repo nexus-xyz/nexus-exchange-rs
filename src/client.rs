@@ -49,10 +49,8 @@ const API_V1_PREFIX: &str = "/api/v1/";
 /// Why a [`Network::Mainnet`] client refuses every request. Kept as one
 /// constant so the REST path and any future caller give the identical reason.
 const MAINNET_NOT_TARGETABLE: &str = "Network::Mainnet is not targetable by this release: \
-     api.nexus.xyz does not resolve yet (ENG-8155), and its durable base carries the version in \
-     the base (`/v1`) rather than in the path, which is not the layout this SDK builds and signs. \
-     Requests are refused locally rather than sent to a real-funds host on a guessed URL or a \
-     signature over a path the server never sees. Use Network::Testnet, or Network::Custom to \
+     api.nexus.xyz does not resolve yet (ENG-8155). Requests are refused locally rather than \
+     sent to a real-funds host on a guessed URL. Use Network::Testnet, or Network::Custom to \
      target a host you control — including a real-funds one, where you supply the URL and so own \
      its path layout.";
 

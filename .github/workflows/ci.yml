@@ -230,7 +230,7 @@ jobs:
       # the action — owns interpreting the result. The wrapper exposes no output
       # that separates "ran and found a break" from "the tool itself errored",
       # and its step `outcome` is `failure` in BOTH cases. cargo-semver-checks
-      # also exits 1 for both, so the exit code alone can't tell them apart
+      # exits nonzero for both, so the exit code alone can't tell them apart
       # either — we disambiguate on the tool's own structured report below.
       #
       # PIN THE VERSION (ENG-4136). The classify step below distinguishes a real
@@ -253,6 +253,15 @@ jobs:
       # maintenance, not set-and-forget. Verified when bumping to 0.50.0: the
       # summary string in the tool's src/check_release.rs is byte-identical to
       # 0.48.0's, so the classifier below is unaffected.
+      #
+      # WHEN BUMPING, RE-VERIFY THE SUMMARY STRING — and nothing else about the
+      # classifier should need re-verifying, which is the point. The 0.50.0 bump
+      # checked exactly that and was still incomplete, because the classify step
+      # ALSO keyed on the exit code, and 0.50.0 moved a detected break from exit 1
+      # to exit 100 (`LINT_FAILURE_EXIT_CODE`). Every breaking-change PR failed as
+      # a phantom infra error until that was found. The classifier no longer looks
+      # at the exit code at all — see the long note in the classify step — so the
+      # summary string is now the whole contract with this tool. Keep it that way.
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-semver-checks@0.50.0
@@ -283,18 +292,35 @@ jobs:
             exit 0
           fi
 
-          # cargo-semver-checks exits 1 for BOTH a detected break AND its own
-          # internal errors (bad baseline rev, build failure, panic, network).
-          # Distinguish them on the tool's structured report: a genuine break
-          # prints the summary
+          # A nonzero exit means BOTH a detected break AND the tool's own internal
+          # errors (bad baseline rev, build failure, panic, network). Distinguish
+          # them on the tool's structured report, NOT on the exit code: a genuine
+          # break prints the summary
           #   "semver requires new {major|minor} version: N major and M minor checks failed"
           # (stable for the version pinned in the install step above — ENG-4136)
           # whereas an infra/tool error aborts with an `error: …` line and never
-          # emits that summary. Anything other than exit 0/1, or exit 1 without
-          # the summary, is a tool/infra failure — fail loudly and distinctly so
-          # it is NOT misread as an undeclared break (and vice versa).
-          if [ "$EXIT_CODE" != "1" ] \
-            || ! grep -Eq 'semver requires new (major|minor) version' semver-output.txt; then
+          # emits that summary. No summary => tool/infra failure — fail loudly and
+          # distinctly so it is NOT misread as an undeclared break (and vice versa).
+          #
+          # DO NOT re-add an exit-code equality test here. This condition used to
+          # read `[ "$EXIT_CODE" != "1" ] || ! grep -q <summary>`, because a break
+          # exited 1 up to and including 0.48.0. It does not any more: 0.50.0
+          # exits 100 for deny-level lint failures (`LINT_FAILURE_EXIT_CODE`) and
+          # 101 for a tool error, so the 0.48.0 -> 0.50.0 pin bump (ENG-11844,
+          # made for `unsupported rustdoc format v60`) silently inverted this
+          # branch. Every breaking-change PR then failed as a phantom "infra
+          # failure", with the `!` / BREAKING CHANGE declaration never consulted —
+          # fail-closed, but a correctly-declared break became unmergeable and the
+          # error sent you chasing a baseline problem that did not exist. It sat
+          # latent until the first PR that actually broke the API tripped it.
+          #
+          # That bump verified the SUMMARY STRING was byte-identical across
+          # versions but not the exit code, though the condition keyed on both.
+          # The summary is the signal the tool documents and the one that survived;
+          # the exit code is an implementation detail that moved without a note.
+          # So classify on the summary alone, and keep the exit code for the
+          # message only.
+          if ! grep -Eq 'semver requires new (major|minor) version' semver-output.txt; then
             # Name the one tooling failure that is neither transient nor a
             # baseline problem, because the generic advice below ("re-run",
             # "check the baseline") is actively wrong for it: rustdoc's JSON

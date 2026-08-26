@@ -151,10 +151,10 @@ impl Client {
     /// bytes on the wire, and before any credential is used.
     fn base_for(&self, path: &str) -> Result<&str> {
         // Keyed on the `Mainnet` *variant*, not on `funds()`. The refusal is
-        // about a URL layout this release cannot build (`/v1` in the base), not
-        // about real money, so a `Network::Custom` declaring `Funds::Real` is
-        // targetable — the caller supplied that URL and owns its layout. Money
-        // movement is guarded separately, in `Client::fund`.
+        // about a host that does not resolve yet, not about real money, so a
+        // `Network::Custom` declaring `Funds::Real` is targetable — the caller
+        // supplied a URL that already resolves. Money movement is guarded
+        // separately, in `Client::fund`.
         if matches!(self.config.network, Network::Mainnet) {
             return Err(Error::invalid_request(MAINNET_NOT_TARGETABLE));
         }

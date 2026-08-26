@@ -131,13 +131,11 @@ impl Funds {
 ///
 /// A `Custom` with [`Funds::Real`] is targetable, unlike
 /// [`Network::Mainnet`](Network::Mainnet). These are not in tension: `Mainnet`
-/// is refused because this release cannot *build* correct URLs for its durable
-/// base (the version sits in the base, `…/v1`, not in the path), which would
-/// sign a path the server never sees — a URL-layout problem, not a funds
-/// problem. With `Custom` the caller supplies the URL and therefore owns the
-/// layout. What stays guarded is money movement:
-/// [`Client::fund`](crate::Client::fund) refuses on anything that is not
-/// [`Funds::Play`].
+/// is refused because its host does not resolve yet — a reachability problem,
+/// not a funds problem. With `Custom` the caller supplies a URL that already
+/// resolves, so there is nothing for the SDK to refuse on that basis. What
+/// stays guarded is money movement: [`Client::fund`](crate::Client::fund)
+/// refuses on anything that is not [`Funds::Play`].
 ///
 /// ```
 /// use nexus_exchange::{Config, CustomNetwork, Funds, Network};
@@ -340,19 +338,12 @@ pub enum Network {
     ///
     /// Selecting `Mainnet` builds a [`Config`], but every request through the
     /// resulting [`Client`](crate::Client) is **rejected locally** before any
-    /// bytes leave the process. Two independent reasons, either sufficient:
+    /// bytes leave the process: `api.nexus.xyz` does not resolve yet, so there
+    /// is no host to send a request to.
     ///
-    /// - `api.nexus.xyz` does not resolve yet (DNS/TLS is separate infra work —
-    ///   ENG-8155).
-    /// - Its durable base carries the version in the base (`…/v1`) rather than
-    ///   in the path, which is not the dual-stack path layout this SDK builds
-    ///   and signs (see [`Config::direct_base_url`]). Sending the current
-    ///   layout there would produce wrong URLs and a signature over a path the
-    ///   server never sees.
-    ///
-    /// Guessing either one against a real-funds host is exactly the failure the
-    /// network axis exists to prevent, so the SDK fails closed and loudly
-    /// instead. Tracked by ENG-6452's follow-up.
+    /// Guessing at a host for a real-funds deployment is exactly the failure
+    /// the network axis exists to prevent, so the SDK fails closed and loudly
+    /// instead.
     Mainnet,
     /// **Play funds** — balances are synthetic USDX credited by the faucet and
     /// carry no real-world value. The safe target for integration work and CI,
@@ -1484,8 +1475,9 @@ mod tests {
     /// prefix, not at the host root.
     ///
     /// Testnet keeps the **legacy** host on purpose. The spec's durable
-    /// `api.testnet.nexus.xyz` base does not resolve yet, and moving to it also
-    /// changes the path layout (`/v1` in the base), so it is a separate change.
+    /// `api.testnet.nexus.xyz` base does not resolve yet — moving to it is a
+    /// host change, not a path-layout change; the path stays `/api/v1` either
+    /// way.
     #[test]
     fn networks_expose_gateway_and_direct_bases() {
         assert_eq!(

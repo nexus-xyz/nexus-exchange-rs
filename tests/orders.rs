@@ -1,4 +1,4 @@
-use nexus_exchange::types::{Decimal, OrderRequest, Side, TimeInForce};
+use nexus_exchange::types::{Decimal, OrderRequest, SelfTradePrevention, Side, TimeInForce};
 use nexus_exchange::{Client, Config, Error};
 use wiremock::matchers::{
     body_json, body_string, header, header_exists, method, path, query_param,
@@ -429,4 +429,180 @@ async fn preview_order_surfaces_machine_readable_error_codes() {
         err,
         Error::Transient(TransientError::Unavailable { status: 502, .. })
     ));
+}
+
+// --- stp / max_slippage_bps / cancellation_reason (ENG-13068) ---------------
+
+/// A minimal `Order` JSON body, so a test can vary one field without restating
+/// the required ones.
+fn order_json(extra: serde_json::Value) -> serde_json::Value {
+    let mut base = serde_json::json!({
+        "id": "o1", "market_id": "BTC-USDX-PERP", "account_id": "0xabc", "side": "Buy",
+        "order_type": "Limit", "price": "50000", "quantity": "0.1", "filled_qty": "0",
+        "status": "Cancelled", "time_in_force": "GTC", "created_at": 1, "updated_at": 2
+    });
+    let (serde_json::Value::Object(base_map), serde_json::Value::Object(extra_map)) =
+        (&mut base, extra)
+    else {
+        panic!("order_json takes an object");
+    };
+    base_map.extend(extra_map);
+    base
+}
+
+/// Fetch one order carrying `extra`, and hand it back for assertions.
+async fn order_with(extra: serde_json::Value) -> nexus_exchange::types::Order {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/orders"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([order_json(extra)])),
+        )
+        .mount(&server)
+        .await;
+    authed(server.uri())
+        .fetch_open_orders()
+        .await
+        .unwrap()
+        .pop()
+        .expect("one order")
+}
+
+#[tokio::test]
+async fn order_request_serializes_stp_and_max_slippage_bps_only_when_set() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/orders"))
+        // Exact body: the two new fields appear with their PascalCase /
+        // integer wire forms, and nothing else was added to the payload.
+        .and(body_json(serde_json::json!({
+            "market_id": "BTC-USDX-PERP", "side": "Buy", "order_type": "Market",
+            "quantity": "0.1", "time_in_force": "IOC",
+            "stp": "DecrementAndCancel", "max_slippage_bps": 50
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "order": order_json(serde_json::json!({"status": "Open"})),
+            "fills": []
+        })))
+        .mount(&server)
+        .await;
+
+    let order = OrderRequest::market("BTC-USDX-PERP", Side::Buy, "0.1".parse().unwrap())
+        .with_stp(SelfTradePrevention::DecrementAndCancel)
+        .with_max_slippage_bps(50);
+    authed(server.uri()).create_order(&order).await.unwrap();
+}
+
+#[test]
+fn unset_stp_and_slippage_are_absent_from_the_payload() {
+    // `None` must OMIT the keys, not send `null`: an explicit null would be a
+    // different request, and the venue default (self-matching allowed, no cap)
+    // has to stay the default for every existing caller.
+    let body = serde_json::to_value(OrderRequest::market(
+        "BTC-USDX-PERP",
+        Side::Buy,
+        "0.1".parse().unwrap(),
+    ))
+    .unwrap();
+    assert!(
+        body.get("stp").is_none(),
+        "stp leaked into the payload: {body}"
+    );
+    assert!(
+        body.get("max_slippage_bps").is_none(),
+        "max_slippage_bps leaked into the payload: {body}"
+    );
+}
+
+#[test]
+fn zero_slippage_cap_is_sent_not_swallowed() {
+    // `Some(0)` is a real, meaningful cap (band collapsed onto the mid), not an
+    // "unset" sentinel — it must reach the wire.
+    let body = serde_json::to_value(
+        OrderRequest::market("BTC-USDX-PERP", Side::Buy, "0.1".parse().unwrap())
+            .with_max_slippage_bps(0),
+    )
+    .unwrap();
+    assert_eq!(body["max_slippage_bps"], serde_json::json!(0));
+}
+
+#[tokio::test]
+async fn order_parses_echoed_stp_and_max_slippage_bps() {
+    let order = order_with(serde_json::json!({
+        "stp": "CancelOldest", "max_slippage_bps": 25
+    }))
+    .await;
+    assert_eq!(order.stp.as_deref(), Some("CancelOldest"));
+    assert_eq!(order.max_slippage_bps, Some(25));
+}
+
+#[tokio::test]
+async fn order_without_stp_or_cap_decodes_to_none() {
+    // Absent and explicit-null must both mean "placed without one", never a
+    // fabricated default.
+    let absent = order_with(serde_json::json!({})).await;
+    assert_eq!(absent.stp, None);
+    assert_eq!(absent.max_slippage_bps, None);
+    assert_eq!(absent.cancellation_reason, None);
+
+    let nulled = order_with(serde_json::json!({
+        "stp": null, "max_slippage_bps": null, "cancellation_reason": null
+    }))
+    .await;
+    assert_eq!(nulled.stp, None);
+    assert_eq!(nulled.max_slippage_bps, None);
+    assert_eq!(nulled.cancellation_reason, None);
+}
+
+#[tokio::test]
+async fn cancellation_reason_parses_the_bare_string_form() {
+    let order = order_with(serde_json::json!({"cancellation_reason": "SlippageCap"})).await;
+    let reason = order.cancellation_reason.expect("a reason");
+    assert_eq!(reason.cause(), Some("SlippageCap"));
+    assert_eq!(reason.payload(), None);
+    assert_eq!(reason.stp_mode(), None);
+}
+
+#[tokio::test]
+async fn cancellation_reason_parses_the_stp_object_form() {
+    // The shape a plain `Option<String>` would have failed to decode, taking the
+    // whole Order with it.
+    let order =
+        order_with(serde_json::json!({"cancellation_reason": {"Stp": "CancelNewest"}})).await;
+    let reason = order.cancellation_reason.expect("a reason");
+    assert_eq!(reason.cause(), Some("Stp"));
+    assert_eq!(reason.stp_mode(), Some("CancelNewest"));
+}
+
+#[tokio::test]
+async fn an_unknown_cause_still_decodes_verbatim() {
+    // The cause set is open in both shapes. A cause added engine-side must
+    // surface, not fail the decode — a client on an older spec tag will meet one.
+    let bare = order_with(serde_json::json!({"cancellation_reason": "SomeFutureCause"})).await;
+    assert_eq!(
+        bare.cancellation_reason
+            .and_then(|r| r.cause().map(str::to_owned)),
+        Some("SomeFutureCause".into())
+    );
+
+    let tagged =
+        order_with(serde_json::json!({"cancellation_reason": {"FutureCause": {"detail": 7}}}))
+            .await;
+    let reason = tagged.cancellation_reason.expect("a reason");
+    assert_eq!(reason.cause(), Some("FutureCause"));
+    assert_eq!(reason.payload(), Some(&serde_json::json!({"detail": 7})));
+    // Not the Stp cause, so no mode — even though it is the object form.
+    assert_eq!(reason.stp_mode(), None);
+}
+
+#[tokio::test]
+async fn an_unexpected_reason_shape_does_not_break_the_order_decode() {
+    // Defence in depth: a shape neither documented form covers lands in `Other`
+    // rather than failing the enclosing Order. A diagnostic field must never
+    // cost the caller their order.
+    let order = order_with(serde_json::json!({"cancellation_reason": [1, 2]})).await;
+    assert_eq!(order.id, "o1");
+    let reason = order.cancellation_reason.expect("a reason");
+    assert_eq!(reason.cause(), None);
+    assert_eq!(reason.payload(), Some(&serde_json::json!([1, 2])));
 }

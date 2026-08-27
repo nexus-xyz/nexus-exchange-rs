@@ -360,6 +360,12 @@ ENUM_SCHEMA = {
     "OrderType": ("OrderRequest", "order_type"),
     "TimeInForce": ("OrderRequest", "time_in_force"),
     "PortfolioWindow": ("PortfolioHistory", "window"),
+    # The STP mode set is exactly the kind this invariant exists for: the spec
+    # records that it has already changed once (D-026 superseding D-014), and a
+    # mode the SDK cannot express is an order the caller cannot place. Only the
+    # REQUEST side is registered — `Order.stp` echoes the mode back as an open
+    # string with no `enum` array, deliberately, so there is nothing to diff.
+    "SelfTradePrevention": ("OrderRequest", "stp"),
 }
 
 # (rust_enum, wire_member) pairs the SDK models AHEAD OF the pinned spec — the
@@ -1386,6 +1392,27 @@ def check_enums_vs_spec(spec):
                 f"`enum` (the member set modeled by SDK `{rust_name}` can't be "
                 f"compared); it is no longer an enum, or is composed in a way "
                 f"resolve_enum() does not follow — update ENUM_SCHEMA / the check."
+            )
+            continue
+
+        # A JSON `null` in the `enum` array spells NULLABILITY, not a member:
+        # `OrderRequest.stp` is `type: [string, null]` and lists `null` beside the
+        # three modes to say "omit the field, or send null, to opt out". Rust
+        # carries that in the field's `Option<T>`, not as a variant of T, so a
+        # `null` member has no counterpart in the SDK enum by construction and
+        # comparing it verbatim would report a permanent delta no code change
+        # could clear — the kind of unfixable noise that gets a check ignored.
+        #
+        # Only `null` is dropped. Any other member the SDK cannot express is
+        # still a real gap and still fails, so this stays a narrow exemption for
+        # a spelling difference rather than a hole in the comparison.
+        spec_members = [m for m in spec_members if m is not None]
+        if not spec_members:
+            errors += 1
+            print(
+                f"\nERROR: spec {schema_name!r}.{prop} enumerates `null` and "
+                f"nothing else, so there is no member set for SDK "
+                f"`{rust_name}` to model — update ENUM_SCHEMA / the check."
             )
             continue
 

@@ -245,6 +245,35 @@ class TestEnumsVsSpec(unittest.TestCase):
         errs = _quiet(csd.check_enums_vs_spec, enum_spec(PortfolioWindow=sdk_members("PortfolioWindow") + ["quarter"]))
         self.assertGreater(errs, 0)
 
+    def test_null_member_is_nullability_not_a_member(self):
+        # `OrderRequest.stp` is `type: [string, null]` and lists `null` in its
+        # `enum` beside the three modes, to say "omit it, or send null, to opt
+        # out". Rust spells that as the field's `Option`, never as a variant, so
+        # the SDK enum cannot and must not carry a null member. Comparing it
+        # verbatim would be a permanent delta no code change could clear.
+        spec = enum_spec(
+            SelfTradePrevention=sdk_members("SelfTradePrevention") + [None]
+        )
+        self.assertEqual(_quiet(csd.check_enums_vs_spec, spec), 0)
+
+    def test_null_filter_still_catches_a_real_member_delta(self):
+        # The narrow part of the exemption: dropping `null` must not blunt the
+        # check around it. A genuine spec-side member added alongside the null
+        # still has to fail, or the filter would be a hole rather than a
+        # spelling fix.
+        spec = enum_spec(
+            SelfTradePrevention=sdk_members("SelfTradePrevention")
+            + ["CancelBoth", None]
+        )
+        self.assertGreater(_quiet(csd.check_enums_vs_spec, spec), 0)
+
+    def test_null_only_enum_fails_closed(self):
+        # Nothing left to compare after the null is dropped: a loud failure,
+        # never a silent pass over an enum that lost its members.
+        self.assertGreater(
+            _quiet(csd.check_enums_vs_spec, enum_spec(SelfTradePrevention=[None])), 0
+        )
+
     def test_ref_composed_enum_unresolvable_fails_closed(self):
         # If the referenced schema goes missing, the ref no longer resolves; that
         # must be a loud failure rather than a silently skipped check.

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.10.0...v0.11.0) - 2026-08-28
+
+### Added
+
+- *(types)* [**breaking**] surface stp, max_slippage_bps and cancellation_reason (ENG-13068) ([#148](https://github.com/nexus-xyz/nexus-exchange-rs/pull/148))
+
+### Fixed
+
+- point the durable mainnet base at the host root, not /v1 ([#145](https://github.com/nexus-xyz/nexus-exchange-rs/pull/145))
+
 ## [0.10.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.9.1...v0.10.0) - 2026-08-24
 
 ### Added

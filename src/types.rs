@@ -558,6 +558,133 @@ pub enum TimeInForce {
     PostOnly,
 }
 
+/// Opt-in self-trade prevention (STP) mode, set on
+/// [`OrderRequest::stp`](OrderRequest::stp).
+///
+/// Omitting it (the `None` default) allows self-matching — that is the venue
+/// default and the industry-standard behaviour, and the engine *will* fill your
+/// order against your own resting order. Set a mode to have the engine intervene
+/// when a taker meets a maker on the same account instead.
+///
+/// The check runs **per encountered same-account maker**, not once at order
+/// entry, so a taker crossing several of your own makers is evaluated at each
+/// one. It sits in the shared matching path, so it applies to every order type.
+///
+/// When a mode cancels an order, that order comes back with
+/// [`Order::cancellation_reason`] set to the *object* form
+/// `{"Stp": "<mode>"}` — read it via
+/// [`CancellationReason::stp_mode`].
+///
+/// This is a closed enum because the value is one you *supply* and the server
+/// validates; the echoed-back [`Order::stp`] is deliberately an open `String`
+/// (see that field).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SelfTradePrevention {
+    /// Cancel the incoming taker and leave the maker resting. The taker stops
+    /// walking the book entirely, so remaining taker size *beyond* that maker is
+    /// cancelled too.
+    CancelNewest,
+    /// Cancel the resting maker and let the taker carry on against other
+    /// accounts' makers.
+    CancelOldest,
+    /// Reduce both sides by `min(taker_remaining, maker_size)` and cancel the
+    /// smaller side, leaving the larger to continue at the reduced quantity.
+    DecrementAndCancel,
+}
+
+/// Why an order reached a terminal `Cancelled` / `Rejected` status
+/// ([`Order::cancellation_reason`]).
+///
+/// # Two wire shapes
+///
+/// The engine's reason type is an externally tagged enum, so the JSON is *not*
+/// uniformly a string: every cause except self-trade prevention arrives as a bare
+/// string (`"User"`, `"SlippageCap"`, …), while self-trade prevention arrives as
+/// a single-key object naming the mode that fired
+/// (`{"Stp": "CancelNewest"}`). Modelling this as a plain `String` would fail to
+/// decode the STP case — and with it the whole [`Order`] — which is why it is an
+/// enum.
+///
+/// Rather than branching on the variant, prefer the accessors: [`cause`] returns
+/// the cause name for *both* shapes, and [`stp_mode`] pulls the mode out of the
+/// object form.
+///
+/// # The cause set is open
+///
+/// Causes are added as the engine gains them, and the spec deliberately leaves
+/// the object form's keys unclosed. Nothing here is a closed enum: match the
+/// causes you handle and surface anything else verbatim. A client pinned to an
+/// older spec tag *will* meet causes it does not know, and meeting one must never
+/// fail the order decode — hence [`Other`], which absorbs any JSON shape the two
+/// documented forms don't cover.
+///
+/// The string causes documented today are `User`, `SlippageCap`, `Liquidation`,
+/// `Expired`, `MarketHalt`, `AmendReplace`, `InsufficientLiquidity`,
+/// `BracketClosed`, `BracketFlipped`, and `PriceBandExceeded`. The object form's
+/// only key today is `Stp`.
+///
+/// # Not comparable with `OrderHistoryEntry`
+///
+/// [`OrderHistoryEntry::cancellation_reason`] reports the same causes in a
+/// **different encoding** — always a string, rendering the STP case as
+/// `"Stp(CancelNewest)"` rather than as an object. Do not compare values across
+/// the two surfaces.
+///
+/// [`cause`]: Self::cause
+/// [`stp_mode`]: Self::stp_mode
+/// [`Other`]: Self::Other
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(untagged)]
+#[non_exhaustive]
+pub enum CancellationReason {
+    /// A bare-string cause — every cause except self-trade prevention.
+    Simple(String),
+    /// A cause carrying a payload, as a single-key object naming it. The only
+    /// key today is `Stp`, whose value is the mode that fired.
+    Tagged(serde_json::Map<String, serde_json::Value>),
+    /// Any other JSON shape, kept verbatim so a future encoding cannot break the
+    /// enclosing [`Order`] decode. Not produced by any documented cause.
+    Other(serde_json::Value),
+}
+
+impl CancellationReason {
+    /// The cause name, for either wire shape: the string itself for
+    /// [`Simple`](Self::Simple), or the single key for [`Tagged`](Self::Tagged).
+    ///
+    /// `None` only for [`Other`](Self::Other) or an (undocumented) empty object.
+    pub fn cause(&self) -> Option<&str> {
+        match self {
+            Self::Simple(s) => Some(s),
+            Self::Tagged(map) => map.keys().next().map(String::as_str),
+            Self::Other(_) => None,
+        }
+    }
+
+    /// The payload carried by the object form — the value under
+    /// [`cause`](Self::cause) — or the raw JSON for [`Other`](Self::Other).
+    ///
+    /// `None` for the bare-string form, which carries no payload.
+    pub fn payload(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Simple(_) => None,
+            Self::Tagged(map) => map.values().next(),
+            Self::Other(v) => Some(v),
+        }
+    }
+
+    /// The self-trade-prevention mode that cancelled the order, when this is the
+    /// `Stp` cause; `None` for every other cause.
+    ///
+    /// Returned as `&str`, not [`SelfTradePrevention`], because the mode set is
+    /// open on this surface — see the type-level note.
+    pub fn stp_mode(&self) -> Option<&str> {
+        match self {
+            Self::Tagged(map) => map.get("Stp").and_then(serde_json::Value::as_str),
+            _ => None,
+        }
+    }
+}
+
 /// A public trade print.
 ///
 /// `price`, `amount`, and `cost` arrive as JSON numbers via the `float` adapter
@@ -1382,7 +1509,12 @@ pub struct Fill {
 
 /// A new-order request (`POST /orders`). Construct with [`OrderRequest::limit`]
 /// or [`OrderRequest::market`].
+///
+/// `#[non_exhaustive]`: build one with a constructor and the `with_*` setters
+/// rather than a struct literal, so the next field the spec adds to this payload
+/// isn't a breaking change.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct OrderRequest {
     /// Market identifier to trade, e.g. `BTC-USDX-PERP`.
     pub market_id: String,
@@ -1431,6 +1563,48 @@ pub struct OrderRequest {
     /// payload when `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit_offset_bps: Option<u32>,
+    /// Opt-in self-trade prevention. `None` (the default) omits the field and
+    /// **allows self-matching** — the engine will fill this order against your
+    /// own resting order. Set a mode to have it intervene instead; see
+    /// [`SelfTradePrevention`] for what each does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stp: Option<SelfTradePrevention>,
+    /// Server-enforced slippage cap in basis points (1 bp = 0.01%). `None` (the
+    /// default) omits the field, meaning no cap.
+    ///
+    /// When set, the engine captures the book mid `(best_bid + best_ask) / 2`
+    /// once at submission and requires the order's running fill VWAP to stay
+    /// inside `mid ± mid × bps / 10000` as it walks the book. Because the
+    /// reference is captured server-side and the bound is on the running VWAP
+    /// rather than the worst single fill, this is a stricter guarantee than a
+    /// marketable limit price derived client-side from a stale reference price.
+    ///
+    /// A breach is **not** an error: fills already made stand, the fill that
+    /// would breach is not made, the remainder is cancelled, and the order comes
+    /// back on the normal success response with `status` `Cancelled` and
+    /// [`cancellation_reason`](Order::cancellation_reason) `SlippageCap`.
+    ///
+    /// Applies to the market family — [`Market`](OrderType::Market),
+    /// [`StopMarket`](OrderType::StopMarket),
+    /// [`TakeProfitMarket`](OrderType::TakeProfitMarket) and
+    /// [`TrailingStop`](OrderType::TrailingStop), which carry the cap through to
+    /// when they fire. Accepted but ignored on the limit family, which already
+    /// fills at its limit price or better.
+    ///
+    /// Two edges worth knowing:
+    ///
+    /// * A mid requires **both** sides of the book to be non-empty, so a capped
+    ///   order submitted while either side is empty is rejected with
+    ///   `InsufficientLiquidity` — including when the empty side is the order's
+    ///   own and it could otherwise have filled.
+    /// * `Some(0)` does **not** mean "no cap": it collapses the band onto the mid
+    ///   exactly, so against any book with a non-zero spread the order cancels
+    ///   with zero fills. Use `None` for no cap.
+    ///
+    /// [`preview_order`](crate::Client::preview_order) accepts the field but does
+    /// not apply it — its `expected_fill_vwap` always walks the full book.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_slippage_bps: Option<u32>,
 }
 
 impl OrderRequest {
@@ -1454,6 +1628,8 @@ impl OrderRequest {
             trigger_price: None,
             trailing_offset_bps: None,
             limit_offset_bps: None,
+            stp: None,
+            max_slippage_bps: None,
         }
     }
 
@@ -1471,6 +1647,8 @@ impl OrderRequest {
             trigger_price: None,
             trailing_offset_bps: None,
             limit_offset_bps: None,
+            stp: None,
+            max_slippage_bps: None,
         }
     }
 
@@ -1498,6 +1676,8 @@ impl OrderRequest {
             trigger_price: None,
             trailing_offset_bps: Some(trailing_offset_bps),
             limit_offset_bps: Some(limit_offset_bps),
+            stp: None,
+            max_slippage_bps: None,
         }
     }
 
@@ -1531,10 +1711,33 @@ impl OrderRequest {
         self.limit_offset_bps = Some(limit_offset_bps);
         self
     }
+
+    /// Opt into self-trade prevention, consuming and returning `self`.
+    ///
+    /// Without this the order may match against your own resting orders — see
+    /// [`stp`](Self::stp).
+    pub fn with_stp(mut self, stp: SelfTradePrevention) -> Self {
+        self.stp = Some(stp);
+        self
+    }
+
+    /// Set the server-enforced slippage cap in basis points, consuming and
+    /// returning `self`.
+    ///
+    /// Note `0` collapses the band onto the mid rather than disabling the cap —
+    /// see [`max_slippage_bps`](Self::max_slippage_bps).
+    pub fn with_max_slippage_bps(mut self, max_slippage_bps: u32) -> Self {
+        self.max_slippage_bps = Some(max_slippage_bps);
+        self
+    }
 }
 
 /// An order record.
+///
+/// `#[non_exhaustive]`: read fields off a returned value rather than constructing
+/// one with a struct literal, so a future spec addition isn't a breaking change.
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct Order {
     /// Exchange-assigned order identifier.
     pub id: String,
@@ -1573,6 +1776,31 @@ pub struct Order {
     /// carry one, or when the API omits it.
     #[serde(default)]
     pub limit_offset_bps: Option<u32>,
+    /// The self-trade prevention mode the order was placed with, echoed back.
+    /// `None` for an order placed without one — the default, meaning
+    /// self-matching was allowed.
+    ///
+    /// An open `String` rather than [`SelfTradePrevention`], deliberately: the
+    /// spec does not close this enum on the response side, because the mode set
+    /// has changed before and a mode added later must not break a client pinned
+    /// to an older spec tag. The *request* side does enumerate the modes, since
+    /// there the value is one you supply and the server validates it.
+    #[serde(default)]
+    pub stp: Option<String>,
+    /// Slippage cap in basis points, echoed for an order placed with one; `None`
+    /// for an order placed without a cap. See
+    /// [`OrderRequest::max_slippage_bps`].
+    #[serde(default)]
+    pub max_slippage_bps: Option<u32>,
+    /// Why the order reached a terminal `Cancelled` / `Rejected` status; `None`
+    /// for every other status, and for a terminal order the engine recorded no
+    /// cause for.
+    ///
+    /// Two wire shapes — a bare string, or a single-key object for self-trade
+    /// prevention. Use [`CancellationReason::cause`] to read the cause name
+    /// without branching on which.
+    #[serde(default)]
+    pub cancellation_reason: Option<CancellationReason>,
     /// Unix timestamp (ms) when the order was created.
     #[serde(default)]
     pub created_at: i64,
@@ -1775,6 +2003,15 @@ impl OrderPreview {
 /// `{ error, message }` shape as the global error envelope. Match on the variant
 /// (or use [`succeeded`](Self::succeeded) / [`order`](Self::order) /
 /// [`error`](Self::error)).
+// `Placed` is much larger than `Rejected` (it carries a whole `Order`, which grew
+// again with the stp / max_slippage_bps / cancellation_reason fields — ENG-13068),
+// which trips `large_enum_variant`. Boxing the `Order` is the lint's suggested
+// fix and is the wrong trade here twice over: `Placed` is the COMMON case in a
+// batch, so it would add a heap allocation per *successful* order to save memory
+// only on the rare rejection, and `order: Box<Order>` is a breaking change to a
+// public field that makes `match` on the variant worse for every caller. The
+// entries are also short-lived and bounded by the batch size. Keep it inline.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "outcome")]
 pub enum OrderResult {

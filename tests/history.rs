@@ -12,12 +12,18 @@
 //! The other thing pinned here is that the `limit` maxima are **per endpoint**:
 //! 500 / 200 / 720, not one shared bound, and emphatically not the `366` that
 //! belongs to the un-paginated `/account/portfolio-history`.
+//!
+//! `GET /api/v1/account/portfolio-history` is here too, and until ENG-8439 it
+//! was the one endpoint this file asserted a *constant* about instead of
+//! driving a body through `Client` — so its deserializer was never exercised
+//! and shipped unable to decode a real response. It now round-trips both wire
+//! shapes, for the reason the paragraph above gives.
 
 use nexus_exchange::rest::{
     MAX_CLOSED_POSITIONS_LIMIT, MAX_EQUITY_HISTORY_LIMIT, MAX_ORDER_HISTORY_LIMIT,
     MAX_PORTFOLIO_HISTORY_LIMIT,
 };
-use nexus_exchange::types::Side;
+use nexus_exchange::types::{PortfolioWindow, Side};
 use nexus_exchange::{Client, Config};
 use rust_decimal::Decimal;
 use wiremock::matchers::{header_exists, method, path, query_param, query_param_is_missing};
@@ -26,6 +32,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 const ORDER_HISTORY_PATH: &str = "/api/v1/orders/history";
 const CLOSED_POSITIONS_PATH: &str = "/api/v1/positions/closed";
 const EQUITY_HISTORY_PATH: &str = "/api/v1/account/equity-history";
+const PORTFOLIO_HISTORY_PATH: &str = "/api/v1/account/portfolio-history";
 
 #[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn authed(uri: String) -> Client {
@@ -736,4 +743,125 @@ async fn equity_point_decodes_a_json_number_and_never_fabricates_zero() {
         "an absent equity sample must not read as a zero balance"
     );
     assert_eq!(points[1].timestamp_ms, None);
+}
+
+/// A `/account/portfolio-history` body whose three monetary fields carry
+/// `shape` — `serde_json::json!` renders a `&str` as a JSON string and an `f64`
+/// as a JSON number, which is exactly the divergence under test.
+fn portfolio_body(
+    equity: serde_json::Value,
+    pnl: serde_json::Value,
+    volume: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "window": "day",
+        "cadence_ms": 300000i64,
+        "points": [{
+            "timestamp_ms": 1776033900000i64,
+            "equity": equity,
+            "pnl": pnl,
+            "volume": volume,
+        }],
+    })
+}
+
+async fn fetch_portfolio(body: serde_json::Value) -> nexus_exchange::types::PortfolioHistory {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(PORTFOLIO_HISTORY_PATH))
+        .and(query_param("window", "day"))
+        .and(header_exists("X-Signature"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    authed(server.uri())
+        .fetch_portfolio_history(Some(PortfolioWindow::Day), None)
+        .await
+        .expect("a served portfolio-history body must decode")
+}
+
+/// The spec shape: `PortfolioPoint`'s `equity` / `pnl` / `volume` are
+/// `$ref: Decimal`, i.e. `{"type": "string"}`, described as *"lossless decimal
+/// strings — parse with a decimal type, never a float"*. This is the contract of
+/// record and decodes **exactly** — no `f64` hop, so the 28-digit value below
+/// survives whole, which is the entire point of the string form.
+#[tokio::test]
+async fn portfolio_point_decodes_the_spec_decimal_strings_exactly() {
+    let history = fetch_portfolio(portfolio_body(
+        // More significant digits than an f64 can hold; the string branch keeps
+        // them, so this fails loudly if the decode ever routes through a float.
+        serde_json::json!("10.345975445305584991101228096"),
+        serde_json::json!("-1234.567890123456789012345678"),
+        serde_json::json!("34980.848000"),
+    ))
+    .await;
+
+    assert_eq!(history.window, "day");
+    assert_eq!(history.cadence_ms, 300000);
+    let p = &history.points[0];
+    assert_eq!(p.timestamp_ms, 1776033900000);
+    assert_eq!(
+        p.equity,
+        "10.345975445305584991101228096".parse::<Decimal>().unwrap()
+    );
+    assert_eq!(
+        p.pnl,
+        "-1234.567890123456789012345678".parse::<Decimal>().unwrap()
+    );
+    assert_eq!(p.volume, "34980.848000".parse::<Decimal>().unwrap());
+}
+
+/// What the server actually sends today (ENG-8439): the indexer's
+/// `PortfolioPoint` holds three bare `f64`s behind a plain `Serialize`, so the
+/// wire carries JSON **numbers**. A strict `rust_decimal::serde::str` field
+/// calls `deserialize_str` and fails outright on a number token, which is how
+/// `fetch_portfolio_history` shipped in rs #109 unable to decode a live
+/// response at all. Tolerating the number here is what unbreaks the call; the
+/// test above is what keeps the spec shape the target.
+#[tokio::test]
+async fn portfolio_point_also_decodes_the_json_numbers_the_server_sends_today() {
+    let history = fetch_portfolio(portfolio_body(
+        serde_json::json!(12345.5),
+        serde_json::json!(-1234.25),
+        // An integral number arrives as a JSON integer, not a float — a separate
+        // visitor branch, and the one a fresh account's zero volume takes.
+        serde_json::json!(0),
+    ))
+    .await;
+
+    let p = &history.points[0];
+    assert_eq!(p.timestamp_ms, 1776033900000);
+    assert_eq!(p.equity, "12345.5".parse::<Decimal>().unwrap());
+    assert_eq!(p.pnl, "-1234.25".parse::<Decimal>().unwrap());
+    assert_eq!(p.volume, Decimal::ZERO);
+}
+
+/// Tolerance is not "accept anything". A field that is neither a decimal string
+/// nor a number is still a contract violation and must fail the decode rather
+/// than being defaulted to zero — a fabricated `0` equity would render as a
+/// wiped-out account.
+#[tokio::test]
+async fn portfolio_point_rejects_a_value_that_is_neither_string_nor_number() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(PORTFOLIO_HISTORY_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(portfolio_body(
+            serde_json::json!(null),
+            serde_json::json!("0"),
+            serde_json::json!("0"),
+        )))
+        .mount(&server)
+        .await;
+
+    let err = authed(server.uri())
+        .fetch_portfolio_history(None, None)
+        .await
+        .expect_err("a null equity must not decode as zero");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("invalid type: null") && msg.contains("a decimal string"),
+        "it must fail on the type, not default the value: {msg}"
+    );
 }

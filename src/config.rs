@@ -349,9 +349,11 @@ pub enum Network {
     /// carry no real-world value. The safe target for integration work and CI,
     /// and the [`Default`] for [`Config`].
     ///
-    /// Served today by the legacy gateway base `exchange.nexus.xyz`. That host
-    /// is testnet: its traffic migrates to `api.testnet.nexus.xyz` and **never**
-    /// to the bare `api.nexus.xyz`, which is real funds.
+    /// Served by its durable host, `api.testnet.nexus.xyz/indexer` (ENG-8870).
+    /// Note the `/indexer`: it is the route prefix the deployment mounts the
+    /// service under, not part of the API contract, and the bare host answers
+    /// `404`. Testnet traffic goes there and **never** to the bare
+    /// `api.nexus.xyz`, which is real funds.
     Testnet,
     /// A locally run indexer. Play funds, faucet available. Not a public
     /// network and not a deployment target.
@@ -366,9 +368,9 @@ pub enum Network {
 }
 
 impl Network {
-    /// Legacy gateway base URL for this network (the `/api/exchange` REST
-    /// gateway). Routes that have **not** yet migrated to the direct `/api/v1`
-    /// service are still served here (dual-stack — ENG-4751).
+    /// Base URL for this network's unprefixed REST routes. Routes that have
+    /// **not** yet migrated to the direct `/api/v1` service are served here
+    /// (dual-stack — ENG-4751).
     ///
     /// For [`Mainnet`](Self::Mainnet) this reports the documented durable base
     /// for completeness; requests are refused before it is ever used. See the
@@ -380,7 +382,13 @@ impl Network {
             // path-versioned `/api/v1`, which is what this SDK builds and signs, so a
             // base carrying `/v1` would compose `/v1/api/v1/orders`.
             Network::Mainnet => "https://api.nexus.xyz",
-            Network::Testnet => "https://exchange.nexus.xyz/api/exchange",
+            // The durable host PLUS the `/indexer` route prefix the deployment
+            // mounts the service under (ENG-8870) — the bare host is the
+            // marketing frontend and answers `404`. This replaced the legacy
+            // `exchange.nexus.xyz/api/exchange` gateway, which proxies to a
+            // decommissioned Cloud Run indexer and now answers `500` on every
+            // route (ENG-14039), so the base this crate shipped was dead.
+            Network::Testnet => "https://api.testnet.nexus.xyz/indexer",
             Network::Local => "http://localhost:9090",
             // Verbatim from the caller. Nothing is appended, rewritten or
             // inferred — see `CustomNetwork`.
@@ -399,24 +407,25 @@ impl Network {
     ///
     /// It reads as though it should be — the migration is described as moving to
     /// "the host root" — but on every deployment that exists today the `/api/v1`
-    /// surface is mounted **under the gateway base**, so this equals
-    /// [`base_url`]. Measured on testnet:
+    /// surface is mounted **under the same route prefix as everything else**, so
+    /// this equals [`base_url`]. Measured on testnet, 2026-09-09:
     ///
     /// ```text
-    /// https://exchange.nexus.xyz/api/exchange/api/v1/markets/summary  -> 200 (JSON)
-    /// https://exchange.nexus.xyz/api/v1/markets/summary               -> 404 (frontend HTML)
+    /// https://api.testnet.nexus.xyz/indexer/api/v1/markets/summary  -> 200 (JSON)
+    /// https://api.testnet.nexus.xyz/indexer/markets/summary         -> 200 (JSON)
+    /// https://api.testnet.nexus.xyz/api/v1/markets/summary          -> 404
+    /// https://api.testnet.nexus.xyz/markets/summary                 -> 404
     /// ```
     ///
-    /// The gateway recognizes `/api/v1` specifically: `/api/v2` and any other
-    /// junk segment answer `404` with a JSON `NOT_FOUND` body, so it is a real
-    /// mount rather than a permissive router. Pointing this at the host root —
-    /// which is what this method returned until now — sends every `/api/v1`
-    /// request to the marketing frontend, which answers `404` with an HTML body.
+    /// Both surfaces answer under that one prefix, exactly as they did under the
+    /// retired gateway prefix. Pointing this at the host root sends every
+    /// `/api/v1` request past the deployment's route and out to a `404`
+    /// (ENG-10063, the bug that is pinned by the tests below).
     ///
-    /// The method survives the correction because the split is still real: when
-    /// the direct surface does move off the gateway it moves *per deployment*,
-    /// and [`Config::with_direct_base_url`] retargets it without touching any
-    /// path literal.
+    /// The method survives that correction because the split is still real: when
+    /// a deployment serves the direct surface elsewhere it moves *per
+    /// deployment*, and [`Config::with_direct_base_url`] retargets it without
+    /// touching any path literal.
     ///
     /// # Comparing this against the other Nexus SDKs
     ///
@@ -429,12 +438,12 @@ impl Network {
     ///
     /// ```text
     /// this SDK / Python:  direct_base_url + "/api/v1/orders"
-    /// TypeScript:         baseUrl (= gateway base + "/api/v1") + "/orders"
+    /// TypeScript:         baseUrl (= REST base + "/api/v1") + "/orders"
     /// ```
     ///
-    /// Both compose to `https://exchange.nexus.xyz/api/exchange/api/v1/orders`
+    /// Both compose to `https://api.testnet.nexus.xyz/indexer/api/v1/orders`
     /// and both sign the **full** path including `/api/v1` but *excluding* the
-    /// gateway prefix, which the gateway strips before the indexer verifies. So
+    /// route prefix, which the route strips before the indexer verifies. So
     /// TypeScript's `baseUrl` is the analogue of this method plus the prefix —
     /// it is *not* the analogue of [`base_url`]. Reading the two
     /// `base_url`-shaped fields as the same thing is the one way to conclude
@@ -449,9 +458,10 @@ impl Network {
             // nothing for this to differ on. Reported for completeness only —
             // requests to this network are refused. See the `Mainnet` variant docs.
             Network::Mainnet => "https://api.nexus.xyz",
-            // The gateway base, NOT the host root: `/api/v1` is mounted under
-            // `/api/exchange` on this deployment. See the method docs.
-            Network::Testnet => "https://exchange.nexus.xyz/api/exchange",
+            // The same base as `base_url`, NOT the host root: `/api/v1` is
+            // mounted under the `/indexer` route prefix on this deployment
+            // (ENG-8870). See the method docs.
+            Network::Testnet => "https://api.testnet.nexus.xyz/indexer",
             Network::Local => "http://localhost:9090",
             // Defaults to the caller's REST base, since today's deployments
             // mount `/api/v1` under it; overridden only if the caller split them.
@@ -479,14 +489,16 @@ impl Network {
             // Local dev serves REST and WS from the same indexer process, so
             // the WS origin is this host's `/ws` and is known.
             Network::Local => Some("ws://localhost:9090/ws"),
-            // Testnet still has no usable WS origin. The spec's per-network map
-            // does publish one (`wss://api.testnet.nexus.xyz`), but that is a
-            // *different origin* from the legacy gateway this network's REST
-            // still targets, and it does not resolve yet. The upgrade token is
-            // minted over REST (`POST /ws/token`) and is scoped to the origin
-            // that issued it, so pairing the legacy REST host with that WS host
-            // would send a token to a server that never issued it. Both move
-            // together or neither does — ENG-3398.
+            // Testnet still reports no WS origin. The published durable value
+            // is `wss://api.testnet.nexus.xyz/indexer` (`/stream` for public
+            // market data, `/ws` for the authenticated stream), and since
+            // ENG-8870 that is the *same* origin this network's REST targets —
+            // so the original reason for `None` (a token minted over REST at
+            // one origin being presented to another, ENG-3398) no longer
+            // applies. It stays `None` here because turning it on is a
+            // behavioural change that wants its own verification with real
+            // credentials, which this host swap did not do. Supply it with
+            // `Config::with_ws_url` in the meantime.
             Network::Testnet => None,
             // Mainnet is not targetable at all in this release; see the variant
             // docs. Nothing to connect to, and nothing to guess.
@@ -815,15 +827,15 @@ pub(crate) const API_VERSION_RAW: &str = include_str!("../.api-version");
 pub(crate) const API_VERSION_HEADER: &str = "X-Nexus-Api-Version";
 
 /// Derive the direct-service base for the `/api/v1` surface from a REST base
-/// URL. The two are the **same base**: `/api/v1` is mounted under the gateway
-/// prefix, not at the host root, so the only correct derivation is the identity
-/// (bar a trailing slash, which would otherwise double up when a path is joined).
+/// URL. The two are the **same base**: `/api/v1` is mounted under whatever
+/// route prefix the deployment serves, not at the host root, so the only
+/// correct derivation is the identity (bar a trailing slash, which would
+/// otherwise double up when a path is joined).
 ///
 /// This used to strip a trailing `/api/exchange`, which produced a base that
-/// serves no API at all: `https://exchange.nexus.xyz/api/v1/...` is the
-/// marketing frontend and answers `404` with an HTML body, while
-/// `https://exchange.nexus.xyz/api/exchange/api/v1/...` is the live surface.
-/// Stripping therefore broke every `/api/v1` route in the client — see
+/// serves no API at all — the host root of a prefixed deployment answers `404`,
+/// as `https://api.testnet.nexus.xyz/api/v1/...` still does today. Stripping
+/// therefore broke every `/api/v1` route in the client — see
 /// [`Network::direct_base_url`] for the measurements.
 ///
 /// When a deployment genuinely serves the direct surface on another host,
@@ -1311,11 +1323,11 @@ mod tests {
         }
     }
 
-    /// The WS origin is a separate host, never the `/api/exchange` REST
-    /// gateway (which can't proxy WS upgrades). Local is known; the others must
-    /// surface as `None` rather than a guessed URL — in particular testnet must
-    /// not be paired with the durable `api.testnet.nexus.xyz` WS host while its
-    /// REST still lives on the legacy origin (ENG-3398).
+    /// Local is known; the others must surface as `None` rather than a guessed
+    /// URL. Testnet's durable WS origin is published and now shares the REST
+    /// origin, but reporting it is a behavioural change that wants its own
+    /// verification (ENG-3398) — until then callers pass it explicitly with
+    /// `Config::with_ws_url`.
     #[test]
     fn ws_base_is_known_only_for_local() {
         assert_eq!(Network::Local.ws_base(), Some("ws://localhost:9090/ws"));
@@ -1471,29 +1483,29 @@ mod tests {
     }
 
     /// Built-in networks carry both bases, and on every deployment that exists
-    /// today they are the **same** base: `/api/v1` is mounted under the gateway
-    /// prefix, not at the host root.
+    /// today they are the **same** base: `/api/v1` is mounted under the
+    /// deployment's route prefix, not at the host root.
     ///
-    /// Testnet keeps the **legacy** host on purpose. The spec's durable
-    /// `api.testnet.nexus.xyz` base does not resolve yet — moving to it is a
-    /// host change, not a path-layout change; the path stays `/api/v1` either
-    /// way.
+    /// Testnet is on its durable host (ENG-8870), and the value carries the
+    /// `/indexer` prefix the service is mounted under — the bare host `404`s.
+    /// That was a host change, not a path-layout change; the path stays
+    /// `/api/v1` either way.
     #[test]
     fn networks_expose_gateway_and_direct_bases() {
         assert_eq!(
             Network::Testnet.base_url(),
-            "https://exchange.nexus.xyz/api/exchange"
+            "https://api.testnet.nexus.xyz/indexer"
         );
         assert_eq!(
             Network::Testnet.direct_base_url(),
-            "https://exchange.nexus.xyz/api/exchange"
+            "https://api.testnet.nexus.xyz/indexer"
         );
         // Local dev serves both surfaces from one origin.
         assert_eq!(Network::Local.base_url(), Network::Local.direct_base_url());
     }
 
     /// The `/api/v1` surface must resolve to an **absolute URL that carries the
-    /// gateway prefix**, for every built-in network.
+    /// deployment's route prefix**, for every built-in network.
     ///
     /// This is the assertion whose absence let the bug ship. The tests around it
     /// checked the base and the path prefix separately, and both halves were
@@ -1509,7 +1521,7 @@ mod tests {
                 Network::Testnet.direct_base_url(),
                 "/api/v1/markets/summary"
             ),
-            "https://exchange.nexus.xyz/api/exchange/api/v1/markets/summary",
+            "https://api.testnet.nexus.xyz/indexer/api/v1/markets/summary",
         );
         // A custom gateway-style base keeps its prefix rather than losing it.
         assert_eq!(

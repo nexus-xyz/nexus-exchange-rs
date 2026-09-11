@@ -38,6 +38,13 @@
 //! like the others, the SDK could use the `str` adapter everywhere and every
 //! field would be exact. That change is tracked separately; until then this
 //! module documents the gap rather than papering over it.
+//!
+//! [`PortfolioPoint`]'s three monetary fields are the one place the two columns
+//! overlap. The spec types them as decimal strings, the server sends JSON
+//! numbers today (ENG-8439), and they decode from **either** shape — exact from
+//! the string, subject to the caveats above from the number. They move to the
+//! exact column for good once the server conforms, and nothing here has to
+//! change when it does.
 
 use std::fmt;
 
@@ -885,6 +892,79 @@ pub struct CreatedApiKey {
     pub tier: Option<String>,
 }
 
+/// Decode a [`Decimal`] from **either** a JSON string or a JSON number.
+///
+/// The spec types [`PortfolioPoint`]'s `equity`, `pnl` and `volume` as
+/// `Decimal` (`{"type": "string"}`) and says so emphatically — *"parse with a
+/// decimal type, never a float"*. The server does not do that yet: the
+/// indexer's own `PortfolioPoint` holds three bare `f64`s behind a plain
+/// `Serialize`, so the wire carries JSON **numbers** on this one endpoint
+/// (ENG-8439). A strict `rust_decimal::serde::str` field calls
+/// `deserialize_str`, which fails outright on a number token — which is why
+/// [`Client::fetch_portfolio_history`](crate::Client::fetch_portfolio_history)
+/// could not decode a real response at all.
+///
+/// This is deliberately **read-side tolerance, not a contract change**. The
+/// spec stays the contract of record and the string form stays the target;
+/// conforming the server is tracked on ENG-8439 and owned by the indexer, and
+/// this decodes that future response unchanged the day it lands.
+///
+/// Precision differs by branch, and that difference is the whole reason the
+/// spec asks for a string:
+///
+/// - **String** — parsed straight into [`Decimal`], **exact**, no `f64` hop.
+/// - **Number** — the JSON number is a binary `f64` before this code ever sees
+///   it, so anything past ~15–17 significant digits is already gone. It is
+///   reparsed from `f64`'s shortest round-tripping decimal text, the closest
+///   recovery available, but the value is **not** an exact ledger figure — the
+///   same caveat the `float`-adapter fields carry in the module docs above.
+mod decimal_str_or_number {
+    use super::Decimal;
+    use std::fmt;
+    use std::str::FromStr;
+
+    struct DecimalStrOrNumber;
+
+    impl serde::de::Visitor<'_> for DecimalStrOrNumber {
+        type Value = Decimal;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a decimal string (per the spec) or a JSON number")
+        }
+
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Decimal, E> {
+            Decimal::from_str(v)
+                .or_else(|_| Decimal::from_scientific(v))
+                .map_err(|_| E::invalid_value(serde::de::Unexpected::Str(v), &self))
+        }
+
+        fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Decimal, E> {
+            Ok(Decimal::from(v))
+        }
+
+        fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Decimal, E> {
+            Ok(Decimal::from(v))
+        }
+
+        fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Decimal, E> {
+            // `f64::to_string` is the shortest text that round-trips the bits,
+            // so this recovers the number the server *meant* (`123.5`, not
+            // `123.50000000000000284`) without inventing digits it never had.
+            Decimal::from_str(&v.to_string())
+                .map_err(|_| E::invalid_value(serde::de::Unexpected::Float(v), &self))
+        }
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Decimal, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // `deserialize_any`, not `deserialize_str`: the wire token decides, so
+        // both shapes reach the visitor instead of one of them erroring out.
+        deserializer.deserialize_any(DecimalStrOrNumber)
+    }
+}
+
 /// Deserialize a JSON string into a [`SecretString`] so the value lands in
 /// zeroizing storage rather than a plain heap `String`.
 fn deserialize_secret<'de, D>(deserializer: D) -> Result<SecretString, D::Error>
@@ -1286,7 +1366,12 @@ pub struct PortfolioPoint {
     /// Sample time, Unix ms.
     pub timestamp_ms: i64,
     /// Account equity at sample time (collateral plus unrealized PnL).
-    #[serde(with = "rust_decimal::serde::str")]
+    ///
+    /// Exact when the server sends the spec's decimal string, and exact for a
+    /// JSON **integer** of any length. A non-integral JSON number is already a
+    /// binary `f64` before this code sees it, so past ~15–17 significant digits
+    /// the recovered value is not an exact ledger figure.
+    #[serde(deserialize_with = "decimal_str_or_number::deserialize")]
     pub equity: Decimal,
     /// Cumulative trading PnL up to this sample: realized PnL on close
     /// (including liquidation and ADL closes), plus signed funding, plus current
@@ -1294,12 +1379,12 @@ pub struct PortfolioPoint {
     ///
     /// Deposit-neutral — wallet deposits and withdrawals never move it — so the
     /// curve reflects trading performance only.
-    #[serde(with = "rust_decimal::serde::str")]
+    #[serde(deserialize_with = "decimal_str_or_number::deserialize")]
     pub pnl: Decimal,
     /// Cumulative traded notional (`Σ price × size`) up to this sample, across
     /// taker and maker fills, counting a self-trade once. Monotonically
     /// non-decreasing.
-    #[serde(with = "rust_decimal::serde::str")]
+    #[serde(deserialize_with = "decimal_str_or_number::deserialize")]
     pub volume: Decimal,
 }
 

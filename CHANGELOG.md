@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.11.0...v0.11.1) - 2026-09-11
+
+### Fixed
+
+- *(config)* point testnet at its durable host, api.testnet.nexus.xyz/indexer (ENG-8870) ([#150](https://github.com/nexus-xyz/nexus-exchange-rs/pull/150))
+- *(deps)* update chacha20 past the yanked 0.10.1 ([#149](https://github.com/nexus-xyz/nexus-exchange-rs/pull/149))
+
+### Other
+
+- bump rust_decimal from 1.42.1 to 1.43.0 in the cargo-minor group ([#155](https://github.com/nexus-xyz/nexus-exchange-rs/pull/155))
+- the bare testnet host serves /api/v1, so a trimmed base half-works (ENG-15256) ([#154](https://github.com/nexus-xyz/nexus-exchange-rs/pull/154))
+- *(codeowners)* drop the departed SDK lead, leave the eng team (ENG-14958) ([#151](https://github.com/nexus-xyz/nexus-exchange-rs/pull/151))
+
 ## [0.11.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.10.0...v0.11.0) - 2026-08-28
 
 ### Added

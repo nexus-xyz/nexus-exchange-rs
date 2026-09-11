@@ -838,6 +838,48 @@ async fn portfolio_point_also_decodes_the_json_numbers_the_server_sends_today() 
     assert_eq!(p.volume, Decimal::ZERO);
 }
 
+/// The precision the docs warn about, demonstrated rather than asserted in prose
+/// (review of #152). The covered values above (`12345.5`, `-1234.25`, `0`) all
+/// sit in an `f64` exactly, so nothing there shows what a caller actually loses.
+///
+/// Note WHICH numbers are lossy: `visit_u64` / `visit_i64` build the `Decimal`
+/// straight from the integer, so a JSON **integer** decodes exactly however long
+/// it is. Only a non-integral JSON number takes `visit_f64`, and that is the one
+/// that has already been through binary `f64` before this crate is handed it.
+#[tokio::test]
+async fn portfolio_point_non_integral_numbers_lose_precision_past_f64() {
+    let history = fetch_portfolio(portfolio_body(
+        // 19 significant digits. f64 holds ~15-17, so the last two are gone
+        // before serde hands the value over.
+        serde_json::json!(123456789012345678.9_f64),
+        serde_json::json!(0.12345678901234567890_f64),
+        // An integer of the same length is NOT lossy — different visitor branch.
+        serde_json::json!(123456789012345678_u64),
+    ))
+    .await;
+
+    let p = &history.points[0];
+    // What arrives is f64's shortest round-tripping text, not what was sent:
+    // ...678.9 comes back as ...680, off by more than one whole unit.
+    assert_eq!(
+        p.equity,
+        "123456789012345680".parse::<Decimal>().unwrap(),
+        "a non-integral number past f64's precision is recovered, not preserved"
+    );
+    assert_ne!(
+        p.equity,
+        "123456789012345678.9".parse::<Decimal>().unwrap(),
+        "if this ever passes, the lossy path is gone and the docs' caveat is stale"
+    );
+    assert_eq!(p.pnl, "0.12345678901234568".parse::<Decimal>().unwrap());
+    // The integer branch keeps every digit.
+    assert_eq!(
+        p.volume,
+        "123456789012345678".parse::<Decimal>().unwrap(),
+        "a JSON integer takes visit_u64 and is exact at any length"
+    );
+}
+
 /// Tolerance is not "accept anything". A field that is neither a decimal string
 /// nor a number is still a contract violation and must fail the decode rather
 /// than being defaulted to zero — a fabricated `0` equity would render as a

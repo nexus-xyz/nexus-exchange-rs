@@ -351,9 +351,13 @@ pub enum Network {
     ///
     /// Served by its durable host, `api.testnet.nexus.xyz/indexer` (ENG-8870).
     /// Note the `/indexer`: it is the route prefix the deployment mounts the
-    /// service under, not part of the API contract, and the bare host answers
-    /// `404`. Testnet traffic goes there and **never** to the bare
-    /// `api.nexus.xyz`, which is real funds.
+    /// service under, not part of the API contract. Copy it whole — trimming it
+    /// does not fail cleanly, because the host serves `/api/v1/*` unprefixed as
+    /// well. A trimmed base keeps `/api/v1` calls working while `/status`,
+    /// `/orders/{id}` and the other v1-less routes `404`, and the signature
+    /// (which covers the logical path, not the base) verifies either way.
+    /// Testnet traffic goes there and **never** to the bare `api.nexus.xyz`,
+    /// which is real funds.
     Testnet,
     /// A locally run indexer. Play funds, faucet available. Not a public
     /// network and not a deployment target.

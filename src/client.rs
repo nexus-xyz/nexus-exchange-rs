@@ -717,28 +717,29 @@ mod tests {
     /// gateway base. This is the single rule every request builder relies on, so
     /// pin it directly.
     ///
-    /// On today's deployments the two bases are equal — `/api/v1` is mounted
-    /// under the gateway prefix — so this asserts the *routing rule*, not a
-    /// difference between the bases. See [`Network::direct_base_url`].
+    /// On today's deployments the two bases are equal — both surfaces are mounted
+    /// under the same `/indexer` route prefix — so this asserts the *routing
+    /// rule*, not a difference between the bases. See
+    /// [`Network::direct_base_url`].
     #[test]
     fn base_for_routes_v1_to_direct_and_rest_to_gateway() {
         let client = Client::new(Config::new(Network::Testnet));
         assert_eq!(
             client.base_for("/api/v1/orders").unwrap(),
-            "https://exchange.nexus.xyz/api/exchange"
+            "https://api.testnet.nexus.xyz/indexer"
         );
         assert_eq!(
             client.base_for("/api/v1/markets/summary").unwrap(),
-            "https://exchange.nexus.xyz/api/exchange"
+            "https://api.testnet.nexus.xyz/indexer"
         );
-        // Legacy / not-yet-migrated routes stay on the gateway base.
+        // Not-yet-migrated routes stay on the unprefixed base.
         assert_eq!(
             client.base_for("/status").unwrap(),
-            "https://exchange.nexus.xyz/api/exchange"
+            "https://api.testnet.nexus.xyz/indexer"
         );
         assert_eq!(
             client.base_for("/orders/o1").unwrap(),
-            "https://exchange.nexus.xyz/api/exchange"
+            "https://api.testnet.nexus.xyz/indexer"
         );
     }
 

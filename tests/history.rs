@@ -846,6 +846,11 @@ async fn portfolio_point_also_decodes_the_json_numbers_the_server_sends_today() 
 /// straight from the integer, so a JSON **integer** decodes exactly however long
 /// it is. Only a non-integral JSON number takes `visit_f64`, and that is the one
 /// that has already been through binary `f64` before this crate is handed it.
+// The literals below carry more digits than an `f64` holds, and that is the
+// point: `excessive_precision` exists to stop someone writing a constant they
+// think is exact, whereas here the discarded digits are the behaviour under
+// test. Truncating to what clippy suggests would delete the demonstration.
+#[allow(clippy::excessive_precision)]
 #[tokio::test]
 async fn portfolio_point_non_integral_numbers_lose_precision_past_f64() {
     let history = fetch_portfolio(portfolio_body(

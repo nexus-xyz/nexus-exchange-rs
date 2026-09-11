@@ -1367,8 +1367,10 @@ pub struct PortfolioPoint {
     pub timestamp_ms: i64,
     /// Account equity at sample time (collateral plus unrealized PnL).
     ///
-    /// Exact when the server sends the spec's decimal string; see
-    /// [`decimal_str_or_number`] for what a JSON number costs.
+    /// Exact when the server sends the spec's decimal string. A JSON number is
+    /// already a binary `f64` before this code sees it, so anything past ~15–17
+    /// significant digits is gone and the recovered value is not an exact
+    /// ledger figure.
     #[serde(deserialize_with = "decimal_str_or_number::deserialize")]
     pub equity: Decimal,
     /// Cumulative trading PnL up to this sample: realized PnL on close

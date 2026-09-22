@@ -1235,6 +1235,14 @@ impl Config {
         self
     }
 
+    /// Authenticate with a registered agent key: each request is signed with
+    /// the `x-agent` / `x-timestamp` / `x-nonce` / `x-signature` scheme. See
+    /// [`AgentSigner`](crate::AgentSigner).
+    pub fn agent_key(mut self, signer: crate::AgentSigner) -> Self {
+        self.credentials = Some(signer.into_arc());
+        self
+    }
+
     /// Authenticate with a custom [`Credential`] implementation.
     pub fn with_credential(mut self, credential: Arc<dyn Credential>) -> Self {
         self.credentials = Some(credential);

@@ -1,4 +1,6 @@
-use nexus_exchange::{Client, Config, Error, EthSigner};
+use std::sync::Arc;
+
+use nexus_exchange::{AgentSigner, Client, Config, Error, EthSigner, Nonce};
 use secrecy::ExposeSecret;
 use wiremock::matchers::{body_json, header, header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -101,4 +103,51 @@ async fn register_agent_posts_eip712_body_and_parses() {
 
 fn signer() -> EthSigner {
     EthSigner::from_hex(TEST_KEY).unwrap()
+}
+
+/// A frozen clock, so the signed request is byte-deterministic.
+#[derive(Debug)]
+struct FixedClock(u64);
+
+impl Nonce for FixedClock {
+    fn next(&self) -> u64 {
+        self.0
+    }
+}
+
+// End to end over the wire: the four agent headers the client actually sends
+// for `GET /keys` equal those produced by the exchange frontend's reference
+// signer (`signRequestHeaders`, `@noble/curves`) for the same key, timestamp
+// and nonce. The first nonce a signer issues is its timestamp.
+#[tokio::test]
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
+async fn agent_key_request_sends_reference_signed_headers() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/keys"))
+        .and(header(
+            "x-agent",
+            "0x1a642f0e3c3af545e7acbd38b07251b3990914f1",
+        ))
+        .and(header("x-timestamp", "1776033900000"))
+        .and(header("x-nonce", "1776033900000"))
+        .and(header(
+            "x-signature",
+            "0x9b198e523e2027f6c6d071a8831952092ab4ae18e8592e9a038d1e5193e6078b\
+             70a9332c37197a2ce4c3825680d127800b35f885af36db55d5827869bbdab3131b",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let agent =
+        AgentSigner::from_hex("0x0101010101010101010101010101010101010101010101010101010101010101")
+            .unwrap();
+    let client = Client::new(
+        Config::with_base_url(server.uri())
+            .agent_key(agent)
+            .with_nonce(Arc::new(FixedClock(1_776_033_900_000))),
+    );
+    assert!(client.fetch_api_keys().await.unwrap().is_empty());
 }

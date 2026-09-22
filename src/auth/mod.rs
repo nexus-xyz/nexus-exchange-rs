@@ -11,11 +11,16 @@
 //!     `X-Timestamp` / `X-Signature`), the scheme used for trading.
 //!   - [`Credentials::Session`] — a bearer token from `POST /auth/login`, used
 //!     only for `/keys` management.
+//!
+//!   [`AgentSigner`] implements it for the third scheme: agent-key request
+//!   signing (`x-agent` / `x-timestamp` / `x-nonce` / `x-signature`, a
+//!   recoverable secp256k1 signature over a keccak256 prehash).
 //! - [`Nonce`] — the source of the millisecond timestamp stamped on each signed
 //!   request. Defaults to [`SystemTimeNonce`]; pluggable for clock-skew
 //!   correction or deterministic tests.
 //! - [`EthSigner`] — an EVM wallet key that produces the EIP-191 `signIn` and
-//!   EIP-712 `registerAgent` payloads.
+//!   EIP-712 `registerAgent` payloads. The agent key registered this way then
+//!   signs requests through [`AgentSigner`].
 //!
 //! Every secret lives in a [`secrecy::SecretString`], and this module signs —
 //! it never stores sessions, refreshes tokens, or otherwise manages state.
@@ -25,6 +30,9 @@
 // surface is still only what is re-exported below.
 pub(crate) mod eth;
 
+mod agent;
+
+pub use agent::AgentSigner;
 pub use eth::{AgentRegistration, EthSigner, LoginRequest, SIGN_IN_MESSAGE};
 
 use std::fmt;
@@ -58,8 +66,9 @@ pub struct SigningContext<'a> {
 
 /// A credential that authenticates REST requests by contributing headers.
 ///
-/// Implement this to plug in a custom scheme (e.g. an agent-key signer or an
-/// HSM-backed HMAC); the built-in [`Credentials`] covers the API's own schemes.
+/// Implement this to plug in a custom scheme (e.g. an HSM-backed HMAC). The
+/// API's own schemes are covered by [`Credentials`] (HMAC and session) and by
+/// [`AgentSigner`] (agent key).
 /// Implementations must be cheap to call and free of side effects — the client
 /// may invoke [`auth_headers`](Credential::auth_headers) once per request,
 /// including on retries.

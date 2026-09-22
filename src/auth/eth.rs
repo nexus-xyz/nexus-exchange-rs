@@ -134,20 +134,28 @@ impl EthSigner {
     /// signature with `v ∈ {27, 28}` (Ethereum convention). The signature is
     /// deterministic (RFC 6979) and low-S normalized (EIP-2).
     fn sign_digest(&self, digest: &[u8; 32]) -> Result<String> {
-        let key = signing_key(&self.key)?;
-        let (sig, recid): (Signature, RecoveryId) = key
-            .sign_prehash_recoverable(digest)
-            .map_err(|_| Error::credentials("failed to sign digest"))?;
-        let mut out = [0u8; 65];
-        out[..64].copy_from_slice(&sig.to_bytes());
-        out[64] = 27 + recid.to_byte();
-        Ok(format!("0x{}", hex::encode(out)))
+        sign_prehash(&self.key, digest)
     }
+}
+
+/// Sign a 32-byte prehash with the hex secp256k1 key in `key`, returning a
+/// `0x`-prefixed 65-byte `r||s||v` signature with `v ∈ {27, 28}`. Deterministic
+/// (RFC 6979) and low-S (EIP-2). Shared by [`EthSigner`] and the agent-key
+/// request signer so both emit one signature encoding.
+pub(super) fn sign_prehash(key: &SecretString, digest: &[u8; 32]) -> Result<String> {
+    let key = signing_key(key)?;
+    let (sig, recid): (Signature, RecoveryId) = key
+        .sign_prehash_recoverable(digest)
+        .map_err(|_| Error::credentials("failed to sign digest"))?;
+    let mut out = [0u8; 65];
+    out[..64].copy_from_slice(&sig.to_bytes());
+    out[64] = 27 + recid.to_byte();
+    Ok(format!("0x{}", hex::encode(out)))
 }
 
 /// Decode the hex private key into a [`SigningKey`], with the intermediate
 /// bytes zeroized on drop. The `SigningKey` itself zeroizes its scalar on drop.
-fn signing_key(key: &SecretString) -> Result<SigningKey> {
+pub(super) fn signing_key(key: &SecretString) -> Result<SigningKey> {
     let stripped = strip_0x(key.expose_secret());
     let bytes = Zeroizing::new(
         hex::decode(stripped).map_err(|_| Error::credentials("private key must be hex"))?,
@@ -159,7 +167,7 @@ fn signing_key(key: &SecretString) -> Result<SigningKey> {
 }
 
 /// Derive the 20-byte Ethereum address: `keccak256(uncompressed_pubkey[1..])[12..]`.
-fn address_of(key: &SigningKey) -> [u8; 20] {
+pub(super) fn address_of(key: &SigningKey) -> [u8; 20] {
     let point = key.verifying_key().to_encoded_point(false);
     // `point` is 65 bytes: 0x04 || X(32) || Y(32). Hash the 64 coordinate bytes.
     let hash = Keccak256::digest(&point.as_bytes()[1..]);
@@ -249,7 +257,7 @@ fn parse_address(s: &str) -> Result<[u8; 20]> {
 }
 
 /// Render a 20-byte address as lowercase `0x`-prefixed hex.
-fn to_hex_address(addr: &[u8; 20]) -> String {
+pub(super) fn to_hex_address(addr: &[u8; 20]) -> String {
     format!("0x{}", hex::encode(addr))
 }
 

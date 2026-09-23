@@ -5,7 +5,8 @@
 #   * the set must equal the REST operations implemented in src/rest.rs, modulo
 #     the one documented allowlist in check_spec_drift.py:
 #       - NON_REST_TARGETS — targeted but reached without a REST helper call;
-#         e.g. GET /ws (the WebSocket upgrade, opened by the ws client).
+#         e.g. GET /ws and GET /stream (WebSocket upgrades, opened by the
+#         ws and stream clients).
 #
 # There is no ahead-of-spec parking (ENG-8617). Every REST wrapper in src/rest.rs
 # is listed here, and every line here exists in the pinned spec — so an operation
@@ -88,3 +89,4 @@ GET /admin/tiers
 DELETE /admin/tiers/{address}
 POST /ws/token
 GET /ws
+GET /stream

@@ -414,6 +414,7 @@ async fn tokenless_401_is_permanent_and_typed() {
                     assert_eq!(code, "ws_token_missing");
                     assert!(message.contains("requires a token"), "{message}");
                     assert!(message.contains("`/stream`"), "{message}");
+                    assert!(message.contains("market_stream"), "{message}");
                 }
                 other => panic!("expected TerminalError::Auth, got {other:?}"),
             }

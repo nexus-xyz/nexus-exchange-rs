@@ -208,12 +208,14 @@ HELPER_METHOD = {
 CODE_ONLY_OPS = frozenset()
 
 # Listed in endpoints.txt but reached WITHOUT a REST helper call, so the code
-# parser cannot (and should not) see it. The WebSocket upgrade is opened by the
-# ws client via tokio_tungstenite against the configured ws_base() origin
-# (host-root `/ws`, see src/config.rs / src/ws/typed.rs), not a `self.get`. Paths
-# use the normalized `{}` placeholder form.
+# parser cannot (and should not) see it. Both WebSocket upgrades are opened via
+# tokio_tungstenite, not a `self.get`: `/ws` by the account client against
+# ws_base() (src/ws.rs, src/ws/typed.rs), `/stream` by the public market-data
+# client against stream_url() (src/stream.rs). Paths use the normalized `{}`
+# placeholder form.
 NON_REST_TARGETS = {
     ("GET", "/ws"),
+    ("GET", "/stream"),
 }
 
 # Spec operations that exist but the SDK deliberately does not target. Listing
@@ -226,7 +228,6 @@ NON_REST_TARGETS = {
 # contradiction and fails, so an exemption cannot outlive its cause.
 NOT_TARGETED = {
     ("POST", "/ws-tokens"): "deprecated; superseded by POST /ws/token",
-    ("GET", "/stream"): "deprecated SSE stream; superseded by the /ws upgrade",
     ("GET", "/bridge/wallets"): "EX-Bridge, wrapped under ENG-5639 not here",
     ("POST", "/bridge/wallets"): "EX-Bridge, wrapped under ENG-5639 not here",
     ("POST", "/bridge/wallets/challenge"): "EX-Bridge, wrapped under ENG-5639 not here",

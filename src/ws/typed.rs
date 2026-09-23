@@ -162,9 +162,10 @@ impl Client {
     ///
     /// Without credentials, a server that answers the upgrade `401`/`403` is
     /// refused permanently: the stream yields one [`crate::TerminalError::Auth`]
-    /// and ends, rather than reconnect against the same answer. Public market
-    /// data over `/stream` is not yet supported by this SDK (ENG-17178). Transient failures
-    /// (network errors, `5xx`, a dropped socket) still reconnect with backoff.
+    /// and ends, rather than reconnect against the same answer. For public
+    /// market data without credentials, use the separate `/stream` socket via
+    /// [`Client::market_stream`]. Transient failures (network errors, `5xx`, a
+    /// dropped socket) still reconnect with backoff.
     ///
     /// Must be called from within a Tokio runtime (it spawns a task).
     ///

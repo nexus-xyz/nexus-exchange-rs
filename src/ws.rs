@@ -79,7 +79,6 @@ pub use typed::MessageStream;
 use crate::{Client, Error, Result, TerminalError};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::task::JoinHandle;
@@ -118,9 +117,47 @@ pub enum Event {
     /// The server refused the connection in a way no retry can fix — today, a
     /// `401`/`403` on an upgrade that presented no token (see
     /// [`Client::connect`]). The task does **not** reconnect: this is the last
-    /// event, and the stream ends after it. The error is
-    /// [`TerminalError::Auth`].
-    Rejected(Arc<Error>),
+    /// event, and the stream ends after it. [`Rejection::to_error`] gives the
+    /// same [`TerminalError::Auth`] the typed stream yields.
+    Rejected(Rejection),
+}
+
+/// A handshake the server refused permanently — see [`Event::Rejected`].
+///
+/// Plain data rather than an [`Error`], so [`Event`] keeps its auto traits;
+/// [`to_error`](Self::to_error) converts it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Rejection {
+    /// HTTP status the upgrade was answered with (`401` or `403`).
+    pub status: u16,
+    /// Machine-readable code from the response body (e.g.
+    /// `ws_token_missing`), or the status when the body carries none.
+    pub code: String,
+    /// What went wrong and what to do instead.
+    pub message: String,
+}
+
+impl Rejection {
+    /// This rejection as the crate's error type:
+    /// [`TerminalError::Auth`], never retryable.
+    pub fn to_error(&self) -> Error {
+        TerminalError::Auth {
+            code: self.code.clone(),
+            message: self.message.clone(),
+        }
+        .into()
+    }
+}
+
+impl std::fmt::Display for Rejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "rejected [{} {}]: {}",
+            self.status, self.code, self.message
+        )
+    }
 }
 
 /// Why a tokenless upgrade to the account socket was refused, and what to do
@@ -145,7 +182,7 @@ pub(crate) const TOKENLESS_REJECTION: &str = "the `/ws` account socket requires 
 pub(crate) fn permanent_handshake_error(
     err: &tokio_tungstenite::tungstenite::Error,
     token_presented: bool,
-) -> Option<Error> {
+) -> Option<Rejection> {
     let tokio_tungstenite::tungstenite::Error::Http(response) = err else {
         return None;
     };
@@ -161,13 +198,11 @@ pub(crate) fn permanent_handshake_error(
         .and_then(|body| serde_json::from_slice::<Value>(body).ok())
         .and_then(|v| v.get("code").and_then(Value::as_str).map(str::to_string))
         .unwrap_or_else(|| status.to_string());
-    Some(
-        TerminalError::Auth {
-            code,
-            message: TOKENLESS_REJECTION.to_string(),
-        }
-        .into(),
-    )
+    Some(Rejection {
+        status,
+        code,
+        message: TOKENLESS_REJECTION.to_string(),
+    })
 }
 
 /// A command sent from a [`Subscription`] handle to its background task.
@@ -463,7 +498,7 @@ async fn run(
                         // A tokenless upgrade refused with 401/403 will be refused
                         // identically forever: surface it once and stop.
                         if let Some(permanent) = permanent_handshake_error(&err, auth.is_some()) {
-                            let _ = emit_lifecycle(&event_tx, Event::Rejected(Arc::new(permanent)));
+                            let _ = emit_lifecycle(&event_tx, Event::Rejected(permanent));
                             return;
                         }
                         // Redact defensively: the token rides in `url`'s query, and

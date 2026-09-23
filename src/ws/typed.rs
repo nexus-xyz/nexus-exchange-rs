@@ -262,7 +262,7 @@ async fn run(
         let connected = tokio_tungstenite::connect_async(url.as_str()).await;
         if let Err(err) = &connected {
             if let Some(permanent) = super::permanent_handshake_error(err, authed) {
-                let _ = emit(&event_tx, Err(permanent));
+                let _ = emit(&event_tx, Err(permanent.to_error()));
                 return;
             }
         }

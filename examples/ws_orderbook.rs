@@ -43,9 +43,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Event::Disconnected(reason) => println!("disconnected: {reason} (will reconnect)"),
             // Permanent refusal (e.g. `401` on a tokenless upgrade): the client
             // does not reconnect, so report it and exit non-zero.
-            Event::Rejected(err) => {
+            Event::Rejected(rejection) => {
                 sub.close().await;
-                return Err(format!("stream refused: {err}").into());
+                return Err(format!("stream refused: {}", rejection.to_error()).into());
             }
             // `Lagged` means we read too slowly and the client dropped frames to
             // keep the socket drained. Surfaced so we can detect the gap.

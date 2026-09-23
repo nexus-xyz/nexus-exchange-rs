@@ -406,8 +406,10 @@ async fn tokenless_401_is_permanent_and_typed() {
     let mut sub = client_for(addr, 16).connect(vec![json!({ "type": "subscribe" })]);
 
     match next_event(&mut sub).await {
-        Some(Event::Rejected(err)) => {
-            match &*err {
+        Some(Event::Rejected(rejection)) => {
+            assert_eq!(rejection.status, 401);
+            let err = rejection.to_error();
+            match &err {
                 Error::Terminal(TerminalError::Auth { code, message }) => {
                     assert_eq!(code, "ws_token_missing");
                     assert!(message.contains("requires a token"), "{message}");
@@ -432,7 +434,10 @@ async fn tokenless_403_is_permanent() {
     let (addr, attempts) = refusing_server("403 Forbidden", "nope").await;
     let mut sub = client_for(addr, 16).connect(vec![]);
     match next_event(&mut sub).await {
-        Some(Event::Rejected(err)) => assert_eq!(err.code(), Some("403")),
+        Some(Event::Rejected(rejection)) => {
+            assert_eq!(rejection.status, 403);
+            assert_eq!(rejection.to_error().code(), Some("403"));
+        }
         other => panic!("expected Rejected, got {other:?}"),
     }
     assert!(next_event(&mut sub).await.is_none());

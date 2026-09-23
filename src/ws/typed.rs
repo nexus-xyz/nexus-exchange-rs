@@ -185,15 +185,9 @@ impl Client {
             ));
         }
 
-        // The WS origin is a separate host from the REST base and isn't known
-        // for every network (no usable WS origin yet — ENG-3398); fail fast
+        // No declared socket, or a network that is not targetable: fail fast
         // rather than spawn a task that can't connect.
-        let ws_url = self.config.ws_url.clone().ok_or_else(|| {
-            Error::invalid_request(
-                "no WebSocket endpoint configured for this network (no usable WS origin \
-                 yet — ENG-3398); set one with Config::with_ws_url",
-            )
-        })?;
+        let ws_url = self.ws_endpoint()?.to_string();
 
         let (event_tx, event_rx) = mpsc::channel(self.config.ws.channel_capacity);
         let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);

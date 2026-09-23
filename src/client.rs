@@ -165,6 +165,26 @@ impl Client {
         })
     }
 
+    /// The WebSocket URL to open, or why there is none.
+    ///
+    /// The streaming counterpart of [`base_for`](Self::base_for), and the gate
+    /// every streaming entry point resolves its URL through: it refuses
+    /// [`Network::Mainnet`] for the same reason REST does — `api.nexus.xyz`
+    /// does not resolve yet, so [`Network::ws_base`] reports the shape of a
+    /// host that is not there — and reports a network that declares no socket
+    /// rather than guessing one.
+    pub(crate) fn ws_endpoint(&self) -> Result<&str> {
+        if matches!(self.config.network, Network::Mainnet) {
+            return Err(Error::invalid_request(MAINNET_NOT_TARGETABLE));
+        }
+        self.config.ws_url.as_deref().ok_or_else(|| {
+            Error::invalid_request(
+                "no WebSocket endpoint configured for this network; set one with \
+                 Config::with_ws_url",
+            )
+        })
+    }
+
     /// Unauthenticated `GET`, deserializing the JSON response and decoding the
     /// API's `{ code, message }` envelope on non-2xx.
     ///

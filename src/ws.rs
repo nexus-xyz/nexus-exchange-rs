@@ -188,13 +188,13 @@ impl Client {
     /// The task reconnects automatically with the configured [`Backoff`] and
     /// re-sends `subscriptions` after each reconnect.
     ///
-    /// The stream targets the configured WebSocket origin (a separate host from
-    /// the REST base — see [`Network::ws_base`](crate::Network::ws_base)). If
-    /// none is configured for the network (no usable WS origin yet —
-    /// ENG-3398) the background task immediately emits a single
+    /// The stream targets the configured WebSocket URL (see
+    /// [`Network::ws_base`](crate::Network::ws_base)). If there is none — a
+    /// custom base that declared no socket — or the network is
+    /// [`Network::Mainnet`](crate::Network::Mainnet), which is not targetable
+    /// yet, the background task immediately emits a single
     /// [`Event::Disconnected`] explaining that and stops; set one with
-    /// [`Config::with_ws_url`](crate::Config::with_ws_url) or use a network
-    /// whose host is known.
+    /// [`Config::with_ws_url`](crate::Config::with_ws_url).
     ///
     /// Must be called from within a Tokio runtime (it spawns a task).
     pub fn connect(&self, subscriptions: Vec<Value>) -> Subscription {
@@ -208,8 +208,9 @@ impl Client {
     ///
     /// Requires credentials (the token mint is signed). Fails fast — before any
     /// network round-trip — if no WebSocket endpoint is configured for the
-    /// network (no usable WS origin yet — ENG-3398); set one with
-    /// [`Config::with_ws_url`](crate::Config::with_ws_url) until it is.
+    /// network (set one with
+    /// [`Config::with_ws_url`](crate::Config::with_ws_url)) or the network is
+    /// [`Network::Mainnet`](crate::Network::Mainnet).
     ///
     /// The minted token is short-lived and **single-use**, so it authenticates
     /// exactly one connection. The background task therefore mints a *fresh*
@@ -222,12 +223,7 @@ impl Client {
     pub async fn connect_ws(&self, subscriptions: Vec<Value>) -> Result<Subscription> {
         // Resolve the endpoint first: an unconfigured network must fail here,
         // not after spending a mint round-trip on a stream that can't connect.
-        if self.config.ws_url.is_none() {
-            return Err(Error::invalid_request(
-                "no WebSocket endpoint configured for this network (no usable WS origin \
-                 yet — ENG-3398); set one with Config::with_ws_url",
-            ));
-        }
+        self.ws_endpoint()?;
         // Pre-mint the first token so credential / transport problems surface
         // here as an error rather than as a background Disconnected event.
         let token = self.mint_web_socket_token().await?.token;
@@ -241,7 +237,10 @@ impl Client {
         let (event_tx, event_rx) = mpsc::channel(self.config.ws.channel_capacity);
         let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
 
-        let base = self.config.ws_url.clone();
+        let base = self
+            .ws_endpoint()
+            .map(str::to_string)
+            .map_err(|e| e.to_string());
         let backoff = self.config.ws.backoff.clone();
         let user_agent = self.config.user_agent.clone();
         // Carry a client clone to re-mint tokens on reconnect, but only for an
@@ -285,9 +284,9 @@ fn emit_lifecycle(event_tx: &mpsc::Sender<Event>, event: Event) -> bool {
 /// Inputs to the background reconnect loop, grouped to keep [`run`]'s signature
 /// within reason.
 struct RunConfig {
-    /// WebSocket origin; `None` means the network has no known WS host
-    /// (no usable WS origin yet — ENG-3398), reported once before stopping.
-    base: Option<String>,
+    /// WebSocket URL, or why there is none (no declared socket, or a network
+    /// that is not targetable) — reported once before stopping.
+    base: std::result::Result<String, String>,
     /// `Some` for an authenticated stream — a client clone used to re-mint a
     /// single-use token before every (re)connect.
     auth: Option<Client>,
@@ -314,18 +313,14 @@ async fn run(
         backoff,
         user_agent,
     } = config;
-    let Some(base) = base else {
-        // `connect` on a network with no known WS host: report once and stop,
-        // rather than spin a backoff loop against an endpoint that can't exist.
-        let _ = emit_lifecycle(
-            &event_tx,
-            Event::Disconnected(
-                "no WebSocket endpoint configured for this network (no usable WS origin \
-                 yet — ENG-3398); set one with Config::with_ws_url"
-                    .to_string(),
-            ),
-        );
-        return;
+    let base = match base {
+        Ok(base) => base,
+        Err(reason) => {
+            // `connect` with no usable endpoint: report once and stop, rather
+            // than spin a backoff loop against an endpoint that can't exist.
+            let _ = emit_lifecycle(&event_tx, Event::Disconnected(reason));
+            return;
+        }
     };
 
     let mut delays = backoff.iter();

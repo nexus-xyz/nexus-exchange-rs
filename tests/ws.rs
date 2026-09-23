@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use nexus_exchange::ws::{Backoff, Event, Subscription};
-use nexus_exchange::{Client, Config, Network};
+use nexus_exchange::{Client, Config, CustomNetwork, Funds, Network};
 use serde_json::{json, Value};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
@@ -276,12 +276,22 @@ async fn connect_ws_mints_token_and_presents_it_on_upgrade() {
     let _ = server.await;
 }
 
+/// A custom deployment that declared no WebSocket URL — the one case with no
+/// socket to open, since a caller-supplied REST base does not say where its
+/// host mounts one.
+fn custom_without_ws() -> Network {
+    Network::Custom(
+        CustomNetwork::new("preview", "https://preview.example.invalid", Funds::Play)
+            .expect("valid custom network"),
+    )
+}
+
 /// `connect_ws` refuses — fast, before any network round-trip — when the
-/// network has no confirmed WS host (ENG-3398). No server is mocked, so a mint
-/// attempt would hang/fail the test; the check must short-circuit before it.
+/// network declares no WS URL. No server is mocked, so a mint attempt would
+/// hang/fail the test; the check must short-circuit before it.
 #[tokio::test]
 async fn connect_ws_errors_when_endpoint_unconfigured() {
-    let client = Client::new(Config::new(Network::Testnet).api_key("nx", TEST_SECRET));
+    let client = Client::new(Config::new(custom_without_ws()).api_key("nx", TEST_SECRET));
     let err = client.connect_ws(vec![]).await.unwrap_err();
     assert!(
         err.to_string().contains("no WebSocket endpoint configured"),
@@ -289,12 +299,12 @@ async fn connect_ws_errors_when_endpoint_unconfigured() {
     );
 }
 
-/// The low-level `connect` on a network with no WS host reports the missing
-/// endpoint once and then ends the stream, instead of spinning a reconnect
-/// loop against a host that can't exist.
+/// The low-level `connect` with no WS URL reports the missing endpoint once
+/// and then ends the stream, instead of spinning a reconnect loop against a
+/// host that can't exist.
 #[tokio::test]
 async fn connect_without_endpoint_reports_once_then_ends() {
-    let client = Client::new(Config::new(Network::Testnet));
+    let client = Client::new(Config::new(custom_without_ws()));
     let mut sub = client.connect(vec![]);
     match next_event(&mut sub).await {
         Some(Event::Disconnected(reason)) => {
@@ -309,6 +319,25 @@ async fn connect_without_endpoint_reports_once_then_ends() {
         next_event(&mut sub).await.is_none(),
         "stream should end after reporting the missing endpoint"
     );
+}
+
+/// Mainnet reports a WS URL (the shape its host will serve), but the host does
+/// not resolve yet, so every streaming entry point refuses it locally — the
+/// same gate REST applies — rather than resolve or retry a real-funds host.
+#[tokio::test]
+async fn mainnet_streams_are_refused_locally() {
+    let client = Client::new(Config::new(Network::Mainnet).api_key("nx", TEST_SECRET));
+    assert!(Network::Mainnet.ws_base().is_some());
+
+    let err = client.connect_ws(vec![]).await.unwrap_err();
+    assert!(err.to_string().contains("not targetable"), "{err}");
+
+    let mut sub = Client::new(Config::new(Network::Mainnet)).connect(vec![]);
+    match next_event(&mut sub).await {
+        Some(Event::Disconnected(reason)) => assert!(reason.contains("not targetable"), "{reason}"),
+        other => panic!("expected Disconnected, got {other:?}"),
+    }
+    assert!(next_event(&mut sub).await.is_none());
 }
 
 /// Test-only helper to unwrap a `Message` event.

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.11.0...v0.11.1) - 2026-09-23
+
+### Added
+
+- *(stream)* typed public market-data client over /stream (ENG-17178) ([#159](https://github.com/nexus-xyz/nexus-exchange-rs/pull/159))
+- *(auth)* agent-key request signer (ENG-3402) ([#156](https://github.com/nexus-xyz/nexus-exchange-rs/pull/156))
+
+### Fixed
+
+- *(ws)* resolve testnet and mainnet sockets under /v1 (ENG-17132) ([#158](https://github.com/nexus-xyz/nexus-exchange-rs/pull/158))
+- *(deps)* bump rustls to 0.23.45 for the cargo-deny advisory ([#161](https://github.com/nexus-xyz/nexus-exchange-rs/pull/161))
+- *(types)* decode ClosedPosition's CCXT spellings ahead of spec 0.9.74 (ENG-16850) ([#157](https://github.com/nexus-xyz/nexus-exchange-rs/pull/157))
+- *(types)* decode PortfolioPoint from a decimal string or a JSON number (ENG-8439) ([#152](https://github.com/nexus-xyz/nexus-exchange-rs/pull/152))
+- *(config)* point testnet at its durable host, api.testnet.nexus.xyz/indexer (ENG-8870) ([#150](https://github.com/nexus-xyz/nexus-exchange-rs/pull/150))
+- *(deps)* update chacha20 past the yanked 0.10.1 ([#149](https://github.com/nexus-xyz/nexus-exchange-rs/pull/149))
+
+### Other
+
+- *(auth)* client-side signing benchmark, plus SigningContext::new (ENG-15689) ([#160](https://github.com/nexus-xyz/nexus-exchange-rs/pull/160))
+- bump rust_decimal from 1.42.1 to 1.43.0 in the cargo-minor group ([#155](https://github.com/nexus-xyz/nexus-exchange-rs/pull/155))
+- the bare testnet host serves /api/v1, so a trimmed base half-works (ENG-15256) ([#154](https://github.com/nexus-xyz/nexus-exchange-rs/pull/154))
+- *(codeowners)* drop the departed SDK lead, leave the eng team (ENG-14958) ([#151](https://github.com/nexus-xyz/nexus-exchange-rs/pull/151))
+
 ## [0.11.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.10.0...v0.11.0) - 2026-08-28
 
 ### Added

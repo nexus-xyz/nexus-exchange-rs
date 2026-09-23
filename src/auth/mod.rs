@@ -64,6 +64,27 @@ pub struct SigningContext<'a> {
     pub timestamp_ms: u64,
 }
 
+impl<'a> SigningContext<'a> {
+    /// Build a signing context by hand — for testing or benchmarking a
+    /// [`Credential`] outside the client (see `benches/signing.rs`). The client
+    /// builds these itself for every request it sends.
+    pub fn new(
+        method: &'a str,
+        path: &'a str,
+        query: &'a str,
+        body: &'a [u8],
+        timestamp_ms: u64,
+    ) -> Self {
+        Self {
+            method,
+            path,
+            query,
+            body,
+            timestamp_ms,
+        }
+    }
+}
+
 /// A credential that authenticates REST requests by contributing headers.
 ///
 /// Implement this to plug in a custom scheme (e.g. an HSM-backed HMAC). The

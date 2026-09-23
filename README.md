@@ -164,6 +164,14 @@ For a complete command-line application built on the SDK — every request goes
 through the crate's `Client`, with no transport of its own — see
 [`nexus-exchange-cli`](https://github.com/nexus-xyz/nexus-exchange-cli).
 
+## Benchmarks
+
+`cargo bench --bench signing` measures client-side request signing, both HMAC
+and agent-key, on one fixed order request (no network I/O), and prints p50 /
+p95 per signature and signatures/sec. The CLI signs through this crate, so
+these numbers are its numbers too. Published results and methodology: the API
+Reference's Rate Limits guide, "Can your signer keep up?".
+
 ## API version
 
 <!-- api-version-sync:start -->

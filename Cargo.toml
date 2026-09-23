@@ -42,3 +42,8 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"]
 wiremock = "0.6"
 rust_decimal_macros = "1"
 secrecy = "0.10"
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "signing"
+harness = false

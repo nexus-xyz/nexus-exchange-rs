@@ -82,6 +82,35 @@ on `/positions/closed`. Two things follow that are easy to get wrong:
 - `/account/equity-history` defaults to **720**, not 100, so omitting `limit`
   there asks for the whole ~1h / 5s window and the first page is usually the last.
 
+## Public market-data stream
+
+`Client::market_stream` opens the public `/stream` socket, which needs no
+credentials (`wss://api.testnet.nexus.xyz/v1/stream` on testnet). It is a
+different socket and protocol from the account stream (`/ws`, token plus `op`
+envelope):
+
+```rust
+use nexus_exchange::stream::{StreamChannel, StreamEvent};
+
+let mut stream = client.market_stream(StreamChannel::all_for("BTC-USDX-PERP"))?;
+while let Some(event) = stream.next().await {
+    match event {
+        StreamEvent::Book(book) => { /* full top-20 snapshot: replace, never merge */ }
+        StreamEvent::Gap { missed } => { /* server dropped updates: refetch over REST */ }
+        _ => {}
+    }
+}
+```
+
+The server reads only the first message, so the channel set is fixed for the
+stream's life. Book `sequence` only increases but skips values, so a jump is not
+a lost update; loss is reported as `StreamEvent::Gap`. The public load balancer
+closes sockets about every 30 s, and the client reconnects and resubscribes on
+its own.
+
+Channels are book, trades and market status. ADL settlements are not on this
+socket: the server withholds them because they name accounts (ENG-17189).
+
 ## Examples
 
 Runnable, copy-pasteable programs live under [`examples/`](./examples) and
@@ -92,7 +121,7 @@ double as the primary docs. Run one with `cargo run --example <name>`:
 | [`public_endpoints`](./examples/public_endpoints.rs) | no | Markets, tickers, top of book |
 | [`orderbook_snapshot`](./examples/orderbook_snapshot.rs) | no | Full order-book snapshot + spread |
 | [`recent_trades`](./examples/recent_trades.rs) | no | Recent public trade prints |
-| [`ws_orderbook`](./examples/ws_orderbook.rs) | no | Stream live order-book updates over the WebSocket |
+| [`ws_orderbook`](./examples/ws_orderbook.rs) | no | Stream live book snapshots and trades from the public `/stream` socket |
 | [`place_order`](./examples/place_order.rs) | yes | Normalize to tick/lot, then place a limit order |
 | [`cancel_order`](./examples/cancel_order.rs) | yes | Cancel one order by id, one market, or cancel all |
 | [`account_balances`](./examples/account_balances.rs) | yes | Balance, collateral, equity, margin |

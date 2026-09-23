@@ -165,8 +165,8 @@ impl std::fmt::Display for Rejection {
 pub(crate) const TOKENLESS_REJECTION: &str = "the `/ws` account socket requires a token and \
      this connection presented none: configure credentials and connect with \
      `Client::connect_ws` (or `Client::subscribe`, which mints a token whenever credentials are \
-     set). Public market data over `/stream` is not yet supported by this SDK \
-     (ENG-17178)";
+     set). For public market data without credentials, use the `/stream` socket via \
+     `Client::market_stream`";
 
 /// Classify a failed WebSocket handshake. Returns the permanent error when a
 /// retry cannot help, `None` when the failure is transient and the caller
@@ -292,10 +292,10 @@ impl Client {
     /// `401`/`403` is therefore refused permanently: the task emits a single
     /// [`Event::Rejected`] carrying [`TerminalError::Auth`] and stops, rather
     /// than reconnect against the same answer. Use
-    /// [`connect_ws`](Self::connect_ws) with credentials. Public market data
-    /// over `/stream` speaks a different protocol that this SDK does not
-    /// implement yet (ENG-17178). Transient failures (network errors, `5xx`, a dropped
-    /// socket) still reconnect with backoff.
+    /// [`connect_ws`](Self::connect_ws) with credentials, or, for public
+    /// market data without credentials, the separate `/stream` socket via
+    /// [`market_stream`](Self::market_stream). Transient failures (network
+    /// errors, `5xx`, a dropped socket) still reconnect with backoff.
     ///
     /// Must be called from within a Tokio runtime (it spawns a task).
     pub fn connect(&self, subscriptions: Vec<Value>) -> Subscription {
@@ -554,7 +554,7 @@ async fn wait_backoff(
 /// construction and the spec tag is an ASCII `vX.Y.Z` string, so neither insert
 /// can realistically fail; if one somehow did we connect without that header
 /// rather than refuse to stream.
-fn handshake_request(
+pub(crate) fn handshake_request(
     url: &str,
     user_agent: &str,
 ) -> tokio_tungstenite::tungstenite::Result<HandshakeRequest> {

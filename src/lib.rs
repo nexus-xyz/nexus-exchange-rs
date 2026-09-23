@@ -2,7 +2,8 @@
 //!
 //! A thin, idiomatic wrapper over the REST + WebSocket API. This is the crate
 //! skeleton; REST endpoints ([`rest`]), authentication ([`auth`]), and
-//! streaming ([`ws`]) are filled in incrementally.
+//! streaming are filled in incrementally: [`stream`] is the public market-data
+//! socket (no credentials), [`ws`] the authenticated account socket.
 #![deny(unreachable_pub)]
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
@@ -15,6 +16,7 @@ mod ratelimit;
 pub mod auth;
 pub mod markets;
 pub mod rest;
+pub mod stream;
 pub mod types;
 pub mod ws;
 

@@ -157,6 +157,14 @@ impl Client {
     /// client mints a single-use `/ws/token` before each connection and presents
     /// it on the upgrade URL — so this requires credentials, and a request for a
     /// private channel without them fails fast here with [`crate::TerminalError::Credentials`].
+    /// With credentials configured it mints a token for public channels too,
+    /// because the `/ws` account socket refuses a tokenless upgrade.
+    ///
+    /// Without credentials, a server that answers the upgrade `401`/`403` is
+    /// refused permanently: the stream yields one [`crate::TerminalError::Auth`]
+    /// and ends, rather than reconnect against the same answer. Public market
+    /// data over `/stream` is not yet supported by this SDK (ENG-17178). Transient failures
+    /// (network errors, `5xx`, a dropped socket) still reconnect with backoff.
     ///
     /// Must be called from within a Tokio runtime (it spawns a task).
     ///
@@ -225,7 +233,11 @@ async fn run(
     let mut cursors: HashMap<CursorKey, u64> = HashMap::new();
 
     loop {
-        let authed = channels.iter().any(Channel::is_private);
+        // Mint whenever the stream needs a token or credentials make one
+        // available: the `/ws` account socket refuses a tokenless upgrade even
+        // for public channels, so a credentialed client always presents one.
+        let authed =
+            channels.iter().any(Channel::is_private) || client.config.credentials.is_some();
 
         // Mint a fresh single-use token for private streams and build the URL.
         let url = match connect_url(&client, &ws_url, authed).await {
@@ -243,9 +255,18 @@ async fn run(
             }
         };
 
-        // A connect failure is transient and transparent; fall through to back
-        // off and retry. On success, serve the connection until it drops.
-        if let Ok((stream, _resp)) = tokio_tungstenite::connect_async(url.as_str()).await {
+        // A connect failure is transient and transparent — fall through to back
+        // off and retry — except a tokenless upgrade refused with 401/403,
+        // which would be refused identically forever: surface it and stop.
+        // On success, serve the connection until it drops.
+        let connected = tokio_tungstenite::connect_async(url.as_str()).await;
+        if let Err(err) = &connected {
+            if let Some(permanent) = super::permanent_handshake_error(err, authed) {
+                let _ = emit(&event_tx, Err(permanent));
+                return;
+            }
+        }
+        if let Ok((stream, _resp)) = connected {
             let mut delivered = false;
             let exit = serve(
                 stream,

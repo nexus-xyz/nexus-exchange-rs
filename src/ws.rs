@@ -76,9 +76,10 @@ pub use backoff::{Backoff, BackoffIter};
 pub use protocol::{Channel, EngineEnvelope, ServerMessage};
 pub use typed::MessageStream;
 
-use crate::{Client, Error, Result};
+use crate::{Client, Error, Result, TerminalError};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::task::JoinHandle;
@@ -114,6 +115,59 @@ pub enum Event {
         /// Number of message frames dropped since the last delivered message.
         dropped: u64,
     },
+    /// The server refused the connection in a way no retry can fix — today, a
+    /// `401`/`403` on an upgrade that presented no token (see
+    /// [`Client::connect`]). The task does **not** reconnect: this is the last
+    /// event, and the stream ends after it. The error is
+    /// [`TerminalError::Auth`].
+    Rejected(Arc<Error>),
+}
+
+/// Why a tokenless upgrade to the account socket was refused, and what to do
+/// instead. Shared by the raw and typed clients so both say the same thing.
+pub(crate) const TOKENLESS_REJECTION: &str = "the `/ws` account socket requires a token and \
+     this connection presented none: configure credentials and connect with \
+     `Client::connect_ws` (or `Client::subscribe`, which mints a token whenever credentials are \
+     set). Public market data over `/stream` is not yet supported by this SDK \
+     (ENG-17178)";
+
+/// Classify a failed WebSocket handshake. Returns the permanent error when a
+/// retry cannot help, `None` when the failure is transient and the caller
+/// should back off and reconnect.
+///
+/// Permanent means: the server answered the upgrade with `401`/`403` **and no
+/// token was presented**. Nothing about the next attempt would differ, so
+/// retrying only loops forever against the same answer. Everything else stays
+/// transient — network and TLS errors, `5xx`, a socket that drops after
+/// upgrading — and so does a `401`/`403` on an upgrade that *did* carry a
+/// freshly minted token: each retry mints a new one, and a per-instance token
+/// store can reject a valid token during a rolling deploy (ENG-3128).
+pub(crate) fn permanent_handshake_error(
+    err: &tokio_tungstenite::tungstenite::Error,
+    token_presented: bool,
+) -> Option<Error> {
+    let tokio_tungstenite::tungstenite::Error::Http(response) = err else {
+        return None;
+    };
+    let status = response.status().as_u16();
+    if token_presented || !matches!(status, 401 | 403) {
+        return None;
+    }
+    // The indexer answers `{"code":"ws_token_missing"}`; fall back to the
+    // status when the body is not that envelope.
+    let code = response
+        .body()
+        .as_deref()
+        .and_then(|body| serde_json::from_slice::<Value>(body).ok())
+        .and_then(|v| v.get("code").and_then(Value::as_str).map(str::to_string))
+        .unwrap_or_else(|| status.to_string());
+    Some(
+        TerminalError::Auth {
+            code,
+            message: TOKENLESS_REJECTION.to_string(),
+        }
+        .into(),
+    )
 }
 
 /// A command sent from a [`Subscription`] handle to its background task.
@@ -195,6 +249,18 @@ impl Client {
     /// yet, the background task immediately emits a single
     /// [`Event::Disconnected`] explaining that and stops; set one with
     /// [`Config::with_ws_url`](crate::Config::with_ws_url).
+    ///
+    /// # The public hosts refuse a tokenless socket
+    ///
+    /// The built-in URL is the `/ws` account socket, which requires a token on
+    /// every channel, public ones included. A server that answers the upgrade
+    /// `401`/`403` is therefore refused permanently: the task emits a single
+    /// [`Event::Rejected`] carrying [`TerminalError::Auth`] and stops, rather
+    /// than reconnect against the same answer. Use
+    /// [`connect_ws`](Self::connect_ws) with credentials. Public market data
+    /// over `/stream` speaks a different protocol that this SDK does not
+    /// implement yet (ENG-17178). Transient failures (network errors, `5xx`, a dropped
+    /// socket) still reconnect with backoff.
     ///
     /// Must be called from within a Tokio runtime (it spawns a task).
     pub fn connect(&self, subscriptions: Vec<Value>) -> Subscription {
@@ -394,6 +460,12 @@ async fn run(
                         }
                     }
                     Err(err) => {
+                        // A tokenless upgrade refused with 401/403 will be refused
+                        // identically forever: surface it once and stop.
+                        if let Some(permanent) = permanent_handshake_error(&err, auth.is_some()) {
+                            let _ = emit_lifecycle(&event_tx, Event::Rejected(Arc::new(permanent)));
+                            return;
+                        }
                         // Redact defensively: the token rides in `url`'s query, and
                         // a transport error must never echo it into an event/log.
                         if !emit_lifecycle(

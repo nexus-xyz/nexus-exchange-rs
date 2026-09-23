@@ -3,12 +3,15 @@
 //! features this client exists for: reconnect-with-backoff and the bounded,
 //! gap-aware (order-preserving, drop-and-report) event channel.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use nexus_exchange::ws::{Backoff, Event, Subscription};
-use nexus_exchange::{Client, Config, CustomNetwork, Funds, Network};
+use nexus_exchange::{Client, Config, CustomNetwork, Error, Funds, Network, TerminalError};
 use serde_json::{json, Value};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 use tokio_tungstenite::tungstenite::Message;
@@ -338,6 +341,118 @@ async fn mainnet_streams_are_refused_locally() {
         other => panic!("expected Disconnected, got {other:?}"),
     }
     assert!(next_event(&mut sub).await.is_none());
+}
+
+/// A plain-HTTP server that answers every WebSocket upgrade with `status_line`
+/// and `body` instead of `101`, counting the attempts it receives.
+async fn refusing_server(
+    status_line: &'static str,
+    body: &'static str,
+) -> (std::net::SocketAddr, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let counter = attempts.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            counter.fetch_add(1, Ordering::SeqCst);
+            // Read the upgrade request head, then refuse it.
+            let mut head = Vec::new();
+            let mut buf = [0u8; 1024];
+            while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                match sock.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => head.extend_from_slice(&buf[..n]),
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = sock.write_all(response.as_bytes()).await;
+            let _ = sock.shutdown().await;
+        }
+    });
+    (addr, attempts)
+}
+
+/// Wait until `attempts` reaches `n`, failing the test after a hard bound.
+async fn wait_for_attempts(attempts: &AtomicUsize, n: usize) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while attempts.load(Ordering::SeqCst) < n {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "expected {n} attempts, saw {}",
+            attempts.load(Ordering::SeqCst)
+        )
+    });
+}
+
+/// A tokenless upgrade refused with `401` is permanent: exactly one attempt,
+/// one typed `Rejected` event naming the fix, then the stream ends — no
+/// reconnect loop against an answer that will never change.
+#[tokio::test]
+async fn tokenless_401_is_permanent_and_typed() {
+    let (addr, attempts) =
+        refusing_server("401 Unauthorized", r#"{"code":"ws_token_missing"}"#).await;
+    let mut sub = client_for(addr, 16).connect(vec![json!({ "type": "subscribe" })]);
+
+    match next_event(&mut sub).await {
+        Some(Event::Rejected(err)) => {
+            match &*err {
+                Error::Terminal(TerminalError::Auth { code, message }) => {
+                    assert_eq!(code, "ws_token_missing");
+                    assert!(message.contains("requires a token"), "{message}");
+                    assert!(message.contains("`/stream`"), "{message}");
+                }
+                other => panic!("expected TerminalError::Auth, got {other:?}"),
+            }
+            assert!(!err.is_retryable());
+        }
+        other => panic!("expected Rejected, got {other:?}"),
+    }
+    assert!(next_event(&mut sub).await.is_none(), "stream must end");
+    // Give a (buggy) reconnect ample time to show up.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+}
+
+/// `403` without a token is treated the same way; a non-JSON body falls back
+/// to the status as the code.
+#[tokio::test]
+async fn tokenless_403_is_permanent() {
+    let (addr, attempts) = refusing_server("403 Forbidden", "nope").await;
+    let mut sub = client_for(addr, 16).connect(vec![]);
+    match next_event(&mut sub).await {
+        Some(Event::Rejected(err)) => assert_eq!(err.code(), Some("403")),
+        other => panic!("expected Rejected, got {other:?}"),
+    }
+    assert!(next_event(&mut sub).await.is_none());
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+}
+
+/// A `503` on upgrade is transient: the client reports it and keeps
+/// reconnecting with backoff.
+#[tokio::test]
+async fn upgrade_503_keeps_retrying() {
+    let (addr, attempts) = refusing_server("503 Service Unavailable", "{}").await;
+    let mut sub = client_for(addr, 16).connect(vec![]);
+    for _ in 0..3 {
+        match next_event(&mut sub).await {
+            Some(Event::Disconnected(reason)) => assert!(reason.contains("503"), "{reason}"),
+            other => panic!("expected Disconnected, got {other:?}"),
+        }
+    }
+    wait_for_attempts(&attempts, 3).await;
+    sub.close().await;
 }
 
 /// Test-only helper to unwrap a `Message` event.

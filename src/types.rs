@@ -1158,13 +1158,30 @@ pub struct Position {
 /// `raw` for the same reason; this SDK has no `raw`, so absence is modelled in
 /// the type instead.)
 ///
+/// # Both wire spellings decode
+///
+/// The venue moves this schema onto CCXT's unified `Position` vocabulary at spec
+/// `0.9.74` (ENG-15258): `market_id` → `symbol`, `entry_price` → `entryPrice`,
+/// `exit_price` → `lastPrice`, `realized_pnl` → `realizedPnl`, `closed_at_ms` →
+/// `lastUpdateTimestamp`. Each field below accepts the new name as a
+/// deserialize-only `alias`, so this struct reads a server on either side of that
+/// publish instead of silently decoding every field to `None` after it
+/// (ENG-16850). The Rust field names, and the pinned-spec drift check, stay on
+/// the `v0.8.1` spelling until the pin moves.
+///
+/// **`lastPrice` lands on [`exit_price`](Self::exit_price) on purpose.** On an
+/// open position the spec's `lastPrice` is the market's last traded price; here
+/// it is the price the position closed at. Keep the two apart — do not route
+/// this field into a shared "last price" with [`Position`].
+///
 /// `#[non_exhaustive]`: read fields off a returned value rather than constructing
 /// one with a struct literal, so a future spec addition isn't a breaking change.
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct ClosedPosition {
-    /// Market identifier, e.g. `BTC-USDX-PERP`.
-    #[serde(default)]
+    /// Market identifier, e.g. `BTC-USDX-PERP`. Served as `symbol` from spec
+    /// `0.9.74`.
+    #[serde(default, alias = "symbol")]
     pub market_id: Option<String>,
     /// The side the position held before it closed: `Long` or `Short`.
     ///
@@ -1176,18 +1193,31 @@ pub struct ClosedPosition {
     /// direction is [`side`](Self::side)).
     #[serde(default, with = "rust_decimal::serde::str_option")]
     pub size: Option<Decimal>,
-    /// Average entry price of the closed position.
-    #[serde(default, with = "rust_decimal::serde::str_option")]
+    /// Average entry price of the closed position. Served as `entryPrice` from
+    /// spec `0.9.74`.
+    #[serde(
+        default,
+        alias = "entryPrice",
+        with = "rust_decimal::serde::str_option"
+    )]
     pub entry_price: Option<Decimal>,
-    /// Price the position closed at.
-    #[serde(default, with = "rust_decimal::serde::str_option")]
+    /// Price the position closed at. Served as `lastPrice` from spec `0.9.74` —
+    /// the CLOSED reading of that name, not the open position's last traded
+    /// price (see the type docs).
+    #[serde(default, alias = "lastPrice", with = "rust_decimal::serde::str_option")]
     pub exit_price: Option<Decimal>,
-    /// Profit and loss the close realized. Signed: negative is a loss.
-    #[serde(default, with = "rust_decimal::serde::str_option")]
+    /// Profit and loss the close realized. Signed: negative is a loss. Served as
+    /// `realizedPnl` from spec `0.9.74`.
+    #[serde(
+        default,
+        alias = "realizedPnl",
+        with = "rust_decimal::serde::str_option"
+    )]
     pub realized_pnl: Option<Decimal>,
     /// Unix timestamp (ms) the position closed at. `None` when unreported —
-    /// **not** `0`, which would date every such close to the Unix epoch.
-    #[serde(default)]
+    /// **not** `0`, which would date every such close to the Unix epoch. Served
+    /// as `lastUpdateTimestamp` from spec `0.9.74`.
+    #[serde(default, alias = "lastUpdateTimestamp")]
     pub closed_at_ms: Option<i64>,
 }
 

@@ -710,6 +710,40 @@ async fn closed_position_decodes_a_negative_realized_pnl() {
     assert_eq!(p.closed_at_ms, Some(1776033900000));
 }
 
+/// From spec `0.9.74` (ENG-15258) the venue serves this record under CCXT's
+/// unified names. The same struct must decode it field-for-field, not fall back
+/// to all-`None` — and `lastPrice` must land on `exit_price`, the CLOSED reading
+/// of that name (ENG-16850).
+#[tokio::test]
+async fn closed_position_decodes_the_ccxt_spelling() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(CLOSED_POSITIONS_PATH))
+        .respond_with(page(
+            serde_json::json!([{
+                "symbol": "BTC-USDX-PERP", "side": "Short", "size": "0.5",
+                "entryPrice": "49000.25", "lastPrice": "51000.75",
+                "realizedPnl": "-1000.25", "lastUpdateTimestamp": 1776033900000i64
+            }]),
+            None,
+        ))
+        .mount(&server)
+        .await;
+
+    let closed = authed(server.uri())
+        .fetch_closed_positions(None)
+        .await
+        .unwrap();
+    let p = &closed[0];
+    assert_eq!(p.market_id.as_deref(), Some("BTC-USDX-PERP"));
+    assert_eq!(p.side.as_deref(), Some("Short"));
+    assert_eq!(p.size, Some("0.5".parse::<Decimal>().unwrap()));
+    assert_eq!(p.entry_price, Some("49000.25".parse::<Decimal>().unwrap()));
+    assert_eq!(p.exit_price, Some("51000.75".parse::<Decimal>().unwrap()));
+    assert_eq!(p.realized_pnl, Some("-1000.25".parse::<Decimal>().unwrap()));
+    assert_eq!(p.closed_at_ms, Some(1776033900000));
+}
+
 /// `EquityPoint.equity` is a JSON **number** in the spec (unlike
 /// `PortfolioPoint.equity`, a decimal string derived from the same value), so it
 /// decodes through the `float` adapter. An absent sample field still reads as

@@ -9,6 +9,28 @@ use std::time::Duration;
 use backon::ExponentialBuilder;
 use reqwest::header::HeaderValue;
 
+// Host plus transport prefix for each named network, written once so the URLs
+// built from it cannot disagree. Each is `rest_base` from the spec's
+// `x-nexus-networks` minus its scheme; the WebSocket URL is the same string
+// with `wss://` in front (see `Network::ws_base`). Macros rather than consts
+// because `concat!` accepts only literals. Named per network, never
+// interpolated from the network name — see the note on `Network`.
+macro_rules! testnet_v1 {
+    () => {
+        "api.testnet.nexus.xyz/v1"
+    };
+}
+macro_rules! mainnet_v1 {
+    () => {
+        "api.nexus.xyz/v1"
+    };
+}
+macro_rules! local_host {
+    () => {
+        "localhost:9090"
+    };
+}
+
 /// Default bound on the WebSocket event channel. Once this many events are
 /// buffered ahead of a slow consumer, the read loop stops pulling frames off
 /// the socket (backpressure) rather than buffering without limit.
@@ -206,9 +228,11 @@ impl CustomNetwork {
 
     /// Declare this deployment's WebSocket origin (a `ws://` or `wss://` URL).
     ///
-    /// Left unset, [`Network::ws_base`] reports `None` and the streaming client
-    /// refuses to connect rather than guess a host — the WS origin is a
-    /// **separate host** from the REST base and cannot be derived from it.
+    /// Pass the authenticated socket URL (the spec's `ws_authenticated_url`,
+    /// e.g. `wss://host/v1/ws`); the token is appended to it. Left unset,
+    /// [`Network::ws_base`] reports `None` and the streaming client refuses to
+    /// connect rather than guess — a caller-supplied REST base does not say
+    /// which route prefix the host mounts its socket under.
     ///
     /// # Errors
     ///
@@ -393,7 +417,7 @@ impl Network {
             // decommissioned Cloud Run indexer and now answers `500` on every
             // route (ENG-14039), so the base this crate shipped was dead.
             Network::Testnet => "https://api.testnet.nexus.xyz/indexer",
-            Network::Local => "http://localhost:9090",
+            Network::Local => concat!("http://", local_host!()),
             // Verbatim from the caller. Nothing is appended, rewritten or
             // inferred — see `CustomNetwork`.
             Network::Custom(custom) => &custom.base_url,
@@ -466,50 +490,57 @@ impl Network {
             // mounted under the `/indexer` route prefix on this deployment
             // (ENG-8870). See the method docs.
             Network::Testnet => "https://api.testnet.nexus.xyz/indexer",
-            Network::Local => "http://localhost:9090",
+            Network::Local => concat!("http://", local_host!()),
             // Defaults to the caller's REST base, since today's deployments
             // mount `/api/v1` under it; overridden only if the caller split them.
             Network::Custom(custom) => &custom.direct_base_url,
         }
     }
 
-    /// The indexer's WebSocket origin — host-root `/ws`.
+    /// The authenticated WebSocket URL for this network — the socket
+    /// [`Client::connect_ws`] and [`Client::connect`] open, with the upgrade
+    /// token appended as `?token=…`. This is the spec's
+    /// `x-nexus-networks[*].ws_authenticated_url`.
     ///
-    /// This is a **separate host** from [`base_url`](Self::base_url): the
-    /// `/api/exchange` HTTP gateway does not proxy WebSocket upgrades, so the
-    /// stream connects straight to the indexer (the deployment's
-    /// `NEXT_PUBLIC_INDEXER_WS_URL`) rather than to a `/ws` path under the REST
-    /// base. It therefore cannot be derived from `base_url`.
+    /// # Derived from the published REST base, never guessed
     ///
-    /// Returns `None` for networks whose WS host is **not yet usable**. While
-    /// it is `None`, [`Client::connect_ws`] and [`Client::connect`] refuse to
-    /// connect rather than guess a host; supply the endpoint explicitly with
-    /// [`Config::with_ws_url`] in the meantime.
+    /// On the public hosts the socket is the spec's `rest_base` with the scheme
+    /// swapped, plus `/ws`: `https://api.testnet.nexus.xyz/v1` becomes
+    /// `wss://api.testnet.nexus.xyz/v1/ws` (ENG-17132). The public-market-data
+    /// socket beside it is the same base plus `/stream`. The rule is not
+    /// cosmetic: `POST /ws/token` binds the token to the host that minted it,
+    /// so the socket has to live on the REST host. The two arms are built from
+    /// one host-plus-prefix literal so they cannot drift apart.
+    ///
+    /// The `/v1` is load-bearing. The public hosts route no WebSocket path at
+    /// their root — `wss://api.testnet.nexus.xyz/ws` and `/stream` answer `404`
+    /// — while `/v1/stream` upgrades (`101`) and `/v1/ws` answers `401`
+    /// without a token (measured 2026-09-23). `/v1` is stripped at the edge, so
+    /// the path the server sees is `/ws` either way.
+    ///
+    /// Returns `None` only for a [`Custom`](Self::Custom) network that did not
+    /// declare one. [`Mainnet`](Self::Mainnet) reports the shape its host will
+    /// serve, but `api.nexus.xyz` does not resolve yet (ENG-15183) and the
+    /// streaming client refuses it locally, exactly as REST does.
     ///
     /// [`Client::connect_ws`]: crate::Client::connect_ws
     /// [`Client::connect`]: crate::Client::connect
     pub fn ws_base(&self) -> Option<&str> {
         match self {
-            // Local dev serves REST and WS from the same indexer process, so
-            // the WS origin is this host's `/ws` and is known.
-            Network::Local => Some("ws://localhost:9090/ws"),
-            // Testnet still reports no WS origin. The published durable value
-            // is `wss://api.testnet.nexus.xyz/indexer` (`/stream` for public
-            // market data, `/ws` for the authenticated stream), and since
-            // ENG-8870 that is the *same* origin this network's REST targets —
-            // so the original reason for `None` (a token minted over REST at
-            // one origin being presented to another, ENG-3398) no longer
-            // applies. It stays `None` here because turning it on is a
-            // behavioural change that wants its own verification with real
-            // credentials, which this host swap did not do. Supply it with
-            // `Config::with_ws_url` in the meantime.
-            Network::Testnet => None,
-            // Mainnet is not targetable at all in this release; see the variant
-            // docs. Nothing to connect to, and nothing to guess.
-            Network::Mainnet => None,
-            // Only what the caller declared. The WS origin is a separate host
-            // from the REST base and is never derived from it, so an
-            // undeclared origin stays `None` and the stream refuses to connect.
+            // Local dev serves REST and WS from the same indexer process with
+            // no route prefix: `http://localhost:9090` with the scheme swapped.
+            Network::Local => Some(concat!("ws://", local_host!(), "/ws")),
+            // The spec's `rest_base` (`https://api.testnet.nexus.xyz/v1`) with
+            // the scheme swapped. Same host the REST calls and the token mint
+            // go to, so a token minted over REST is valid here (ENG-3398).
+            Network::Testnet => Some(concat!("wss://", testnet_v1!(), "/ws")),
+            // The shape mainnet will serve. `api.nexus.xyz` has no DNS record
+            // yet (ENG-15183), and the streaming client refuses Mainnet before
+            // resolving anything; see the variant docs.
+            Network::Mainnet => Some(concat!("wss://", mainnet_v1!(), "/ws")),
+            // Only what the caller declared. A custom REST base's route prefix
+            // is not ours to know, so an undeclared origin stays `None` and the
+            // stream refuses to connect rather than guess.
             Network::Custom(custom) => custom.ws_url.as_deref(),
         }
     }
@@ -1028,9 +1059,9 @@ pub struct Config {
     /// separate questions with separate answers, instead of both being encoded as
     /// an absent network. See [`Config::network`].
     pub(crate) network: Network,
-    /// The WebSocket origin to stream from, or `None` when it is not known for
-    /// the configured network (no usable WS origin yet — ENG-3398). A
-    /// separate host from `base_url`; see [`Network::ws_base`].
+    /// The WebSocket URL to stream from, or `None` when the configured network
+    /// declares none (an undeclared [`Network::Custom`] or raw base URL); see
+    /// [`Network::ws_base`].
     pub(crate) ws_url: Option<String>,
     pub(crate) ws: WsConfig,
     pub(crate) rate_limit: RateLimit,
@@ -1065,8 +1096,8 @@ impl Config {
     /// Target a custom REST base URL (e.g. a preview deployment),
     /// unauthenticated.
     ///
-    /// No WebSocket URL is inferred: the stream lives on a separate host that
-    /// cannot be derived from the REST base (see [`Network::ws_base`]). To
+    /// No WebSocket URL is inferred: a raw base says nothing about which route
+    /// prefix the host mounts its socket under (see [`Network::ws_base`]). To
     /// stream against a custom deployment, set it explicitly with
     /// [`Config::with_ws_url`]; otherwise [`Client::connect`] /
     /// [`Client::connect_ws`] report that no endpoint is configured rather than
@@ -1187,9 +1218,11 @@ impl Config {
         self
     }
 
-    /// Set the WebSocket origin to stream from (host-root `/ws` — a separate
-    /// host from the REST base; see [`Network::ws_base`]). Required to stream
-    /// on any network whose WS host is not yet built in.
+    /// Override the WebSocket URL to stream from — the authenticated socket,
+    /// e.g. `wss://api.testnet.nexus.xyz/v1/ws`; see [`Network::ws_base`] for
+    /// the built-in values. Required to stream on a custom base that declares
+    /// none. Mint tokens on the same host: a `/ws/token` token is bound to the
+    /// host that minted it.
     pub fn with_ws_url(mut self, ws_url: impl Into<String>) -> Self {
         self.ws_url = Some(ws_url.into());
         self
@@ -1286,8 +1319,8 @@ impl Config {
         &self.network
     }
 
-    /// The configured WebSocket origin, or `None` if none is known for this
-    /// network yet (see [`Network::ws_base`]).
+    /// The configured WebSocket URL, or `None` if the network declares none
+    /// (see [`Network::ws_base`]).
     pub fn ws_url(&self) -> Option<&str> {
         self.ws_url.as_deref()
     }
@@ -1335,16 +1368,78 @@ mod tests {
         }
     }
 
-    /// Local is known; the others must surface as `None` rather than a guessed
-    /// URL. Testnet's durable WS origin is published and now shares the REST
-    /// origin, but reporting it is a behavioural change that wants its own
-    /// verification (ENG-3398) — until then callers pass it explicitly with
-    /// `Config::with_ws_url`.
+    /// The WebSocket URL each named network resolves to, pinned against the
+    /// spec's `x-nexus-networks` (nexus#12253, ENG-17132): the authenticated
+    /// socket is `rest_base` with the scheme swapped, plus `/ws`, and the
+    /// market-data socket beside it is the same base plus `/stream`.
+    ///
+    /// Hard-coded rather than rebuilt from the macros, so a change to either the
+    /// host literal or the derivation shows up here as a diff against the spec.
     #[test]
-    fn ws_base_is_known_only_for_local() {
-        assert_eq!(Network::Local.ws_base(), Some("ws://localhost:9090/ws"));
-        assert_eq!(Network::Testnet.ws_base(), None);
-        assert_eq!(Network::Mainnet.ws_base(), None);
+    fn ws_base_is_the_published_rest_base_with_the_scheme_swapped() {
+        // (network, spec rest_base, ws_market_data_url, ws_authenticated_url)
+        let published = [
+            (
+                Network::Testnet,
+                "https://api.testnet.nexus.xyz/v1",
+                "wss://api.testnet.nexus.xyz/v1/stream",
+                "wss://api.testnet.nexus.xyz/v1/ws",
+            ),
+            (
+                Network::Mainnet,
+                "https://api.nexus.xyz/v1",
+                "wss://api.nexus.xyz/v1/stream",
+                "wss://api.nexus.xyz/v1/ws",
+            ),
+            (
+                Network::Local,
+                "http://localhost:9090",
+                "ws://localhost:9090/stream",
+                "ws://localhost:9090/ws",
+            ),
+        ];
+        for (network, rest_base, stream_url, ws_url) in published {
+            let ws = network.ws_base().expect("named networks carry a WS URL");
+            assert_eq!(ws, ws_url, "{network:?}");
+
+            // WS = REST base with the scheme swapped (`/ws/token` binds the
+            // token to the minting host, so they must share it).
+            let swapped = rest_base
+                .replacen("https://", "wss://", 1)
+                .replacen("http://", "ws://", 1);
+            assert_eq!(ws, format!("{swapped}/ws"), "{network:?}");
+
+            // The market-data socket is a sibling of the authenticated one.
+            let base = ws.strip_suffix("/ws").expect("ends in /ws");
+            assert_eq!(format!("{base}/stream"), stream_url, "{network:?}");
+
+            // The socket is on the host this crate sends REST to, whatever
+            // route prefix REST uses there.
+            let host = |url: &str| {
+                url.split("://")
+                    .nth(1)
+                    .unwrap()
+                    .split('/')
+                    .next()
+                    .unwrap()
+                    .to_string()
+            };
+            assert_eq!(host(ws), host(network.base_url()), "{network:?}");
+
+            assert_eq!(Config::new(network.clone()).ws_url(), Some(ws_url));
+        }
+
+        // The bare host routes no WebSocket path (404, measured 2026-09-23), so
+        // the prefix must never be dropped.
+        assert_ne!(
+            Network::Testnet.ws_base(),
+            Some("wss://api.testnet.nexus.xyz/ws")
+        );
+        // And testnet's socket never lands on the real-funds host.
+        assert!(!Network::Testnet
+            .ws_base()
+            .unwrap()
+            .starts_with("wss://api.nexus.xyz"));
     }
 
     /// Only mainnet moves real collateral; the others fund from the faucet.
@@ -1463,9 +1558,9 @@ mod tests {
         assert!(matches!(raw.network(), Network::Custom(_)));
     }
 
-    /// `Config` mirrors `ws_base`: a network with a known WS host carries it,
-    /// and one without a usable origin leaves `ws_url` unset rather than
-    /// derived from the REST base.
+    /// `Config` mirrors `ws_base`: a named network carries its WS URL, and a
+    /// raw base URL leaves `ws_url` unset rather than derived from it — a
+    /// caller's base says nothing about where its host mounts the socket.
     #[test]
     #[allow(deprecated)] // Pins the deprecated selector's behaviour; see above.
     fn config_ws_url_follows_network_and_is_not_derived_from_rest_base() {
@@ -1473,7 +1568,17 @@ mod tests {
             Config::new(Network::Local).ws_url(),
             Some("ws://localhost:9090/ws")
         );
-        assert_eq!(Config::new(Network::Testnet).ws_url(), None);
+        assert_eq!(
+            Config::new(Network::Testnet).ws_url(),
+            Some("wss://api.testnet.nexus.xyz/v1/ws")
+        );
+        // `with_ws_url` still overrides a built-in value.
+        assert_eq!(
+            Config::new(Network::Testnet)
+                .with_ws_url("wss://ws.preview.example/ws")
+                .ws_url(),
+            Some("wss://ws.preview.example/ws")
+        );
         // A custom REST base does not imply a WS host.
         assert_eq!(
             Config::with_base_url("https://preview.example/api/exchange").ws_url(),

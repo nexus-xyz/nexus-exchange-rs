@@ -4,6 +4,15 @@
 //! cargo run --example ws_orderbook
 //! ```
 //!
+//! **Against the public hosts this stops at once with an error.** The SDK's
+//! socket is the `/ws` account socket, which refuses a tokenless upgrade
+//! (`401`), even for public channels. The client treats that as permanent and
+//! emits a single [`Event::Rejected`] instead of reconnecting forever. Public
+//! market data over `/stream` is not yet supported by this SDK (ENG-17178). To stream the
+//! book today, configure credentials and use `connect_ws` (see
+//! `ws_user_events`). Against a local indexer or a host that accepts
+//! tokenless upgrades, it streams as described below.
+//!
 //! The client reconnects automatically with backoff and re-sends the
 //! subscription after each reconnect. This example prints a handful of updates
 //! and then closes; a real consumer would loop indefinitely.
@@ -32,6 +41,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match event {
             Event::Connected => println!("connected — subscribed to {MARKET} orderbook"),
             Event::Disconnected(reason) => println!("disconnected: {reason} (will reconnect)"),
+            // Permanent refusal (e.g. `401` on a tokenless upgrade): the client
+            // does not reconnect, so report it and exit non-zero.
+            Event::Rejected(rejection) => {
+                sub.close().await;
+                return Err(format!("stream refused: {}", rejection.to_error()).into());
+            }
             // `Lagged` means we read too slowly and the client dropped frames to
             // keep the socket drained. Surfaced so we can detect the gap.
             Event::Lagged { dropped } => println!("lagged: dropped {dropped} frames"),

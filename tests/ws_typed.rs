@@ -5,12 +5,15 @@
 //! reconnect the client must replay each `subscribe` with a `since` cursor equal
 //! to the last `seq` it processed.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use nexus_exchange::ws::{Channel, MessageStream, ServerMessage};
-use nexus_exchange::{Client, Config, Error};
+use nexus_exchange::{Client, Config, Error, TerminalError};
 use serde_json::{json, Value};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
@@ -290,4 +293,95 @@ async fn backpressure_surfaces_lagged_and_preserves_order() {
 
     stream.close().await;
     let _ = server.await;
+}
+
+/// A plain-HTTP server that answers every WebSocket upgrade with `status_line`
+/// and `body` instead of `101`, counting the attempts it receives.
+async fn refusing_server(
+    status_line: &'static str,
+    body: &'static str,
+) -> (std::net::SocketAddr, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let counter = attempts.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            counter.fetch_add(1, Ordering::SeqCst);
+            // Read the upgrade request head, then refuse it.
+            let mut head = Vec::new();
+            let mut buf = [0u8; 1024];
+            while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                match sock.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => head.extend_from_slice(&buf[..n]),
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = sock.write_all(response.as_bytes()).await;
+            let _ = sock.shutdown().await;
+        }
+    });
+    (addr, attempts)
+}
+
+/// Wait until `attempts` reaches `n`, failing the test after a hard bound.
+async fn wait_for_attempts(attempts: &AtomicUsize, n: usize) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while attempts.load(Ordering::SeqCst) < n {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "expected {n} attempts, saw {}",
+            attempts.load(Ordering::SeqCst)
+        )
+    });
+}
+
+/// Typed stream, public channel, no credentials: a `401` upgrade yields one
+/// `TerminalError::Auth` and the stream ends after exactly one attempt.
+#[tokio::test]
+async fn typed_tokenless_401_is_permanent_and_typed() {
+    let (addr, attempts) =
+        refusing_server("401 Unauthorized", r#"{"code":"ws_token_missing"}"#).await;
+    let mut stream = client_for(addr, 16)
+        .subscribe(vec![Channel::trades("BTC-USDX-PERP")])
+        .unwrap();
+    let item = tokio::time::timeout(Duration::from_secs(5), stream.next())
+        .await
+        .expect("an item");
+    match item {
+        Some(Err(Error::Terminal(TerminalError::Auth { code, message }))) => {
+            assert_eq!(code, "ws_token_missing");
+            assert!(message.contains("requires a token"), "{message}");
+        }
+        other => panic!("expected TerminalError::Auth, got {other:?}"),
+    }
+    let end = tokio::time::timeout(Duration::from_secs(5), stream.next())
+        .await
+        .expect("stream ends");
+    assert!(end.is_none(), "stream must end, got {end:?}");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+}
+
+/// Typed stream: a `503` upgrade is transient and retried transparently.
+#[tokio::test]
+async fn typed_upgrade_503_keeps_retrying() {
+    let (addr, attempts) = refusing_server("503 Service Unavailable", "{}").await;
+    let stream = client_for(addr, 16)
+        .subscribe(vec![Channel::trades("BTC-USDX-PERP")])
+        .unwrap();
+    wait_for_attempts(&attempts, 3).await;
+    drop(stream);
 }

@@ -76,7 +76,7 @@ pub use backoff::{Backoff, BackoffIter};
 pub use protocol::{Channel, EngineEnvelope, ServerMessage};
 pub use typed::MessageStream;
 
-use crate::{Client, Error, Result};
+use crate::{Client, Error, Result, TerminalError};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -114,6 +114,95 @@ pub enum Event {
         /// Number of message frames dropped since the last delivered message.
         dropped: u64,
     },
+    /// The server refused the connection in a way no retry can fix — today, a
+    /// `401`/`403` on an upgrade that presented no token (see
+    /// [`Client::connect`]). The task does **not** reconnect: this is the last
+    /// event, and the stream ends after it. [`Rejection::to_error`] gives the
+    /// same [`TerminalError::Auth`] the typed stream yields.
+    Rejected(Rejection),
+}
+
+/// A handshake the server refused permanently — see [`Event::Rejected`].
+///
+/// Plain data rather than an [`Error`], so [`Event`] keeps its auto traits;
+/// [`to_error`](Self::to_error) converts it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Rejection {
+    /// HTTP status the upgrade was answered with (`401` or `403`).
+    pub status: u16,
+    /// Machine-readable code from the response body (e.g.
+    /// `ws_token_missing`), or the status when the body carries none.
+    pub code: String,
+    /// What went wrong and what to do instead.
+    pub message: String,
+}
+
+impl Rejection {
+    /// This rejection as the crate's error type:
+    /// [`TerminalError::Auth`], never retryable.
+    pub fn to_error(&self) -> Error {
+        TerminalError::Auth {
+            code: self.code.clone(),
+            message: self.message.clone(),
+        }
+        .into()
+    }
+}
+
+impl std::fmt::Display for Rejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "rejected [{} {}]: {}",
+            self.status, self.code, self.message
+        )
+    }
+}
+
+/// Why a tokenless upgrade to the account socket was refused, and what to do
+/// instead. Shared by the raw and typed clients so both say the same thing.
+pub(crate) const TOKENLESS_REJECTION: &str = "the `/ws` account socket requires a token and \
+     this connection presented none: configure credentials and connect with \
+     `Client::connect_ws` (or `Client::subscribe`, which mints a token whenever credentials are \
+     set). Public market data over `/stream` is not yet supported by this SDK \
+     (ENG-17178)";
+
+/// Classify a failed WebSocket handshake. Returns the permanent error when a
+/// retry cannot help, `None` when the failure is transient and the caller
+/// should back off and reconnect.
+///
+/// Permanent means: the server answered the upgrade with `401`/`403` **and no
+/// token was presented**. Nothing about the next attempt would differ, so
+/// retrying only loops forever against the same answer. Everything else stays
+/// transient — network and TLS errors, `5xx`, a socket that drops after
+/// upgrading — and so does a `401`/`403` on an upgrade that *did* carry a
+/// freshly minted token: each retry mints a new one, and a per-instance token
+/// store can reject a valid token during a rolling deploy (ENG-3128).
+pub(crate) fn permanent_handshake_error(
+    err: &tokio_tungstenite::tungstenite::Error,
+    token_presented: bool,
+) -> Option<Rejection> {
+    let tokio_tungstenite::tungstenite::Error::Http(response) = err else {
+        return None;
+    };
+    let status = response.status().as_u16();
+    if token_presented || !matches!(status, 401 | 403) {
+        return None;
+    }
+    // The indexer answers `{"code":"ws_token_missing"}`; fall back to the
+    // status when the body is not that envelope.
+    let code = response
+        .body()
+        .as_deref()
+        .and_then(|body| serde_json::from_slice::<Value>(body).ok())
+        .and_then(|v| v.get("code").and_then(Value::as_str).map(str::to_string))
+        .unwrap_or_else(|| status.to_string());
+    Some(Rejection {
+        status,
+        code,
+        message: TOKENLESS_REJECTION.to_string(),
+    })
 }
 
 /// A command sent from a [`Subscription`] handle to its background task.
@@ -188,13 +277,25 @@ impl Client {
     /// The task reconnects automatically with the configured [`Backoff`] and
     /// re-sends `subscriptions` after each reconnect.
     ///
-    /// The stream targets the configured WebSocket origin (a separate host from
-    /// the REST base — see [`Network::ws_base`](crate::Network::ws_base)). If
-    /// none is configured for the network (no usable WS origin yet —
-    /// ENG-3398) the background task immediately emits a single
+    /// The stream targets the configured WebSocket URL (see
+    /// [`Network::ws_base`](crate::Network::ws_base)). If there is none — a
+    /// custom base that declared no socket — or the network is
+    /// [`Network::Mainnet`](crate::Network::Mainnet), which is not targetable
+    /// yet, the background task immediately emits a single
     /// [`Event::Disconnected`] explaining that and stops; set one with
-    /// [`Config::with_ws_url`](crate::Config::with_ws_url) or use a network
-    /// whose host is known.
+    /// [`Config::with_ws_url`](crate::Config::with_ws_url).
+    ///
+    /// # The public hosts refuse a tokenless socket
+    ///
+    /// The built-in URL is the `/ws` account socket, which requires a token on
+    /// every channel, public ones included. A server that answers the upgrade
+    /// `401`/`403` is therefore refused permanently: the task emits a single
+    /// [`Event::Rejected`] carrying [`TerminalError::Auth`] and stops, rather
+    /// than reconnect against the same answer. Use
+    /// [`connect_ws`](Self::connect_ws) with credentials. Public market data
+    /// over `/stream` speaks a different protocol that this SDK does not
+    /// implement yet (ENG-17178). Transient failures (network errors, `5xx`, a dropped
+    /// socket) still reconnect with backoff.
     ///
     /// Must be called from within a Tokio runtime (it spawns a task).
     pub fn connect(&self, subscriptions: Vec<Value>) -> Subscription {
@@ -208,8 +309,9 @@ impl Client {
     ///
     /// Requires credentials (the token mint is signed). Fails fast — before any
     /// network round-trip — if no WebSocket endpoint is configured for the
-    /// network (no usable WS origin yet — ENG-3398); set one with
-    /// [`Config::with_ws_url`](crate::Config::with_ws_url) until it is.
+    /// network (set one with
+    /// [`Config::with_ws_url`](crate::Config::with_ws_url)) or the network is
+    /// [`Network::Mainnet`](crate::Network::Mainnet).
     ///
     /// The minted token is short-lived and **single-use**, so it authenticates
     /// exactly one connection. The background task therefore mints a *fresh*
@@ -222,12 +324,7 @@ impl Client {
     pub async fn connect_ws(&self, subscriptions: Vec<Value>) -> Result<Subscription> {
         // Resolve the endpoint first: an unconfigured network must fail here,
         // not after spending a mint round-trip on a stream that can't connect.
-        if self.config.ws_url.is_none() {
-            return Err(Error::invalid_request(
-                "no WebSocket endpoint configured for this network (no usable WS origin \
-                 yet — ENG-3398); set one with Config::with_ws_url",
-            ));
-        }
+        self.ws_endpoint()?;
         // Pre-mint the first token so credential / transport problems surface
         // here as an error rather than as a background Disconnected event.
         let token = self.mint_web_socket_token().await?.token;
@@ -241,7 +338,10 @@ impl Client {
         let (event_tx, event_rx) = mpsc::channel(self.config.ws.channel_capacity);
         let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
 
-        let base = self.config.ws_url.clone();
+        let base = self
+            .ws_endpoint()
+            .map(str::to_string)
+            .map_err(|e| e.to_string());
         let backoff = self.config.ws.backoff.clone();
         let user_agent = self.config.user_agent.clone();
         // Carry a client clone to re-mint tokens on reconnect, but only for an
@@ -285,9 +385,9 @@ fn emit_lifecycle(event_tx: &mpsc::Sender<Event>, event: Event) -> bool {
 /// Inputs to the background reconnect loop, grouped to keep [`run`]'s signature
 /// within reason.
 struct RunConfig {
-    /// WebSocket origin; `None` means the network has no known WS host
-    /// (no usable WS origin yet — ENG-3398), reported once before stopping.
-    base: Option<String>,
+    /// WebSocket URL, or why there is none (no declared socket, or a network
+    /// that is not targetable) — reported once before stopping.
+    base: std::result::Result<String, String>,
     /// `Some` for an authenticated stream — a client clone used to re-mint a
     /// single-use token before every (re)connect.
     auth: Option<Client>,
@@ -314,18 +414,14 @@ async fn run(
         backoff,
         user_agent,
     } = config;
-    let Some(base) = base else {
-        // `connect` on a network with no known WS host: report once and stop,
-        // rather than spin a backoff loop against an endpoint that can't exist.
-        let _ = emit_lifecycle(
-            &event_tx,
-            Event::Disconnected(
-                "no WebSocket endpoint configured for this network (no usable WS origin \
-                 yet — ENG-3398); set one with Config::with_ws_url"
-                    .to_string(),
-            ),
-        );
-        return;
+    let base = match base {
+        Ok(base) => base,
+        Err(reason) => {
+            // `connect` with no usable endpoint: report once and stop, rather
+            // than spin a backoff loop against an endpoint that can't exist.
+            let _ = emit_lifecycle(&event_tx, Event::Disconnected(reason));
+            return;
+        }
     };
 
     let mut delays = backoff.iter();
@@ -399,6 +495,12 @@ async fn run(
                         }
                     }
                     Err(err) => {
+                        // A tokenless upgrade refused with 401/403 will be refused
+                        // identically forever: surface it once and stop.
+                        if let Some(permanent) = permanent_handshake_error(&err, auth.is_some()) {
+                            let _ = emit_lifecycle(&event_tx, Event::Rejected(permanent));
+                            return;
+                        }
                         // Redact defensively: the token rides in `url`'s query, and
                         // a transport error must never echo it into an event/log.
                         if !emit_lifecycle(

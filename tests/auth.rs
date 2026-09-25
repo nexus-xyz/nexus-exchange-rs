@@ -75,7 +75,14 @@ async fn register_agent_posts_eip712_body_and_parses() {
     let server = MockServer::start().await;
     let agent = "0x1234567890abcdef1234567890abcdef12345678";
     let registration = signer()
-        .register_agent(agent, 1_782_000_000_000, 1, 393, Some("my-bot".into()))
+        .register_agent(
+            agent,
+            1_782_000_000_000,
+            1,
+            20056,
+            &nexus_exchange::Network::Local,
+            Some("my-bot".into()),
+        )
         .unwrap();
 
     Mock::given(method("POST"))

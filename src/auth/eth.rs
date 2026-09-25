@@ -7,7 +7,7 @@
 //! caller hands the body to the [`Client`](crate::Client) to send. Nonces and
 //! expiries are caller-supplied so signing carries no hidden clock.
 
-use crate::{Error, Result};
+use crate::{Error, Network, Result};
 use k256::ecdsa::{RecoveryId, Signature, SigningKey};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
@@ -24,6 +24,13 @@ pub(crate) const EIP712_DOMAIN_NAME: &str = "Nexus Exchange";
 /// EIP-712 domain `version`, per the `/agents/register` spec. See
 /// [`EIP712_DOMAIN_NAME`].
 pub(crate) const EIP712_DOMAIN_VERSION: &str = "1";
+
+/// The `RegisterAgent` domain `salt` for a named network: `keccak256(network)`,
+/// exactly as the server derives it (ENG-15643). Sourced by
+/// [`Network::signing_domain`](crate::Network::signing_domain).
+pub(crate) fn network_salt(network: &str) -> [u8; 32] {
+    finalize32(Keccak256::new_with_prefix(network.as_bytes()))
+}
 
 /// Signed body for `POST /auth/login` (EIP-191 session login).
 ///
@@ -109,16 +116,38 @@ impl EthSigner {
     /// as a safe starting nonce. `chain_id` is the EIP-712 domain chain id (the
     /// exchange's testnet chain id); it is part of the signed payload, so it
     /// must match what the server verifies against.
+    ///
+    /// `network` is the network the registration is for. The server salts the
+    /// `RegisterAgent` domain with `keccak256(network name)` (ENG-15643), so a
+    /// registration verifies only on the network it was signed for. The salt
+    /// is read from [`Network::signing_domain`]; a [`Network::Custom`] target
+    /// names no network, has no salt, and is refused with
+    /// [`crate::TerminalError::InvalidRequest`] rather than signed unsalted.
     pub fn register_agent(
         &self,
         agent: &str,
         expires_at_ms: u64,
         nonce: u64,
         chain_id: u64,
+        network: &Network,
         label: Option<String>,
     ) -> Result<AgentRegistration> {
+        let salt = network
+            .signing_domain()
+            .and_then(|domain| domain.salt)
+            .ok_or_else(|| {
+                Error::invalid_request(format!(
+                    "no RegisterAgent signing salt is known for network {:?}: the server \
+                     binds agent registrations to its network name (salt = \
+                     keccak256(network)), and a custom target names none. Pass \
+                     Network::Mainnet, Network::Testnet or Network::Local, whichever the \
+                     target server runs as. The salt only names the network; the client \
+                     you send the registration through still picks the host.",
+                    network.label()
+                ))
+            })?;
         let agent_addr = parse_address(agent)?;
-        let digest = register_agent_digest(&agent_addr, expires_at_ms, nonce, chain_id);
+        let digest = register_agent_digest(&agent_addr, expires_at_ms, nonce, chain_id, &salt);
         let signature = self.sign_digest(&digest)?;
         Ok(AgentRegistration {
             wallet: self.address(),
@@ -187,16 +216,24 @@ fn eip191_digest(message: &[u8]) -> [u8; 32] {
 }
 
 /// EIP-712 digest for `RegisterAgent{agent, expiresAt, nonce}` under the
-/// `Nexus Exchange` domain (no `verifyingContract`):
-/// `keccak256(0x1901 || domainSeparator || hashStruct(message))`.
-fn register_agent_digest(agent: &[u8; 20], expires_at: u64, nonce: u64, chain_id: u64) -> [u8; 32] {
+/// `Nexus Exchange` domain with `salt` and no `verifyingContract`:
+/// `keccak256(0x1901 || domainSeparator || hashStruct(message))`. Matches the
+/// server's `agent_store::eip712::register_agent_digest`.
+fn register_agent_digest(
+    agent: &[u8; 20],
+    expires_at: u64,
+    nonce: u64,
+    chain_id: u64,
+    salt: &[u8; 32],
+) -> [u8; 32] {
     let domain_type_hash =
-        Keccak256::digest(b"EIP712Domain(string name,string version,uint256 chainId)");
+        Keccak256::digest(b"EIP712Domain(string name,string version,uint256 chainId,bytes32 salt)");
     let mut dh = Keccak256::new();
     dh.update(domain_type_hash);
     dh.update(Keccak256::digest(EIP712_DOMAIN_NAME.as_bytes()));
     dh.update(Keccak256::digest(EIP712_DOMAIN_VERSION.as_bytes()));
     dh.update(u256(chain_id));
+    dh.update(salt);
     let domain_separator = dh.finalize();
 
     let struct_type_hash =
@@ -311,35 +348,47 @@ mod tests {
     #[test]
     fn register_agent_recovers_to_wallet() {
         let signer = EthSigner::from_hex(TEST_KEY).unwrap();
-        let agent = "0x1234567890abcdef1234567890abcdef12345678";
         let req = signer
-            .register_agent(agent, 1_782_000_000_000, 1, 393, Some("my-bot".into()))
+            .register_agent(
+                KAT_AGENT,
+                KAT_EXPIRES_MS,
+                KAT_NONCE,
+                KAT_CHAIN_ID,
+                &Network::Testnet,
+                Some("my-bot".into()),
+            )
             .unwrap();
         assert_eq!(req.wallet, TEST_ADDR);
-        assert_eq!(req.agent, agent);
-        assert_eq!(req.expires_at, 1_782_000_000_000);
-        assert_eq!(req.nonce, 1);
+        assert_eq!(req.agent, KAT_AGENT);
+        assert_eq!(req.expires_at, KAT_EXPIRES_MS);
+        assert_eq!(req.nonce, KAT_NONCE);
         assert_eq!(req.label.as_deref(), Some("my-bot"));
 
-        let digest =
-            register_agent_digest(&parse_address(agent).unwrap(), 1_782_000_000_000, 1, 393);
+        let digest = register_agent_digest(
+            &parse_address(KAT_AGENT).unwrap(),
+            KAT_EXPIRES_MS,
+            KAT_NONCE,
+            KAT_CHAIN_ID,
+            &network_salt("testnet"),
+        );
         assert_eq!(
             address_from_signature(&req.signature, &digest),
             parse_address(TEST_ADDR).unwrap()
         );
     }
 
-    // Known-answer vectors produced by an independent EIP-712/EIP-191
-    // implementation (ethers v6) over `TEST_KEY`. These pin the exact digests
-    // and 65-byte signatures, so a wrong-but-self-consistent domain separator,
-    // type string, or field order is caught here — unlike the recover→address
-    // round-trips, which only prove internal consistency. Regenerating them
-    // requires matching the server's typed data verbatim
-    // (`name: "Nexus Exchange"`, `RegisterAgent(address agent,uint64 expiresAt,uint64 nonce)`).
-    const KAT_AGENT: &str = "0x1234567890abcdef1234567890abcdef12345678";
-    const KAT_EXPIRES_MS: u64 = 1_782_000_000_000;
+    // `sign_in` is pinned against an independent EIP-191 implementation (ethers
+    // v6) over `TEST_KEY`. `RegisterAgent` is pinned against the server itself:
+    // the inputs and digest below are `agent_store::tests::
+    // eip712_register_agent_digest_pinned` verbatim (alloy, `Network::Testnet`
+    // salt since ENG-15643). A wrong-but-self-consistent domain separator, type
+    // string, salt, or field order is caught here, unlike the recover→address
+    // round-trips, which only prove internal consistency. The signature over
+    // that digest is pinned identically in the Python and TypeScript SDKs.
+    const KAT_AGENT: &str = "0xaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbb";
+    const KAT_EXPIRES_MS: u64 = 1_700_000_000;
     const KAT_NONCE: u64 = 1;
-    const KAT_CHAIN_ID: u64 = 393;
+    const KAT_CHAIN_ID: u64 = 20056;
 
     #[test]
     fn sign_in_matches_known_answer() {
@@ -356,28 +405,96 @@ mod tests {
     }
 
     #[test]
-    fn register_agent_matches_known_answer() {
+    fn register_agent_matches_the_servers_salted_vector() {
         let signer = EthSigner::from_hex(TEST_KEY).unwrap();
         let agent_addr = parse_address(KAT_AGENT).unwrap();
-        let digest = register_agent_digest(&agent_addr, KAT_EXPIRES_MS, KAT_NONCE, KAT_CHAIN_ID);
+        let digest = register_agent_digest(
+            &agent_addr,
+            KAT_EXPIRES_MS,
+            KAT_NONCE,
+            KAT_CHAIN_ID,
+            &network_salt("testnet"),
+        );
         assert_eq!(
-            format!("0x{}", hex::encode(digest)),
-            "0x356e6f3d741f48279c78b228d4ed9217eb49ad9179d549c618215be57817bfd6"
+            hex::encode(digest),
+            "5a52159bdde9c9ba6c1880598078c3326e8e32ea39c93425baafc76590d2a902"
         );
         let req = signer
-            .register_agent(KAT_AGENT, KAT_EXPIRES_MS, KAT_NONCE, KAT_CHAIN_ID, None)
+            .register_agent(
+                KAT_AGENT,
+                KAT_EXPIRES_MS,
+                KAT_NONCE,
+                KAT_CHAIN_ID,
+                &Network::Testnet,
+                None,
+            )
             .unwrap();
         assert_eq!(
             req.signature,
-            "0x5df263ed6d1b619a72d436a01104f9036af6258cacf56dea973321cbe722a99550644eea6bf75656d48e982d2ce5db9ef13c4aced4539cf3c2ff87802b0197cc1b"
+            "0x40cc533ba443982d33463c30426a3e81569d07d68be841daefb2bf6baf4c890403efb48f19c76ab06bceec7530b149a5c91d71688f6c7009de47a99d2e68af951c"
         );
+    }
+
+    /// The salts published in the spec's `x-nexus-networks[*].signing_domain`.
+    #[test]
+    fn network_salt_matches_the_spec() {
+        for (network, want) in [
+            (
+                Network::Testnet,
+                "d992b760ba3914309086be769796784454b6684e49ebfe3005bb9455433b7c8e",
+            ),
+            (
+                Network::Mainnet,
+                "7beafa94c8bfb8f1c1a43104a34f72c524268aafbfe83bff17485539345c66ff",
+            ),
+            (
+                Network::Local,
+                "98591f89798185a27bc859ebabeeae88a1ed96bfbdf2f01b32ac97474b024894",
+            ),
+        ] {
+            let salt = network.signing_domain().and_then(|d| d.salt).unwrap();
+            assert_eq!(hex::encode(salt), want, "{network:?}");
+        }
+    }
+
+    #[test]
+    fn register_agent_is_network_scoped() {
+        let signer = EthSigner::from_hex(TEST_KEY).unwrap();
+        let sigs: std::collections::HashSet<String> =
+            [Network::Mainnet, Network::Testnet, Network::Local]
+                .iter()
+                .map(|n| {
+                    signer
+                        .register_agent(KAT_AGENT, KAT_EXPIRES_MS, KAT_NONCE, KAT_CHAIN_ID, n, None)
+                        .unwrap()
+                        .signature
+                })
+                .collect();
+        assert_eq!(sigs.len(), 3);
+    }
+
+    /// A custom target names no network, so there is no salt to sign under,
+    /// and an unsalted registration would only be refused by the server.
+    #[test]
+    fn register_agent_refuses_a_target_with_no_salt() {
+        let signer = EthSigner::from_hex(TEST_KEY).unwrap();
+        let custom = crate::CustomNetwork::new("dev", "http://localhost:1", crate::Funds::Play)
+            .unwrap()
+            .with_signing_domain(crate::SigningDomain::new(KAT_CHAIN_ID));
+        let network = Network::Custom(custom);
+        assert_eq!(network.signing_domain().unwrap().salt, None);
+        assert!(matches!(
+            signer.register_agent(KAT_AGENT, KAT_EXPIRES_MS, KAT_NONCE, KAT_CHAIN_ID, &network, None),
+            Err(Error::Terminal(crate::TerminalError::InvalidRequest(msg)))
+                if msg.contains("no RegisterAgent signing salt")
+        ));
     }
 
     #[test]
     fn register_agent_rejects_bad_agent_address() {
         let signer = EthSigner::from_hex(TEST_KEY).unwrap();
         assert!(matches!(
-            signer.register_agent("0x1234", 1, 1, 1, None),
+            signer.register_agent("0x1234", 1, 1, 1, &Network::Testnet, None),
             Err(Error::Terminal(crate::TerminalError::InvalidRequest(_)))
         ));
     }
@@ -387,10 +504,11 @@ mod tests {
         let signer = EthSigner::from_hex(TEST_KEY).unwrap();
         let req = signer
             .register_agent(
-                "0x1234567890abcdef1234567890abcdef12345678",
-                1_782_000_000_000,
-                1,
-                393,
+                KAT_AGENT,
+                KAT_EXPIRES_MS,
+                KAT_NONCE,
+                KAT_CHAIN_ID,
+                &Network::Testnet,
                 None,
             )
             .unwrap();

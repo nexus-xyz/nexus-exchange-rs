@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.11.1...v0.12.0) - 2026-09-25
+
+### Fixed
+
+- *(auth)* [**breaking**] salt the RegisterAgent domain with the network (ENG-17753) ([#162](https://github.com/nexus-xyz/nexus-exchange-rs/pull/162))
+
 ## [0.11.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.11.0...v0.11.1) - 2026-09-23
 
 ### Added

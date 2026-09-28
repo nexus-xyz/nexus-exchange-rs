@@ -92,6 +92,7 @@ async fn fetch_bridge_assets_parses_public() {
 }
 
 #[tokio::test]
+#[allow(deprecated)] // Pins the wire shape until the method is removed (ENG-18018).
 async fn create_bridge_deposit_address_posts_body_and_parses() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -114,6 +115,7 @@ async fn create_bridge_deposit_address_posts_body_and_parses() {
 }
 
 #[tokio::test]
+#[allow(deprecated)] // Pins the wire shape until the method is removed (ENG-18018).
 async fn create_bridge_deposit_address_blank_chain_rejected_without_request() {
     // No mock: a request escaping the client would surface as a connection error
     // rather than the local validation error.

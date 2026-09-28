@@ -1422,7 +1422,7 @@ impl Client {
     /// design was cancelled with ENG-11460, so every call fails.
     #[deprecated(
         since = "0.12.0",
-        note = "no server implements POST /api/v1/bridge/deposit-addresses (cancelled, ENG-11460)"
+        note = "no server implements POST /api/v1/bridge/deposit-addresses and there is no replacement; the design was cancelled (ENG-11460)"
     )]
     pub async fn create_bridge_deposit_address(&self, chain: &str) -> Result<BridgeDepositAddress> {
         require_non_empty(chain, "chain")?;
@@ -1440,7 +1440,7 @@ impl Client {
     /// design was cancelled with ENG-11460, so every call fails.
     #[deprecated(
         since = "0.12.0",
-        note = "no server implements GET /api/v1/bridge/deposit-addresses (cancelled, ENG-11460)"
+        note = "no server implements GET /api/v1/bridge/deposit-addresses and there is no replacement; the design was cancelled (ENG-11460)"
     )]
     pub async fn fetch_bridge_deposit_addresses(&self) -> Result<Vec<BridgeDepositAddress>> {
         self.signed_get("/api/v1/bridge/deposit-addresses", &[])

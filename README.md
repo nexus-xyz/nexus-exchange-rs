@@ -49,8 +49,8 @@ first-page method and a `Paginator`:
 |---|---|---|---|
 | `GET /api/v1/markets/{id}/trades` | `fetch_trades` | `fetch_trades_paginated` | `MAX_TRADES_LIMIT` = **1000** |
 | `GET /api/v1/fills` | `fetch_my_trades` | `fetch_my_trades_paginated` | `MAX_FILLS_LIMIT` = **1000** |
-| `GET /api/v1/orders/history` | `fetch_order_history` | `fetch_order_history_paginated` | `MAX_ORDER_HISTORY_LIMIT` = **500** |
-| `GET /api/v1/positions/closed` | `fetch_closed_positions` | `fetch_closed_positions_paginated` | `MAX_CLOSED_POSITIONS_LIMIT` = **200** |
+| `GET /api/v1/orders/history` | `fetch_orders` | `fetch_orders_paginated` | `MAX_ORDER_HISTORY_LIMIT` = **500** |
+| `GET /api/v1/positions/closed` | `fetch_positions_history` | `fetch_positions_history_paginated` | `MAX_CLOSED_POSITIONS_LIMIT` = **200** |
 | `GET /api/v1/account/equity-history` | `fetch_equity_history` | `fetch_equity_history_paginated` | `MAX_EQUITY_HISTORY_LIMIT` = **720** |
 
 The flat methods return the first page only, and never a cursor. Their `limit`

@@ -2,7 +2,7 @@
 """Check the SDK's targeted endpoints against the pinned OpenAPI spec AND the
 Rust client code.
 
-Five independent invariants are enforced:
+Six independent invariants are enforced:
 
 1. endpoints.txt <-> spec
    Every endpoint the SDK targets (endpoints.txt) must exist in the pinned
@@ -144,6 +144,25 @@ Five independent invariants are enforced:
    Both allowlists carry the stale-entry check the other allowlists have: an
    entry the spec now defines, or one the SDK no longer models, is flagged so
    the list can't rot.
+
+6. method name == snake_case(operationId)   (added by ENG-17743)
+   R2.25 (ENG-17739): the spec's operationId is an operation's one name, and
+   each client spells it in its own casing. So every REST helper call site in
+   src/rest.rs must sit in a method named `snake_case(operationId)` of the
+   operation it calls, with the direct-indexer `V1` suffix dropped
+   (`fetchTradingFeesV1` -> `fetch_trading_fees`). An extra helper over the same
+   operation keeps that name as its stem, plus a suffix from HELPER_SUFFIXES
+   (`fetch_orders_paginated`). The call
+   site is attributed to the nearest enclosing `fn`, so a `#[deprecated]` alias
+   that forwards to the canonical method has no call site of its own and is not
+   checked, while an alias that issues the request itself fails.
+
+   Modulo two documented tables, each stale-checked:
+
+     * OPERATION_IDS_AHEAD_OF_PIN — canonical operationIds the monorepo spec
+                            carries but the pinned tag does not yet.
+     * METHOD_NAME_EXEMPT  — methods that deliberately do not carry their
+                            operation's name, each with its reason.
 
 Usage: check_spec_drift.py <openapi.json>
 """
@@ -677,6 +696,160 @@ def check_code_vs_targets(targeted, available):
             f"endpoints.txt, every endpoints.txt entry has an implementing method "
             f"or is in NON_REST_TARGETS, and CODE_ONLY_OPS is empty."
         )
+    return errors
+
+
+# --- Invariant 6: method name == snake_case(operationId) (ENG-17743) ---------
+
+# R2.25 operationIds that lead the pinned spec.
+#
+# ENG-17740 (nexus#12766) renamed these operationIds in the monorepo spec so each
+# matches its `x-ccxt-method` and the verb grammar, but no published
+# nexus-exchange-api tag carries the rename yet, so the pinned spec still spells
+# them the old way. The methods are named for the canonical id now, and this map
+# is where the checker reads it from until the pin catches up.
+#
+# A NAME table, not an operation carve-out: every key is an operation the pinned
+# spec already defines and src/rest.rs already calls, so it does not reopen the
+# CODE_ONLY_OPS door. Stale-checked in both directions: an entry the pinned spec
+# no longer defines, one no method calls, or one whose pinned operationId now
+# equals the value, fails until it is deleted. So the spec-autobump PR that
+# carries ENG-17740 empties this map. Keys use the spec's own path spelling.
+OPERATION_IDS_AHEAD_OF_PIN = {
+    ("POST", "/account/margin"): "addMargin",
+    ("GET", "/admin/tiers"): "fetchTiers",
+    ("GET", "/agents"): "fetchAgents",
+    ("POST", "/api/v1/account/credit"): "claimCreditV1",
+    ("GET", "/api/v1/account/fees"): "fetchTradingFeesV1",
+    ("GET", "/api/v1/bridge/assets"): "fetchBridgeAssets",
+    ("GET", "/api/v1/bridge/deposits"): "fetchBridgeDeposits",
+    ("GET", "/api/v1/bridge/deposits/{id}"): "fetchBridgeDeposit",
+    ("GET", "/api/v1/fills"): "fetchMyTradesV1",
+    ("GET", "/api/v1/markets/{market_id}/funding"): "fetchFundingRateHistoryV1",
+    ("POST", "/api/v1/orders/batch"): "createOrdersV1",
+    ("GET", "/api/v1/orders/history"): "fetchOrdersV1",
+    ("GET", "/api/v1/positions/closed"): "fetchPositionsHistoryV1",
+    ("GET", "/funding"): "fetchFundingHistory",
+    ("GET", "/keys"): "fetchApiKeys",
+}
+
+# Methods whose name deliberately is not `snake_case(operationId)` or that
+# name plus a HELPER_SUFFIXES suffix, with the reason. Stale-checked: an entry that no longer holds
+# a call site, or whose name now passes, fails until it is deleted.
+METHOD_NAME_EXEMPT = {
+    "post_margin": "private; the one POST /account/margin call site that "
+    "add_margin and remove_margin share",
+    "cancel_orders_for_market": "the market-scoped form of cancel_all_orders "
+    "(DELETE /api/v1/orders?market_id=); its name predates R2.25",
+    "fetch_bridge_deposit_addresses": "pinned id is listBridgeDepositAddresses and "
+    "the monorepo spec has since removed the route (ENG-10373), so there is no "
+    "canonical id to rename to; the name follows the fetch grammar ENG-17740 "
+    "gives the other bridge reads",
+}
+
+# The only suffix an extra helper may add to its operation's name. Anything
+# else would let an unrelated method pass as a "helper" of a shorter id
+# (`fetch_funding_rate_history` is not a helper of `fetch_funding`), so a new
+# suffix is added here deliberately.
+HELPER_SUFFIXES = ("_paginated",)
+
+_FN_RE = re.compile(r"\bfn\s+([A-Za-z_]\w*)")
+
+
+def method_name_for(operation_id):
+    """snake_case an operationId the way R2.25 names Rust methods: drop the `V1`
+    suffix the spec gives the direct-indexer twin of an operation (the method is
+    named for the operation, not the surface), and keep acronyms whole
+    (`fetchOHLCV` -> `fetch_ohlcv`, `createWsToken` -> `create_ws_token`)."""
+    s = re.sub(r"V1$", "", operation_id)
+    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", s)
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
+    return s.lower()
+
+
+def call_sites_by_fn(path=REST_RS):
+    """(fn_name, METHOD, normalized_path, lineno) for every REST helper call site
+    in src/rest.rs, attributed to the nearest enclosing `fn`. Uses `_CALL_RE`, the
+    same regex invariant 2 counts with, so the two cannot see different sites."""
+    src = open(path).read()
+    fns = [(m.start(), m.group(1)) for m in _FN_RE.finditer(src)]
+    sites = []
+    for m in _CALL_RE.finditer(src):
+        owner = None
+        for start, name in fns:
+            if start > m.start():
+                break
+            owner = name
+        lineno = src.count("\n", 0, m.start()) + 1
+        sites.append((owner, HELPER_METHOD[m.group(2)], normalize_path(m.group(3)), lineno))
+    return sites
+
+
+def check_method_names(spec, sites=None):
+    """Invariant 6: every helper call site sits in a method named for its
+    operation. Returns the number of errors printed."""
+    if sites is None:
+        sites = call_sites_by_fn()
+    # Normalized (METHOD, path) -> (spec path, operationId).
+    by_norm = {}
+    for p, methods in spec.get("paths", {}).items():
+        for m, entry in methods.items():
+            if m.lower() in ("get", "post", "put", "delete", "patch") and isinstance(entry, dict):
+                by_norm[(m.upper(), normalize_path(p))] = (p, entry.get("operationId"))
+
+    errors = 0
+    called = {(m, p) for _, m, p, _ in sites}
+    for (m, p), canonical in sorted(OPERATION_IDS_AHEAD_OF_PIN.items()):
+        pinned = by_norm.get((m, normalize_path(p)))
+        why = None
+        if pinned is None or pinned[0] != p:
+            why = "the pinned spec does not define this operation"
+        elif (m, normalize_path(p)) not in called:
+            why = "no method in src/rest.rs calls this operation any more"
+        elif pinned[1] == canonical:
+            why = "the pinned spec now carries this operationId (the pin caught up)"
+        if why:
+            errors += 1
+            print(f"\nERROR: OPERATION_IDS_AHEAD_OF_PIN entry {m} {p} is stale: {why}. Delete it.")
+
+    exempt_used = set()
+    for fn, m, p, lineno in sites:
+        hit = by_norm.get((m, p))
+        if hit is None:
+            continue  # invariant 2 reports an op the pinned spec lacks
+        spec_path, pinned_id = hit
+        operation_id = OPERATION_IDS_AHEAD_OF_PIN.get((m, spec_path)) or pinned_id
+        if not operation_id:
+            errors += 1
+            print(f"\nERROR: src/rest.rs:{lineno}: `{fn}` calls {m} {spec_path}, which has "
+                  f"no operationId in the pinned spec to name it after.")
+            continue
+        want = method_name_for(operation_id)
+        if fn in {want} | {want + sfx for sfx in HELPER_SUFFIXES}:
+            if fn in METHOD_NAME_EXEMPT:
+                exempt_used.add(fn)
+                errors += 1
+                print(f"\nERROR: METHOD_NAME_EXEMPT entry `{fn}` is stale: the name now "
+                      f"matches {operation_id}. Delete it.")
+            continue
+        if fn in METHOD_NAME_EXEMPT:
+            exempt_used.add(fn)
+            continue
+        errors += 1
+        print(f"\nERROR: src/rest.rs:{lineno}: `{fn}` calls {m} {spec_path} (operationId "
+              f"{operation_id}), so it must be named `{want}` (plus a HELPER_SUFFIXES suffix for an extra helper, R2.25). Rename "
+              f"it and keep the old name as a #[deprecated] forwarder for one minor.")
+
+    for fn in sorted(set(METHOD_NAME_EXEMPT) - exempt_used - {s[0] for s in sites}):
+        errors += 1
+        print(f"\nERROR: METHOD_NAME_EXEMPT entry `{fn}` is stale: it holds no REST "
+              f"helper call site in src/rest.rs. Delete it.")
+
+    if not errors:
+        print(f"\nOK: every REST method is named snake_case(operationId) of the operation "
+              f"it calls ({len(OPERATION_IDS_AHEAD_OF_PIN)} operationId(s) read from "
+              f"OPERATION_IDS_AHEAD_OF_PIN until the pin catches up, "
+              f"{len(METHOD_NAME_EXEMPT)} exempt).")
     return errors
 
 
@@ -1539,6 +1712,9 @@ def main():
     # Invariant 5: SDK enums <-> spec enums (5a serde enums, 5b WS channels).
     failures += check_enums_vs_spec(spec)
     failures += check_ws_channels_vs_spec(spec)
+
+    # Invariant 6: method name == snake_case(operationId).
+    failures += check_method_names(spec)
 
     if failures:
         sys.exit(1)

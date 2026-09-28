@@ -79,15 +79,15 @@ pub const MAX_FILLS_LIMIT: u32 = 1000;
 
 /// Largest `limit` (page size) the `GET /api/v1/orders/history` request schema
 /// permits (`maximum: 500`, default 100) — half what `/fills` and the public
-/// trades feed allow. Enforced by [`Client::fetch_order_history`] and
-/// [`Client::fetch_order_history_paginated`].
+/// trades feed allow. Enforced by [`Client::fetch_orders`] and
+/// [`Client::fetch_orders_paginated`].
 pub const MAX_ORDER_HISTORY_LIMIT: u32 = 500;
 
 /// Largest `limit` (page size) the `GET /api/v1/positions/closed` request schema
 /// permits (`maximum: 200`, default 100) — the **smallest** of the five paginated
 /// maxima, so a long close history takes proportionally more pages than `/fills`
-/// would. Enforced by [`Client::fetch_closed_positions`] and
-/// [`Client::fetch_closed_positions_paginated`].
+/// would. Enforced by [`Client::fetch_positions_history`] and
+/// [`Client::fetch_positions_history_paginated`].
 pub const MAX_CLOSED_POSITIONS_LIMIT: u32 = 200;
 
 /// Largest `limit` (page size) the `GET /api/v1/account/equity-history` request
@@ -210,7 +210,7 @@ impl Client {
     }
 
     /// Per-market summaries with 24h volume and halt state.
-    pub async fn fetch_market_summaries(&self) -> Result<Vec<MarketSummary>> {
+    pub async fn fetch_markets_summary(&self) -> Result<Vec<MarketSummary>> {
         self.get("/api/v1/markets/summary", &[], COST_DEFAULT).await
     }
 
@@ -253,7 +253,7 @@ impl Client {
     /// `limit` must be in `1..=`[`MAX_ACCOUNT_FUNDING_LIMIT`]. Unlike the
     /// paginated readers, omitting it asks for the server default of **100**,
     /// not the maximum — pass it explicitly if you want more.
-    pub async fn fetch_account_funding(&self, limit: Option<u32>) -> Result<Vec<AccountFunding>> {
+    pub async fn fetch_funding_history(&self, limit: Option<u32>) -> Result<Vec<AccountFunding>> {
         check_page_size(limit, MAX_ACCOUNT_FUNDING_LIMIT, "funding")?;
         self.signed_get("/funding", &limit_query(limit)).await
     }
@@ -393,7 +393,7 @@ impl Client {
     ///
     /// `limit` must be in `1..=`[`MAX_FUNDING_SAMPLES_LIMIT`]; an out-of-range
     /// value fails before the request is sent.
-    pub async fn fetch_funding_premium_samples(
+    pub async fn fetch_funding_samples(
         &self,
         market_id: &str,
         limit: Option<u32>,
@@ -437,7 +437,7 @@ impl Client {
     /// [`Config::api_key`](crate::Config::api_key)): the endpoint is HMAC-gated
     /// server-side (`hmacAuth`), not a public market-data read, so the call is
     /// signed and rejected without credentials.
-    pub async fn fetch_market_adl_events(
+    pub async fn fetch_adl_events(
         &self,
         market_id: &str,
         limit: Option<u32>,
@@ -459,7 +459,7 @@ impl Client {
     /// [`Config::api_key`](crate::Config::api_key)): the endpoint is HMAC-gated
     /// server-side (`hmacAuth`), so the call is signed and rejected without
     /// credentials.
-    pub async fn fetch_account_adl_history(
+    pub async fn fetch_adl_history(
         &self,
         address: &str,
         limit: Option<u32>,
@@ -479,7 +479,7 @@ impl Client {
     /// probes; `GET /status` is the public health snapshot for the
     /// indexer/engine/oracle/bots. Rely on
     /// [`HealthStatus::status`](crate::types::HealthStatus::status).
-    pub async fn health_check(&self) -> Result<HealthStatus> {
+    pub async fn fetch_status(&self) -> Result<HealthStatus> {
         self.get("/status", &[], COST_DEFAULT).await
     }
 
@@ -657,9 +657,9 @@ impl Client {
     /// `1..=`[`MAX_CLOSED_POSITIONS_LIMIT`] (200 — the smallest of the paginated
     /// maxima); pass `None` for the server's default of 100. Out-of-range values
     /// are rejected here, before the request is signed or sent. Use
-    /// [`fetch_closed_positions_paginated`](Self::fetch_closed_positions_paginated)
+    /// [`fetch_positions_history_paginated`](Self::fetch_positions_history_paginated)
     /// for the whole history.
-    pub async fn fetch_closed_positions(&self, limit: Option<u32>) -> Result<Vec<ClosedPosition>> {
+    pub async fn fetch_positions_history(&self, limit: Option<u32>) -> Result<Vec<ClosedPosition>> {
         check_page_size(limit, MAX_CLOSED_POSITIONS_LIMIT, "positions/closed")?;
         self.signed_get("/api/v1/positions/closed", &limit_query(limit))
             .await
@@ -675,7 +675,7 @@ impl Client {
     /// ```no_run
     /// # use nexus_exchange::{Client, Result};
     /// # async fn run(client: &Client) -> Result<()> {
-    /// let mut pager = client.fetch_closed_positions_paginated().page_size(200);
+    /// let mut pager = client.fetch_positions_history_paginated().page_size(200);
     /// while let Some(page) = pager.next_page().await? {
     ///     let _ = (page.items, page.next_cursor);
     /// }
@@ -687,7 +687,7 @@ impl Client {
     /// five paginated endpoints — a size valid on `/orders/history` is not valid
     /// here); an out-of-range value fails on the first page fetch, before anything
     /// is signed or sent.
-    pub fn fetch_closed_positions_paginated(&self) -> Paginator<ClosedPosition> {
+    pub fn fetch_positions_history_paginated(&self) -> Paginator<ClosedPosition> {
         let client = self.clone();
         Paginator::new(move |req: PageRequest| {
             let client = client.clone();
@@ -754,7 +754,7 @@ impl Client {
     /// average. Note [`AccountFees::maker_fee_bps`] is signed — a negative value
     /// is a maker *rebate* — and [`AccountFees::schedule`] scopes which
     /// per-market schedule the rate belongs to.
-    pub async fn fetch_account_fees(&self) -> Result<AccountFees> {
+    pub async fn fetch_trading_fees(&self) -> Result<AccountFees> {
         self.signed_get("/api/v1/account/fees", &[]).await
     }
 
@@ -1064,7 +1064,7 @@ impl Client {
     /// List open orders for the authenticated account. Requires credentials.
     ///
     /// For orders that have already finished, see
-    /// [`fetch_order_history`](Self::fetch_order_history).
+    /// [`fetch_orders`](Self::fetch_orders).
     pub async fn fetch_open_orders(&self) -> Result<Vec<Order>> {
         self.signed_get("/api/v1/orders", &[]).await
     }
@@ -1081,9 +1081,9 @@ impl Client {
     /// `1..=`[`MAX_ORDER_HISTORY_LIMIT`] (500); pass `None` for the server's
     /// default of 100. Out-of-range values are rejected here, before the request is
     /// signed or sent. Use
-    /// [`fetch_order_history_paginated`](Self::fetch_order_history_paginated) to
+    /// [`fetch_orders_paginated`](Self::fetch_orders_paginated) to
     /// walk the whole history.
-    pub async fn fetch_order_history(&self, limit: Option<u32>) -> Result<Vec<OrderHistoryEntry>> {
+    pub async fn fetch_orders(&self, limit: Option<u32>) -> Result<Vec<OrderHistoryEntry>> {
         check_page_size(limit, MAX_ORDER_HISTORY_LIMIT, "orders/history")?;
         self.signed_get("/api/v1/orders/history", &limit_query(limit))
             .await
@@ -1100,7 +1100,7 @@ impl Client {
     /// # use nexus_exchange::{Client, Result};
     /// # async fn run(client: &Client) -> Result<()> {
     /// let history = client
-    ///     .fetch_order_history_paginated()
+    ///     .fetch_orders_paginated()
     ///     .page_size(500)
     ///     .max_pages(20)
     ///     .all()
@@ -1117,7 +1117,7 @@ impl Client {
     /// Nothing bounds how far back the walk goes — pass
     /// [`max_pages`](Paginator::max_pages) on an account with a long trading
     /// history.
-    pub fn fetch_order_history_paginated(&self) -> Paginator<OrderHistoryEntry> {
+    pub fn fetch_orders_paginated(&self) -> Paginator<OrderHistoryEntry> {
         let client = self.clone();
         Paginator::new(move |req: PageRequest| {
             let client = client.clone();
@@ -1247,7 +1247,7 @@ impl Client {
     }
 
     /// Set an account's rate-limit tier (admin). Requires admin credentials.
-    pub async fn set_account_tier(&self, address: &str, tier: &str) -> Result<TierOverride> {
+    pub async fn set_tier(&self, address: &str, tier: &str) -> Result<TierOverride> {
         self.signed_put(
             "/admin/tiers",
             &serde_json::json!({ "address": address, "tier": tier }),
@@ -1256,38 +1256,56 @@ impl Client {
     }
 
     /// List tier overrides (admin). Requires admin credentials.
-    pub async fn fetch_tier_overrides(&self) -> Result<Vec<TierOverride>> {
+    pub async fn fetch_tiers(&self) -> Result<Vec<TierOverride>> {
         self.signed_get("/admin/tiers", &[]).await
     }
 
     /// Reset an account to its default tier (admin). Requires admin credentials.
-    pub async fn reset_account_tier(&self, address: &str) -> Result<serde_json::Value> {
+    pub async fn delete_tier(&self, address: &str) -> Result<serde_json::Value> {
         self.signed_delete(&format!("/admin/tiers/{address}")).await
     }
 
     /// Mint a single-use, short-lived WebSocket token for the WebSocket
     /// streaming client. Requires credentials.
-    pub async fn mint_web_socket_token(&self) -> Result<WsToken> {
+    pub async fn create_ws_token(&self) -> Result<WsToken> {
         self.signed_post_empty("/ws/token").await
     }
 
     // --- Isolated-margin adjustment and order amend (cancel-replace) ---
 
-    /// Add or remove isolated margin on an open position (`POST /account/margin`).
-    /// Requires credentials.
+    /// Add isolated margin to an open position (`POST /account/margin` with
+    /// `direction: add`). Requires credentials.
     ///
     /// Only applies to a position in isolated-margin mode — the server rejects a
     /// cross-margined position with `MarginModeNotIsolated`. `amount` is the
     /// collateral to move, sent as a decimal string; it must be positive
-    /// (checked locally before sending). Removing more than the position's free
-    /// isolated margin, or below the withdrawal floor, is rejected server-side
-    /// (`InsufficientMargin` / `InsufficientBalance`); a market with no open
-    /// position yields `NoOpenPosition`.
+    /// (checked locally before sending). A market with no open position yields
+    /// `NoOpenPosition`. [`remove_margin`](Self::remove_margin) is the same
+    /// operation in the other direction.
+    pub async fn add_margin(&self, market_id: &str, amount: Decimal) -> Result<MarginAdjustment> {
+        self.post_margin(market_id, MarginDirection::Add, amount)
+            .await
+    }
+
+    /// Remove isolated margin from an open position (`POST /account/margin` with
+    /// `direction: remove`). Requires credentials.
     ///
-    /// See also [`add_margin`](Self::add_margin) and
-    /// [`remove_margin`](Self::remove_margin), thin wrappers that fix the
-    /// direction.
-    pub async fn adjust_margin(
+    /// The counterpart of [`add_margin`](Self::add_margin), with the same
+    /// isolated-mode and positive-`amount` rules. Removing more than the
+    /// position's free isolated margin, or below the withdrawal floor, is
+    /// rejected server-side (`InsufficientMargin` / `InsufficientBalance`).
+    pub async fn remove_margin(
+        &self,
+        market_id: &str,
+        amount: Decimal,
+    ) -> Result<MarginAdjustment> {
+        self.post_margin(market_id, MarginDirection::Remove, amount)
+            .await
+    }
+
+    /// The one `POST /account/margin` call site that [`add_margin`](Self::add_margin)
+    /// and [`remove_margin`](Self::remove_margin) share.
+    async fn post_margin(
         &self,
         market_id: &str,
         direction: MarginDirection,
@@ -1308,26 +1326,6 @@ impl Client {
         .await
     }
 
-    /// Add isolated margin to an open position (`POST /account/margin` with
-    /// `direction: add`). Requires credentials. Convenience wrapper over
-    /// [`adjust_margin`](Self::adjust_margin).
-    pub async fn add_margin(&self, market_id: &str, amount: Decimal) -> Result<MarginAdjustment> {
-        self.adjust_margin(market_id, MarginDirection::Add, amount)
-            .await
-    }
-
-    /// Remove isolated margin from an open position (`POST /account/margin` with
-    /// `direction: remove`). Requires credentials. Convenience wrapper over
-    /// [`adjust_margin`](Self::adjust_margin).
-    pub async fn remove_margin(
-        &self,
-        market_id: &str,
-        amount: Decimal,
-    ) -> Result<MarginAdjustment> {
-        self.adjust_margin(market_id, MarginDirection::Remove, amount)
-            .await
-    }
-
     /// Amend an open order in place on `market_id` (`PATCH /orders/{id}`) — an
     /// atomic server-side cancel-replace. Requires credentials.
     ///
@@ -1341,7 +1339,7 @@ impl Client {
     /// sent) so a stray no-op can't silently churn the order's queue priority.
     /// A successful PATCH returns the replacement [`Order`] directly (unlike
     /// `POST /orders`, which wraps its order and fills in [`OrderResponse`]).
-    pub async fn amend_order(
+    pub async fn edit_order(
         &self,
         order_id: &str,
         market_id: &str,
@@ -1350,7 +1348,7 @@ impl Client {
         require_non_empty(market_id, "market_id")?;
         if !amend.has_changes() {
             return Err(Error::invalid_request(
-                "amend_order requires at least one field to change",
+                "edit_order requires at least one field to change",
             ));
         }
         let id = encoded_segment(order_id, "order_id")?;
@@ -1363,18 +1361,6 @@ impl Client {
     }
 
     // --- Wallet-signed auth flows (EIP-191 / EIP-712) ---
-
-    /// EIP-191 session login (`POST /auth/login`). Signs the fixed login
-    /// message with `signer` and exchanges it for a 24-hour session token.
-    ///
-    /// Unauthenticated — the signature *is* the authorization. This is a thin
-    /// signer: it returns the [`LoginResponse`] and does not store or refresh
-    /// the token. To use it for `/keys` management, pass
-    /// [`LoginResponse::token`] to [`Config::session_token`](crate::Config::session_token).
-    pub async fn sign_in(&self, signer: &EthSigner) -> Result<LoginResponse> {
-        let body = signer.sign_in()?;
-        self.post_unsigned("/auth/login", &body).await
-    }
 
     /// EIP-712 agent-key registration (`POST /agents/register`). Authorizes an
     /// agent keypair to sign trading requests on the wallet's behalf.
@@ -1459,6 +1445,153 @@ impl Client {
         let id = encoded_segment(id, "id")?;
         self.signed_get(&format!("/api/v1/bridge/deposits/{id}"), &[])
             .await
+    }
+
+    // --- Deprecated aliases (R2.25, ENG-17743) ---------------------------------
+    //
+    // Each old name forwards to the method now named `snake_case(operationId)`
+    // and is kept for one minor release. None of them issues a request itself,
+    // which is what lets `scripts/check_spec_drift.py` hold every helper call
+    // site to its operation's name.
+
+    /// Renamed to [`fetch_trading_fees`](Self::fetch_trading_fees).
+    #[deprecated(since = "0.12.0", note = "renamed to `fetch_trading_fees`")]
+    pub async fn fetch_account_fees(&self) -> Result<AccountFees> {
+        self.fetch_trading_fees().await
+    }
+
+    /// Renamed to [`fetch_adl_history`](Self::fetch_adl_history).
+    #[deprecated(since = "0.12.0", note = "renamed to `fetch_adl_history`")]
+    pub async fn fetch_account_adl_history(
+        &self,
+        address: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<AdlEvent>> {
+        self.fetch_adl_history(address, limit).await
+    }
+
+    /// Renamed to [`fetch_adl_events`](Self::fetch_adl_events).
+    #[deprecated(since = "0.12.0", note = "renamed to `fetch_adl_events`")]
+    pub async fn fetch_market_adl_events(
+        &self,
+        market_id: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<AdlEvent>> {
+        self.fetch_adl_events(market_id, limit).await
+    }
+
+    /// Renamed to [`fetch_tiers`](Self::fetch_tiers).
+    #[deprecated(since = "0.12.0", note = "renamed to `fetch_tiers`")]
+    pub async fn fetch_tier_overrides(&self) -> Result<Vec<TierOverride>> {
+        self.fetch_tiers().await
+    }
+
+    /// Renamed to [`set_tier`](Self::set_tier).
+    #[deprecated(since = "0.12.0", note = "renamed to `set_tier`")]
+    pub async fn set_account_tier(&self, address: &str, tier: &str) -> Result<TierOverride> {
+        self.set_tier(address, tier).await
+    }
+
+    /// Renamed to [`delete_tier`](Self::delete_tier).
+    #[deprecated(since = "0.12.0", note = "renamed to `delete_tier`")]
+    pub async fn reset_account_tier(&self, address: &str) -> Result<serde_json::Value> {
+        self.delete_tier(address).await
+    }
+
+    /// Renamed to [`fetch_funding_history`](Self::fetch_funding_history).
+    #[deprecated(since = "0.12.0", note = "renamed to `fetch_funding_history`")]
+    pub async fn fetch_account_funding(&self, limit: Option<u32>) -> Result<Vec<AccountFunding>> {
+        self.fetch_funding_history(limit).await
+    }
+
+    /// Renamed to [`fetch_markets_summary`](Self::fetch_markets_summary).
+    #[deprecated(since = "0.12.0", note = "renamed to `fetch_markets_summary`")]
+    pub async fn fetch_market_summaries(&self) -> Result<Vec<MarketSummary>> {
+        self.fetch_markets_summary().await
+    }
+
+    /// Renamed to [`fetch_funding_samples`](Self::fetch_funding_samples).
+    #[deprecated(since = "0.12.0", note = "renamed to `fetch_funding_samples`")]
+    pub async fn fetch_funding_premium_samples(
+        &self,
+        market_id: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<FundingPremiumSample>> {
+        self.fetch_funding_samples(market_id, limit).await
+    }
+
+    /// Renamed to [`fetch_orders`](Self::fetch_orders).
+    #[deprecated(since = "0.12.0", note = "renamed to `fetch_orders`")]
+    pub async fn fetch_order_history(&self, limit: Option<u32>) -> Result<Vec<OrderHistoryEntry>> {
+        self.fetch_orders(limit).await
+    }
+
+    /// Renamed to [`fetch_orders_paginated`](Self::fetch_orders_paginated).
+    #[deprecated(since = "0.12.0", note = "renamed to `fetch_orders_paginated`")]
+    pub fn fetch_order_history_paginated(&self) -> Paginator<OrderHistoryEntry> {
+        self.fetch_orders_paginated()
+    }
+
+    /// Renamed to [`fetch_positions_history`](Self::fetch_positions_history).
+    #[deprecated(since = "0.12.0", note = "renamed to `fetch_positions_history`")]
+    pub async fn fetch_closed_positions(&self, limit: Option<u32>) -> Result<Vec<ClosedPosition>> {
+        self.fetch_positions_history(limit).await
+    }
+
+    /// Renamed to [`fetch_positions_history_paginated`](Self::fetch_positions_history_paginated).
+    #[deprecated(
+        since = "0.12.0",
+        note = "renamed to `fetch_positions_history_paginated`"
+    )]
+    pub fn fetch_closed_positions_paginated(&self) -> Paginator<ClosedPosition> {
+        self.fetch_positions_history_paginated()
+    }
+
+    /// Renamed to [`edit_order`](Self::edit_order).
+    #[deprecated(since = "0.12.0", note = "renamed to `edit_order`")]
+    pub async fn amend_order(
+        &self,
+        order_id: &str,
+        market_id: &str,
+        amend: &AmendOrder,
+    ) -> Result<Order> {
+        self.edit_order(order_id, market_id, amend).await
+    }
+
+    /// Renamed to [`fetch_status`](Self::fetch_status).
+    #[deprecated(since = "0.12.0", note = "renamed to `fetch_status`")]
+    pub async fn health_check(&self) -> Result<HealthStatus> {
+        self.fetch_status().await
+    }
+
+    /// Renamed to [`create_ws_token`](Self::create_ws_token).
+    #[deprecated(since = "0.12.0", note = "renamed to `create_ws_token`")]
+    pub async fn mint_web_socket_token(&self) -> Result<WsToken> {
+        self.create_ws_token().await
+    }
+
+    /// Replaced by [`add_margin`](Self::add_margin) and
+    /// [`remove_margin`](Self::remove_margin), which fix the direction.
+    #[deprecated(
+        since = "0.12.0",
+        note = "use `add_margin` or `remove_margin`, which fix the direction"
+    )]
+    pub async fn adjust_margin(
+        &self,
+        market_id: &str,
+        direction: MarginDirection,
+        amount: Decimal,
+    ) -> Result<MarginAdjustment> {
+        self.post_margin(market_id, direction, amount).await
+    }
+
+    /// Signs [`LOGIN_MESSAGE`] with `signer` and calls [`login`](Self::login).
+    #[deprecated(
+        since = "0.12.0",
+        note = "call `login` with the signature from `EthSigner::sign_in`"
+    )]
+    pub async fn sign_in(&self, signer: &EthSigner) -> Result<LoginResponse> {
+        self.login(&signer.sign_in()?.signature).await
     }
 }
 

@@ -34,8 +34,8 @@ pub(crate) fn network_salt(network: &str) -> [u8; 32] {
 
 /// Signed body for `POST /auth/login` (EIP-191 session login).
 ///
-/// Produced by [`EthSigner::sign_in`]; hand it to
-/// [`Client::sign_in`](crate::Client::sign_in).
+/// Produced by [`EthSigner::sign_in`]; hand its `signature` to
+/// [`Client::login`](crate::Client::login).
 #[derive(Debug, Clone, Serialize)]
 pub struct LoginRequest {
     /// The signed message — always [`SIGN_IN_MESSAGE`].

@@ -118,7 +118,7 @@ async fn set_account_tier_uses_put_with_body() {
         .mount(&server)
         .await;
     let t = authed(server.uri())
-        .set_account_tier("0xabc", "MarketMaker")
+        .set_tier("0xabc", "MarketMaker")
         .await
         .unwrap();
     assert_eq!(t.tier, "MarketMaker");
@@ -138,7 +138,7 @@ async fn mint_ws_token_parses() {
         )
         .mount(&server)
         .await;
-    let tok = authed(server.uri()).mint_web_socket_token().await.unwrap();
+    let tok = authed(server.uri()).create_ws_token().await.unwrap();
     assert_eq!(tok.token, "abc123");
 }
 
@@ -173,7 +173,7 @@ async fn fetch_tier_overrides_parses_and_is_signed() {
         )
         .mount(&server)
         .await;
-    let t = authed(server.uri()).fetch_tier_overrides().await.unwrap();
+    let t = authed(server.uri()).fetch_tiers().await.unwrap();
     assert_eq!(t[0].tier, "MarketMaker");
 }
 
@@ -188,10 +188,7 @@ async fn reset_account_tier_signed_delete_sends_no_body() {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "ok": true })))
         .mount(&server)
         .await;
-    authed(server.uri())
-        .reset_account_tier("0xabc")
-        .await
-        .unwrap();
+    authed(server.uri()).delete_tier("0xabc").await.unwrap();
 }
 
 #[tokio::test]

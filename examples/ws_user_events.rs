@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
 
     // Mint a single-use WS token over the signed REST API just before connecting.
-    let token = client.mint_web_socket_token().await?.token;
+    let token = client.create_ws_token().await?.token;
 
     // Authenticate first, then subscribe. Frames are sent (and replayed on
     // reconnect) in order, so the auth frame precedes the channel subscriptions.

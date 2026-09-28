@@ -663,7 +663,7 @@ async fn fetch_account_fees_parses() {
         .mount(&server)
         .await;
 
-    let fees = authed(server.uri()).fetch_account_fees().await.unwrap();
+    let fees = authed(server.uri()).fetch_trading_fees().await.unwrap();
     // Signed: a negative maker fee is a rebate, so this must not be unsigned.
     assert_eq!(fees.maker_fee_bps, -2);
     assert_eq!(fees.taker_fee_bps, 5);
@@ -693,7 +693,7 @@ async fn account_fees_surfaces_estimated_volume_and_opaque_discounts() {
         .mount(&server)
         .await;
 
-    let fees = authed(server.uri()).fetch_account_fees().await.unwrap();
+    let fees = authed(server.uri()).fetch_trading_fees().await.unwrap();
     assert!(fees.volume_30d_estimated);
     // `tier` / `schedule` are open strings: unknown values decode, not error.
     assert_eq!(fees.tier, "vip1");
@@ -723,7 +723,7 @@ async fn account_fees_defaults_absent_discounts_but_is_strict_elsewhere() {
         .mount(&server)
         .await;
 
-    let fees = authed(server.uri()).fetch_account_fees().await.unwrap();
+    let fees = authed(server.uri()).fetch_trading_fees().await.unwrap();
     assert!(fees.discounts.is_empty());
 
     // The tolerance stops there, and is not a general policy for this type: every
@@ -753,7 +753,7 @@ async fn account_fees_defaults_absent_discounts_but_is_strict_elsewhere() {
             .await;
 
         let err = authed(server.uri())
-            .fetch_account_fees()
+            .fetch_trading_fees()
             .await
             .expect_err(&format!("absent `{missing}` must not decode"));
         assert!(!err.is_retryable(), "absent `{missing}`: {err}");
@@ -772,7 +772,7 @@ async fn portfolio_endpoints_require_credentials() {
 
     assert!(anon.fetch_account_summary().await.is_err());
     assert!(anon.fetch_account_state().await.is_err());
-    assert!(anon.fetch_account_fees().await.is_err());
+    assert!(anon.fetch_trading_fees().await.is_err());
     assert!(anon.fetch_portfolio_history(None, None).await.is_err());
     assert!(server.received_requests().await.unwrap().is_empty());
 }

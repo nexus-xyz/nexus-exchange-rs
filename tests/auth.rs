@@ -46,7 +46,7 @@ async fn signed_request_without_credentials_errors() {
 
 #[tokio::test]
 #[allow(deprecated)] // Throwaway test origin; the selector stays supported.
-async fn sign_in_posts_eip191_body_and_parses_token() {
+async fn login_posts_eip191_body_and_parses_token() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/auth/login"))
@@ -64,7 +64,8 @@ async fn sign_in_posts_eip191_body_and_parses_token() {
         .await;
 
     let client = Client::new(Config::with_base_url(server.uri()));
-    let resp = client.sign_in(&signer()).await.unwrap();
+    let signature = signer().sign_in().unwrap().signature;
+    let resp = client.login(&signature).await.unwrap();
     assert_eq!(resp.token.expose_secret(), "a1b2c3d4e5f6");
     assert_eq!(resp.address, TEST_ADDR);
 }

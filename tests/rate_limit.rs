@@ -44,7 +44,7 @@ async fn retries_on_429_then_succeeds() {
         .mount(&server)
         .await;
 
-    let health = client(server.uri(), 3).health_check().await.unwrap();
+    let health = client(server.uri(), 3).fetch_status().await.unwrap();
     assert_eq!(health.status, "ok");
 }
 

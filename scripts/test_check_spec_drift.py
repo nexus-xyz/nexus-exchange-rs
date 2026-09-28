@@ -41,6 +41,9 @@ comparison logic was never exercised at all — only invariant 5 and invariant 2
   the spec dropped, the `mark_price` -> `last_trade_price` (PR #48) class.
 * **Invariant 4** (`TestInvariant4LoginMessage`) — LOGIN_MESSAGE drift. Those
   bytes are EIP-191 signed at login, so a mismatch rejects every SDK login.
+* **Invariant 6** (`TestInvariant6MethodNames`) — a method not named
+  snake_case(operationId) of the operation it calls (R2.25, ENG-17743), plus the
+  stale checks on OPERATION_IDS_AHEAD_OF_PIN and METHOD_NAME_EXEMPT.
 
 `TestFixtureTracksTheRegistry` guards the suite itself: `enum_spec()` is derived
 from ENUM_SCHEMA, so registering an enum can no longer produce a FALSE red.
@@ -1289,6 +1292,92 @@ class TestCoverageReportEndToEnd(unittest.TestCase):
         # Two paths, one operation, zero covered.
         self.assertIn("SDK covers 0/1 targetable operation(s)", out)
         self.assertIn("(2 paths, 1 of them a second spelling", out)
+
+
+class TestInvariant6MethodNames(unittest.TestCase):
+    """Invariant 6: a REST method is named snake_case(operationId) (ENG-17743).
+
+    Sites and spec are synthetic, so each case pins one rule; the last case runs
+    the real src/rest.rs through the parser that feeds it.
+    """
+
+    SPEC = {"paths": {
+        "/api/v1/widgets": {"get": {"operationId": "fetchWidgetsV1"}},
+        "/widgets/{widget_id}": {"patch": {"operationId": "editWidget"}},
+        "/gadgets": {"get": {"operationId": "listGadgets"}},
+    }}
+
+    def _errors(self, sites, ahead=None, exempt=None):
+        with _patched(csd, "OPERATION_IDS_AHEAD_OF_PIN", ahead or {}), \
+                _patched(csd, "METHOD_NAME_EXEMPT", exempt or {}):
+            return _quiet(csd.check_method_names, self.SPEC, sites=sites)
+
+    def test_method_name_for_drops_v1_and_keeps_acronyms_whole(self):
+        self.assertEqual(csd.method_name_for("fetchTradingFeesV1"), "fetch_trading_fees")
+        self.assertEqual(csd.method_name_for("fetchOHLCV"), "fetch_ohlcv")
+        self.assertEqual(csd.method_name_for("createWsToken"), "create_ws_token")
+
+    def test_canonical_name_and_paginated_helper_pass(self):
+        sites = [("fetch_widgets", "GET", "/api/v1/widgets", 1),
+                 ("fetch_widgets_paginated", "GET", "/api/v1/widgets", 2),
+                 ("edit_widget", "PATCH", "/widgets/{}", 3)]
+        self.assertEqual(self._errors(sites), 0)
+
+    def test_old_name_fails(self):
+        self.assertEqual(self._errors([("amend_widget", "PATCH", "/widgets/{}", 1)]), 1)
+
+    def test_a_longer_name_is_not_a_helper(self):
+        """Only HELPER_SUFFIXES extend a name: `fetch_widgets_by_color` is some
+        other method, not a helper of `fetch_widgets`."""
+        self.assertEqual(self._errors([("fetch_widgets_by_color", "GET", "/api/v1/widgets", 1)]), 1)
+
+    def test_ahead_of_pin_id_is_used_and_stale_entries_fail(self):
+        site = [("fetch_gadgets", "GET", "/gadgets", 1)]
+        self.assertEqual(self._errors(site), 1)
+        self.assertEqual(self._errors(site, ahead={("GET", "/gadgets"): "fetchGadgets"}), 0)
+        # The pin caught up: the entry now says what the spec says.
+        self.assertEqual(self._errors(site, ahead={("GET", "/gadgets"): "listGadgets"}), 2)
+        # An entry for an op the pinned spec lacks, or one no method calls.
+        self.assertEqual(self._errors(site, ahead={("GET", "/gadgets"): "fetchGadgets",
+                                                   ("GET", "/nope"): "fetchNope"}), 1)
+        self.assertEqual(self._errors([], ahead={("GET", "/gadgets"): "fetchGadgets"}), 1)
+
+    def test_exemption_suppresses_and_stale_exemptions_fail(self):
+        site = [("cancel_widgets_for_color", "GET", "/api/v1/widgets", 1)]
+        self.assertEqual(self._errors(site, exempt={"cancel_widgets_for_color": "why"}), 0)
+        self.assertEqual(self._errors([], exempt={"cancel_widgets_for_color": "why"}), 1)
+        ok = [("fetch_widgets", "GET", "/api/v1/widgets", 1)]
+        self.assertEqual(self._errors(ok, exempt={"fetch_widgets": "why"}), 1)
+
+    def test_sites_are_attributed_to_the_enclosing_fn(self):
+        source = """
+    pub fn fetch_widgets_paginated(&self) -> Paginator<Widget> {
+        let client = self.clone();
+        Paginator::new(move |req: PageRequest| {
+            async move { client.get_page::<Vec<Widget>>("/api/v1/widgets", &q, 1.0).await }
+        })
+    }
+    #[deprecated(since = "0.12.0", note = "renamed to `edit_widget`")]
+    pub async fn amend_widget(&self, id: &str) -> Result<Widget> {
+        self.edit_widget(id).await
+    }
+    pub async fn edit_widget(&self, id: &str) -> Result<Widget> {
+        self.signed_patch_with_query(&format!("/widgets/{id}"), &[], &body).await
+    }
+"""
+        with tempfile.NamedTemporaryFile("w", suffix=".rs", delete=False) as fh:
+            fh.write(source)
+        self.addCleanup(os.unlink, fh.name)
+        sites = csd.call_sites_by_fn(path=fh.name)
+        self.assertEqual([(f, m, p) for f, m, p, _ in sites],
+                         [("fetch_widgets_paginated", "GET", "/api/v1/widgets"),
+                          ("edit_widget", "PATCH", "/widgets/{}")])
+
+    def test_real_source_sites_match_invariant_2(self):
+        sites = csd.call_sites_by_fn()
+        self.assertTrue(all(fn for fn, *_ in sites))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual({(m, p) for _, m, p, _ in sites}, csd.implemented_ops())
 
 
 if __name__ == "__main__":

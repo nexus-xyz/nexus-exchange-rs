@@ -304,7 +304,7 @@ impl Client {
 
     /// Mint a single-use WebSocket token and open an **authenticated** stream
     /// in one step — the convenience the lower-level [`connect`](Self::connect)
-    /// plus [`mint_web_socket_token`](Self::mint_web_socket_token) would
+    /// plus [`create_ws_token`](Self::create_ws_token) would
     /// otherwise require callers to wire up themselves.
     ///
     /// Requires credentials (the token mint is signed). Fails fast — before any
@@ -327,7 +327,7 @@ impl Client {
         self.ws_endpoint()?;
         // Pre-mint the first token so credential / transport problems surface
         // here as an error rather than as a background Disconnected event.
-        let token = self.mint_web_socket_token().await?.token;
+        let token = self.create_ws_token().await?.token;
         Ok(self.spawn_ws(Some(token), subscriptions))
     }
 
@@ -434,7 +434,7 @@ async fn run(
             None => Ok(base.clone()),
             Some(client) => match first_token.take() {
                 Some(token) => Ok(ws_url_with_token(&base, &token)),
-                None => match client.mint_web_socket_token().await {
+                None => match client.create_ws_token().await {
                     Ok(minted) => Ok(ws_url_with_token(&base, &minted.token)),
                     Err(err) => Err(format!("ws token mint failed: {err}")),
                 },

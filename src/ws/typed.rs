@@ -306,7 +306,7 @@ async fn connect_url(client: &Client, ws_url: &str, authed: bool) -> Result<Stri
     if !authed {
         return Ok(ws_url.to_string());
     }
-    let token = client.mint_web_socket_token().await?;
+    let token = client.create_ws_token().await?;
     Ok(with_token(ws_url, &token.token))
 }
 

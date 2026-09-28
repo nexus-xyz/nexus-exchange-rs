@@ -45,7 +45,7 @@ async fn fetch_market_adl_events_signs_and_passes_limit() {
         .await;
 
     let events = hmac(server.uri())
-        .fetch_market_adl_events("BTC-USDX-PERP", Some(50))
+        .fetch_adl_events("BTC-USDX-PERP", Some(50))
         .await
         .unwrap();
     assert_eq!(events.len(), 1);
@@ -66,7 +66,7 @@ async fn fetch_market_adl_events_omits_limit_when_none() {
         .await;
 
     let events = hmac(server.uri())
-        .fetch_market_adl_events("BTC-USDX-PERP", None)
+        .fetch_adl_events("BTC-USDX-PERP", None)
         .await
         .unwrap();
     assert!(events.is_empty());
@@ -85,7 +85,7 @@ async fn fetch_account_adl_history_signs_for_address() {
         .await;
 
     let history = hmac(server.uri())
-        .fetch_account_adl_history("0xtrader", Some(100))
+        .fetch_adl_history("0xtrader", Some(100))
         .await
         .unwrap();
     assert_eq!(history.len(), 1);
@@ -100,14 +100,14 @@ async fn adl_reads_require_credentials() {
     let client = Client::new(Config::with_base_url("http://localhost:1"));
     assert!(matches!(
         client
-            .fetch_market_adl_events("BTC-USDX-PERP", None)
+            .fetch_adl_events("BTC-USDX-PERP", None)
             .await
             .unwrap_err(),
         Error::Terminal(nexus_exchange::TerminalError::Credentials(_))
     ));
     assert!(matches!(
         client
-            .fetch_account_adl_history("0xtrader", None)
+            .fetch_adl_history("0xtrader", None)
             .await
             .unwrap_err(),
         Error::Terminal(nexus_exchange::TerminalError::Credentials(_))
@@ -117,7 +117,7 @@ async fn adl_reads_require_credentials() {
 #[tokio::test]
 async fn fetch_account_adl_history_rejects_empty_address_locally() {
     let err = hmac("http://localhost:1".into())
-        .fetch_account_adl_history("", None)
+        .fetch_adl_history("", None)
         .await
         .unwrap_err();
     assert!(matches!(

@@ -169,7 +169,7 @@ async fn fetch_funding_premium_samples_parses_and_passes_limit() {
         .await;
 
     let s = client(server.uri())
-        .fetch_funding_premium_samples("BTC-USDX-PERP", Some(2))
+        .fetch_funding_samples("BTC-USDX-PERP", Some(2))
         .await
         .unwrap();
     assert_eq!(s[0].timestamp, 1776033900000);
@@ -188,7 +188,7 @@ async fn fetch_funding_premium_samples_rejects_an_out_of_range_limit_before_send
     let c = client("http://127.0.0.1:1".to_string());
     for limit in [0, MAX_FUNDING_SAMPLES_LIMIT + 1] {
         let err = c
-            .fetch_funding_premium_samples("BTC-USDX-PERP", Some(limit))
+            .fetch_funding_samples("BTC-USDX-PERP", Some(limit))
             .await
             .unwrap_err();
         assert!(
@@ -202,7 +202,7 @@ async fn fetch_funding_premium_samples_rejects_an_out_of_range_limit_before_send
     // And the boundary is inclusive — 480 is a legal ask, so it must NOT be
     // rejected locally (it fails on connect instead).
     let err = c
-        .fetch_funding_premium_samples("BTC-USDX-PERP", Some(MAX_FUNDING_SAMPLES_LIMIT))
+        .fetch_funding_samples("BTC-USDX-PERP", Some(MAX_FUNDING_SAMPLES_LIMIT))
         .await
         .unwrap_err();
     assert!(
@@ -306,7 +306,7 @@ async fn fetch_market_summaries_parses_numbers_and_halted_null() {
         .mount(&server)
         .await;
 
-    let s = client(server.uri()).fetch_market_summaries().await.unwrap();
+    let s = client(server.uri()).fetch_markets_summary().await.unwrap();
     assert_eq!(s.len(), 2);
     assert_eq!(s[0].last_trade_price.unwrap().to_string(), "50011.6");
     assert_eq!(s[0].volume_24h.to_string(), "1350000");
@@ -456,7 +456,7 @@ async fn public_market_reads_reject_empty_market_id_locally() {
         c.fetch_trades("", None).await.unwrap_err(),
         c.fetch_ohlcv("", None, None).await.unwrap_err(),
         c.fetch_funding_rate_history("", None).await.unwrap_err(),
-        c.fetch_funding_premium_samples("", None).await.unwrap_err(),
+        c.fetch_funding_samples("", None).await.unwrap_err(),
         c.fetch_mark_price("").await.unwrap_err(),
         c.fetch_market_status("").await.unwrap_err(),
     ] {

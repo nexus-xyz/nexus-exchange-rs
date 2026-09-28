@@ -842,7 +842,7 @@ pub struct MarkPrice {
 ///
 /// The v0.7.1 spec removed the old liveness `GET /health` / `GET /ready` probes;
 /// `GET /status` (schema `ServiceHealth`) is the public replacement, so
-/// [`Client::health_check`](crate::Client::health_check) now reads it. Rely on
+/// [`Client::fetch_status`](crate::Client::fetch_status) now reads it. Rely on
 /// the top-level [`status`](Self::status); [`services`](Self::services) carries
 /// per-component detail that is informational and may evolve. Unknown fields are
 /// ignored, so this stays forward-compatible as the snapshot grows.
@@ -2267,7 +2267,7 @@ pub struct MarginAdjustment {
 ///
 /// Build one with [`AmendOrder::new`] and set only the fields you want to
 /// change; unset (`None`) fields are omitted from the request and left
-/// untouched on the order. [`Client::amend_order`](crate::Client::amend_order)
+/// untouched on the order. [`Client::edit_order`](crate::Client::edit_order)
 /// rejects an amend with no changes before it leaves the client.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct AmendOrder {

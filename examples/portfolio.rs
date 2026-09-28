@@ -96,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n== fees ==");
-    let fees = client.fetch_account_fees().await?;
+    let fees = client.fetch_trading_fees().await?;
     // Maker bps is signed — negative is a rebate paid TO the maker.
     println!(
         "maker {} bps | taker {} bps | tier {} | schedule {}",

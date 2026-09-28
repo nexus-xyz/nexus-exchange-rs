@@ -54,7 +54,7 @@ async fn retries_transient_5xx_then_succeeds() {
         .await;
 
     let health = client(server.uri(), fast_retry())
-        .health_check()
+        .fetch_status()
         .await
         .expect("should recover after transient 503s");
     assert_eq!(health.status, "ok");
@@ -80,7 +80,7 @@ async fn retries_transient_408_then_succeeds() {
         .await;
 
     let health = client(server.uri(), fast_retry())
-        .health_check()
+        .fetch_status()
         .await
         .expect("should recover after transient 408s");
     assert_eq!(health.status, "ok");
@@ -111,7 +111,7 @@ async fn per_attempt_timeout_is_transient_and_retried() {
         .with_timeout(Duration::from_millis(100))
         .with_retry(fast_retry());
     let health = Client::new(cfg)
-        .health_check()
+        .fetch_status()
         .await
         .expect("should recover after a timed-out attempt");
     assert_eq!(health.status, "ok");
@@ -131,7 +131,7 @@ async fn retries_exhaust_then_surface_last_error() {
         .await;
 
     let err = client(server.uri(), fast_retry())
-        .health_check()
+        .fetch_status()
         .await
         .unwrap_err();
     match err {
@@ -160,7 +160,7 @@ async fn does_not_retry_non_transient_4xx() {
         .await;
 
     let err = client(server.uri(), fast_retry())
-        .health_check()
+        .fetch_status()
         .await
         .unwrap_err();
     // A 400 with an unmodeled code is a terminal BadRequest — never retried.
@@ -191,7 +191,7 @@ async fn does_not_retry_429_owned_by_rate_limit_layer() {
     let cfg = Config::with_base_url(server.uri())
         .with_retry(fast_retry())
         .with_rate_limit(RateLimit::new(10.0).with_max_retries(0));
-    let err = Client::new(cfg).health_check().await.unwrap_err();
+    let err = Client::new(cfg).fetch_status().await.unwrap_err();
     assert!(matches!(
         err,
         Error::Transient(nexus_exchange::TransientError::RateLimited { .. })
@@ -209,7 +209,7 @@ async fn disabled_retry_makes_a_single_attempt() {
         .await;
 
     let err = client(server.uri(), RetryConfig::disabled())
-        .health_check()
+        .fetch_status()
         .await
         .unwrap_err();
     assert!(matches!(

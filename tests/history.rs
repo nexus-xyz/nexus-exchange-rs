@@ -100,7 +100,7 @@ async fn order_history_paginator_walks_every_page_and_signs_each() {
         .await;
 
     let orders = authed(server.uri())
-        .fetch_order_history_paginated()
+        .fetch_orders_paginated()
         .all()
         .await
         .unwrap();
@@ -141,7 +141,7 @@ async fn closed_positions_paginator_walks_every_page_and_signs_each() {
         .await;
 
     let closed = authed(server.uri())
-        .fetch_closed_positions_paginated()
+        .fetch_positions_history_paginated()
         .all()
         .await
         .unwrap();
@@ -214,7 +214,7 @@ async fn order_history_manual_paging_round_trips_the_cursor() {
         .await;
 
     let client = authed(server.uri());
-    let mut pager = client.fetch_order_history_paginated();
+    let mut pager = client.fetch_orders_paginated();
     let first = pager.next_page().await.unwrap().unwrap();
     assert!(!first.is_last());
     let saved = first
@@ -225,7 +225,7 @@ async fn order_history_manual_paging_round_trips_the_cursor() {
 
     // A fresh paginator resuming from the persisted cursor must skip page 1.
     let resumed = client
-        .fetch_order_history_paginated()
+        .fetch_orders_paginated()
         .starting_after(saved)
         .all()
         .await
@@ -250,7 +250,7 @@ async fn flat_order_history_sends_limit_and_no_cursor() {
         .await;
 
     let orders = authed(server.uri())
-        .fetch_order_history(Some(MAX_ORDER_HISTORY_LIMIT))
+        .fetch_orders(Some(MAX_ORDER_HISTORY_LIMIT))
         .await
         .unwrap();
 
@@ -276,7 +276,7 @@ async fn flat_closed_positions_sends_limit_and_no_cursor() {
         .await;
 
     let closed = authed(server.uri())
-        .fetch_closed_positions(Some(MAX_CLOSED_POSITIONS_LIMIT))
+        .fetch_positions_history(Some(MAX_CLOSED_POSITIONS_LIMIT))
         .await
         .unwrap();
 
@@ -319,7 +319,7 @@ async fn limit_maxima_are_per_endpoint_and_not_interchangeable() {
     // /orders/history: 501 is out of range (500 in range is pinned by
     // `flat_order_history_sends_limit_and_no_cursor`, which sends it).
     let err = client
-        .fetch_order_history(Some(MAX_ORDER_HISTORY_LIMIT + 1))
+        .fetch_orders(Some(MAX_ORDER_HISTORY_LIMIT + 1))
         .await
         .expect_err("501 is out of range on /orders/history");
     assert!(
@@ -329,7 +329,7 @@ async fn limit_maxima_are_per_endpoint_and_not_interchangeable() {
 
     // 500 is *valid* on /orders/history but out of range on /positions/closed.
     let err = client
-        .fetch_closed_positions(Some(MAX_ORDER_HISTORY_LIMIT))
+        .fetch_positions_history(Some(MAX_ORDER_HISTORY_LIMIT))
         .await
         .expect_err("500 is out of range on /positions/closed (max 200)");
     assert!(
@@ -339,7 +339,7 @@ async fn limit_maxima_are_per_endpoint_and_not_interchangeable() {
 
     // And 720 is valid on /account/equity-history but out of range on both others.
     let err = client
-        .fetch_order_history(Some(MAX_EQUITY_HISTORY_LIMIT))
+        .fetch_orders(Some(MAX_EQUITY_HISTORY_LIMIT))
         .await
         .expect_err("720 is out of range on /orders/history (max 500)");
     assert!(err.to_string().contains("orders/history page size"));
@@ -353,8 +353,8 @@ async fn limit_maxima_are_per_endpoint_and_not_interchangeable() {
         "account/equity-history",
     ] {
         let err = match endpoint {
-            "orders/history" => client.fetch_order_history(Some(0)).await.unwrap_err(),
-            "positions/closed" => client.fetch_closed_positions(Some(0)).await.unwrap_err(),
+            "orders/history" => client.fetch_orders(Some(0)).await.unwrap_err(),
+            "positions/closed" => client.fetch_positions_history(Some(0)).await.unwrap_err(),
             _ => client.fetch_equity_history(Some(0)).await.unwrap_err(),
         };
         assert!(err.to_string().contains(endpoint), "{endpoint}: {err}");
@@ -405,7 +405,7 @@ async fn portfolio_history_limit_is_not_a_paginated_bound() {
 async fn paginator_page_size_is_validated_before_the_first_request() {
     let server = MockServer::start().await;
     let err = authed(server.uri())
-        .fetch_closed_positions_paginated()
+        .fetch_positions_history_paginated()
         .page_size(MAX_CLOSED_POSITIONS_LIMIT + 1)
         .next_page()
         .await
@@ -429,7 +429,7 @@ async fn paginator_page_size_is_validated_before_the_first_request() {
         .mount(&server)
         .await;
     authed(server.uri())
-        .fetch_closed_positions_paginated()
+        .fetch_positions_history_paginated()
         .page_size(MAX_CLOSED_POSITIONS_LIMIT)
         .all()
         .await
@@ -463,14 +463,9 @@ async fn absent_cursor_header_ends_the_walk_on_every_endpoint() {
 
         let client = authed(server.uri());
         let count = match path_str {
-            ORDER_HISTORY_PATH => client
-                .fetch_order_history_paginated()
-                .all()
-                .await
-                .unwrap()
-                .len(),
+            ORDER_HISTORY_PATH => client.fetch_orders_paginated().all().await.unwrap().len(),
             CLOSED_POSITIONS_PATH => client
-                .fetch_closed_positions_paginated()
+                .fetch_positions_history_paginated()
                 .all()
                 .await
                 .unwrap()
@@ -515,7 +510,7 @@ async fn empty_page_with_a_cursor_keeps_paging() {
         .await;
 
     let closed = authed(server.uri())
-        .fetch_closed_positions_paginated()
+        .fetch_positions_history_paginated()
         .all()
         .await
         .unwrap();
@@ -568,7 +563,7 @@ async fn repeated_cursor_stops_the_walk_observably() {
         .mount(&server)
         .await;
 
-    let mut pager = authed(server.uri()).fetch_order_history_paginated();
+    let mut pager = authed(server.uri()).fetch_orders_paginated();
     let first = pager.next_page().await.unwrap().unwrap();
     assert_eq!(first.next_cursor.as_ref().unwrap().as_str(), "stuck");
     let second = pager.next_page().await.unwrap().unwrap();
@@ -591,10 +586,7 @@ async fn order_history_decodes_money_as_exact_decimals() {
         .mount(&server)
         .await;
 
-    let orders = authed(server.uri())
-        .fetch_order_history(None)
-        .await
-        .unwrap();
+    let orders = authed(server.uri()).fetch_orders(None).await.unwrap();
     let o = &orders[0];
     assert_eq!(o.side, Some(Side::Buy));
     assert_eq!(o.order_type.as_deref(), Some("limit"));
@@ -626,10 +618,7 @@ async fn absent_and_null_fields_decode_as_none_not_zero() {
         .mount(&server)
         .await;
 
-    let orders = authed(server.uri())
-        .fetch_order_history(None)
-        .await
-        .unwrap();
+    let orders = authed(server.uri()).fetch_orders(None).await.unwrap();
     let o = &orders[0];
     assert_eq!(o.id.as_deref(), Some("o1"));
     assert_eq!(o.price, None, "a null limit price must not become 0");
@@ -664,7 +653,7 @@ async fn closed_position_slim_payload_decodes_without_fabricating_pnl() {
         .await;
 
     let closed = authed(server.uri())
-        .fetch_closed_positions(None)
+        .fetch_positions_history(None)
         .await
         .unwrap();
     let p = &closed[0];
@@ -699,7 +688,7 @@ async fn closed_position_decodes_a_negative_realized_pnl() {
         .await;
 
     let closed = authed(server.uri())
-        .fetch_closed_positions(None)
+        .fetch_positions_history(None)
         .await
         .unwrap();
     let p = &closed[0];
@@ -731,7 +720,7 @@ async fn closed_position_decodes_the_ccxt_spelling() {
         .await;
 
     let closed = authed(server.uri())
-        .fetch_closed_positions(None)
+        .fetch_positions_history(None)
         .await
         .unwrap();
     let p = &closed[0];

@@ -2,9 +2,7 @@
 //! and client-assigned order ids. Covers wire (de)serialization, request
 //! signing, path-segment encoding, and the client-side validation guards.
 
-use nexus_exchange::types::{
-    AmendOrder, Decimal, MarginDirection, OrderRequest, OrderResult, Side, TimeInForce,
-};
+use nexus_exchange::types::{AmendOrder, Decimal, OrderRequest, OrderResult, Side, TimeInForce};
 use nexus_exchange::{Client, Config, Error};
 use wiremock::matchers::{body_json, header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -22,7 +20,7 @@ fn dec(s: &str) -> Decimal {
 }
 
 #[tokio::test]
-async fn adjust_margin_posts_signed_body_and_parses() {
+async fn add_margin_posts_signed_body_and_parses() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/account/margin"))
@@ -40,7 +38,7 @@ async fn adjust_margin_posts_signed_body_and_parses() {
         .mount(&server)
         .await;
     let r = authed(server.uri())
-        .adjust_margin("BTC-USDX-PERP", MarginDirection::Add, dec("100"))
+        .add_margin("BTC-USDX-PERP", dec("100"))
         .await
         .unwrap();
     assert_eq!(r.market_id, "BTC-USDX-PERP");
@@ -74,7 +72,7 @@ async fn remove_margin_sends_remove_direction() {
 }
 
 #[tokio::test]
-async fn adjust_margin_rejects_non_positive_amount_and_empty_market() {
+async fn add_margin_rejects_non_positive_amount_and_empty_market() {
     // No mock mounted: a request escaping the client would surface as a
     // transport error rather than the local validation error.
     let client = authed("http://127.0.0.1:1".to_string());
@@ -86,10 +84,7 @@ async fn adjust_margin_rejects_non_positive_amount_and_empty_market() {
         zero,
         Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
     ));
-    let empty = client
-        .adjust_margin("", MarginDirection::Add, dec("100"))
-        .await
-        .unwrap_err();
+    let empty = client.add_margin("", dec("100")).await.unwrap_err();
     assert!(matches!(
         empty,
         Error::Terminal(nexus_exchange::TerminalError::InvalidRequest(_))
@@ -118,7 +113,7 @@ async fn amend_order_puts_only_changed_fields() {
         .await;
     let amend = AmendOrder::new().price(dec("50500")).quantity(dec("0.2"));
     let resp = authed(server.uri())
-        .amend_order("o1", "BTC-USDX-PERP", &amend)
+        .edit_order("o1", "BTC-USDX-PERP", &amend)
         .await
         .unwrap();
     assert_eq!(resp.id, "o2");
@@ -151,7 +146,7 @@ async fn amend_order_serializes_tif_and_client_order_id() {
         .time_in_force(TimeInForce::Ioc)
         .client_order_id("replacement-1");
     let resp = authed(server.uri())
-        .amend_order("o1", "BTC-USDX-PERP", &amend)
+        .edit_order("o1", "BTC-USDX-PERP", &amend)
         .await
         .unwrap();
     assert_eq!(resp.id, "o2");
@@ -162,7 +157,7 @@ async fn amend_order_serializes_tif_and_client_order_id() {
 #[tokio::test]
 async fn amend_order_with_no_changes_is_rejected() {
     let err = authed("http://127.0.0.1:1".to_string())
-        .amend_order("o1", "BTC-USDX-PERP", &AmendOrder::new())
+        .edit_order("o1", "BTC-USDX-PERP", &AmendOrder::new())
         .await
         .unwrap_err();
     assert!(matches!(
@@ -271,7 +266,7 @@ async fn empty_order_id_is_rejected_without_request() {
     // No mock is mounted: the path-segment guard must reject before any I/O, so
     // a request escaping the client would surface as a transport error instead.
     let err = authed("http://127.0.0.1:1".to_string())
-        .amend_order("", "BTC-USDX-PERP", &AmendOrder::new().price(dec("100")))
+        .edit_order("", "BTC-USDX-PERP", &AmendOrder::new().price(dec("100")))
         .await
         .unwrap_err();
     assert!(matches!(

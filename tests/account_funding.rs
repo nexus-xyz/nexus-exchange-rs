@@ -42,7 +42,7 @@ async fn funding_direction_agrees_with_the_sign_on_amount() {
         .await;
 
     let rows = authed(server.uri())
-        .fetch_account_funding(None)
+        .fetch_funding_history(None)
         .await
         .unwrap();
     assert_eq!(rows.len(), 2);
@@ -73,7 +73,7 @@ async fn omitting_limit_sends_no_query_param() {
         .mount(&server)
         .await;
     assert!(authed(server.uri())
-        .fetch_account_funding(None)
+        .fetch_funding_history(None)
         .await
         .unwrap()
         .is_empty());
@@ -89,7 +89,7 @@ async fn explicit_limit_reaches_the_wire() {
         .mount(&server)
         .await;
     assert!(authed(server.uri())
-        .fetch_account_funding(Some(MAX_ACCOUNT_FUNDING_LIMIT))
+        .fetch_funding_history(Some(MAX_ACCOUNT_FUNDING_LIMIT))
         .await
         .unwrap()
         .is_empty());
@@ -103,7 +103,7 @@ async fn out_of_range_limits_are_rejected_locally() {
     assert_eq!(MAX_ACCOUNT_FUNDING_LIMIT, 1000);
     for bad in [0u32, MAX_ACCOUNT_FUNDING_LIMIT + 1] {
         assert!(authed(server.uri())
-            .fetch_account_funding(Some(bad))
+            .fetch_funding_history(Some(bad))
             .await
             .is_err());
     }
@@ -121,7 +121,7 @@ async fn empty_funding_history_is_ok() {
         .mount(&server)
         .await;
     assert!(authed(server.uri())
-        .fetch_account_funding(None)
+        .fetch_funding_history(None)
         .await
         .unwrap()
         .is_empty());

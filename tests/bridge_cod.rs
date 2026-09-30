@@ -21,7 +21,7 @@ fn authed(uri: String) -> Client {
 async fn fetch_cancel_on_disconnect_parses() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account/cancel-on-disconnect"))
+        .and(path("/account/cancel-on-disconnect"))
         .and(header_exists("x-signature"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "enabled": true, "active": false, "grace_secs": 30
@@ -41,7 +41,7 @@ async fn fetch_cancel_on_disconnect_parses() {
 async fn set_cancel_on_disconnect_puts_body_and_parses() {
     let server = MockServer::start().await;
     Mock::given(method("PUT"))
-        .and(path("/api/v1/account/cancel-on-disconnect"))
+        .and(path("/account/cancel-on-disconnect"))
         .and(header_exists("x-signature"))
         .and(body_json(serde_json::json!({ "enabled": true })))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({

@@ -1,6 +1,6 @@
 //! The three history endpoints spec v0.7.2 added, end-to-end through `Client`:
-//! `GET /api/v1/orders/history`, `GET /api/v1/positions/closed` and
-//! `GET /api/v1/account/equity-history`.
+//! `GET /orders/history`, `GET /positions/closed` and
+//! `GET /account/equity-history`.
 //!
 //! Every test here starts from a **`Client` method** against a mock server, so it
 //! fails if the endpoint is not reachable from the public API, if `limit` /
@@ -13,7 +13,7 @@
 //! 500 / 200 / 720, not one shared bound, and emphatically not the `366` that
 //! belongs to the un-paginated `/account/portfolio-history`.
 //!
-//! `GET /api/v1/account/portfolio-history` is here too, and until ENG-8439 it
+//! `GET /account/portfolio-history` is here too, and until ENG-8439 it
 //! was the one endpoint this file asserted a *constant* about instead of
 //! driving a body through `Client` — so its deserializer was never exercised
 //! and shipped unable to decode a real response. It now round-trips both wire
@@ -29,10 +29,10 @@ use rust_decimal::Decimal;
 use wiremock::matchers::{header_exists, method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const ORDER_HISTORY_PATH: &str = "/api/v1/orders/history";
-const CLOSED_POSITIONS_PATH: &str = "/api/v1/positions/closed";
-const EQUITY_HISTORY_PATH: &str = "/api/v1/account/equity-history";
-const PORTFOLIO_HISTORY_PATH: &str = "/api/v1/account/portfolio-history";
+const ORDER_HISTORY_PATH: &str = "/orders/history";
+const CLOSED_POSITIONS_PATH: &str = "/positions/closed";
+const EQUITY_HISTORY_PATH: &str = "/account/equity-history";
+const PORTFOLIO_HISTORY_PATH: &str = "/account/portfolio-history";
 
 #[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn authed(uri: String) -> Client {

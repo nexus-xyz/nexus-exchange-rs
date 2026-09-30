@@ -740,4 +740,65 @@ mod tests {
         ));
         assert_eq!(cursors, before);
     }
+
+    fn out_of_sync(channel: &str, market: &str) -> Message {
+        Message::Text(
+            json!({ "op": "out_of_sync", "channel": channel, "market": market, "oldest_seq": 9 })
+                .to_string()
+                .into(),
+        )
+    }
+
+    /// An `out_of_sync` for a stream this client never subscribed to sends
+    /// nothing and leaves the subscribed streams' cursors alone.
+    #[tokio::test]
+    async fn out_of_sync_for_unsubscribed_stream_is_a_no_op() {
+        let (tx, _rx) = mpsc::channel::<Item>(4);
+        let channels = [Channel::trades("BTC-USDX-PERP")];
+        let key = channels[0].cursor_key();
+        let mut cursors = HashMap::from([(key.clone(), 5)]);
+        let (mut delivered, mut dropped) = (false, 0u64);
+        let mut sent: Vec<Message> = Vec::new();
+
+        let exit = handle_frame(
+            out_of_sync("trades", "ETH-USDX-PERP"),
+            &tx,
+            &mut sent,
+            &channels,
+            &mut cursors,
+            &mut delivered,
+            &mut dropped,
+        )
+        .await;
+
+        assert!(exit.is_none());
+        assert!(sent.is_empty(), "no resubscribe for a stream we don't hold");
+        assert_eq!(cursors.get(&key), Some(&5));
+    }
+
+    /// A resubscribe that fails to send means the socket is gone: reconnect
+    /// rather than leave the channel silently dropped.
+    #[tokio::test]
+    async fn failed_resubscribe_send_reconnects() {
+        let (tx, _rx) = mpsc::channel::<Item>(4);
+        let channels = [Channel::trades("BTC-USDX-PERP")];
+        let mut cursors = HashMap::new();
+        let (mut delivered, mut dropped) = (false, 0u64);
+        let mut broken = Box::pin(futures_util::sink::unfold((), |(), _: Message| async {
+            Err::<(), _>("socket gone")
+        }));
+
+        let exit = handle_frame(
+            out_of_sync("trades", "BTC-USDX-PERP"),
+            &tx,
+            &mut broken,
+            &channels,
+            &mut cursors,
+            &mut delivered,
+            &mut dropped,
+        )
+        .await;
+
+        assert!(matches!(exit, Some(LoopExit::Reconnect)));
+    }
 }

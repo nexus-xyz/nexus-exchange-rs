@@ -218,6 +218,207 @@ async fn out_of_sync_is_surfaced_and_clears_the_resume_cursor() {
 }
 
 #[tokio::test]
+async fn out_of_sync_resubscribes_on_the_same_connection() {
+    // The server drops a subscription it answers `out_of_sync` for (ENG-18685).
+    // The client must subscribe it again from the live edge on the SAME socket,
+    // or the channel stays silent until the connection happens to drop.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let accepts = Arc::new(AtomicUsize::new(0));
+    let accepts_srv = accepts.clone();
+
+    let server = tokio::spawn(async move {
+        let (sock, _) = listener.accept().await.unwrap();
+        accepts_srv.fetch_add(1, Ordering::SeqCst);
+        let mut ws = tokio_tungstenite::accept_async(sock).await.unwrap();
+        let _sub = read_text(&mut ws).await;
+        send_json(
+            &mut ws,
+            json!({ "op": "subscribed", "channel": "trades", "market": "BTC-USDX-PERP", "seq_at_join": 10 }),
+        )
+        .await;
+        send_json(
+            &mut ws,
+            json!({ "op": "out_of_sync", "channel": "trades", "market": "BTC-USDX-PERP", "oldest_seq": 50 }),
+        )
+        .await;
+
+        let resub = read_text(&mut ws).await;
+        assert_eq!(resub["op"], "subscribe");
+        assert_eq!(resub["market"], "BTC-USDX-PERP");
+        assert!(
+            resub.get("since").is_none(),
+            "resync joins at the live edge"
+        );
+        send_json(
+            &mut ws,
+            json!({ "op": "subscribed", "channel": "trades", "market": "BTC-USDX-PERP", "seq_at_join": 60 }),
+        )
+        .await;
+        send_json(
+            &mut ws,
+            json!({ "op": "event", "channel": "trades", "market": "BTC-USDX-PERP", "seq": 61, "payload": {} }),
+        )
+        .await;
+        while let Some(Ok(msg)) = ws.next().await {
+            if msg.is_close() {
+                break;
+            }
+        }
+    });
+
+    let client = client_for(addr, 64);
+    let mut stream = client
+        .subscribe(vec![Channel::trades("BTC-USDX-PERP")])
+        .unwrap();
+
+    assert!(matches!(
+        next_item(&mut stream).await,
+        Some(Ok(ServerMessage::Subscribed {
+            seq_at_join: 10,
+            ..
+        }))
+    ));
+    assert!(matches!(
+        next_item(&mut stream).await,
+        Some(Ok(ServerMessage::OutOfSync { .. }))
+    ));
+    assert!(matches!(
+        next_item(&mut stream).await,
+        Some(Ok(ServerMessage::Subscribed {
+            seq_at_join: 60,
+            ..
+        }))
+    ));
+    assert!(matches!(
+        next_item(&mut stream).await,
+        Some(Ok(ServerMessage::Event { seq: 61, .. }))
+    ));
+    assert_eq!(accepts.load(Ordering::SeqCst), 1, "no reconnect needed");
+
+    stream.close().await;
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn out_of_sync_without_a_market_resubscribes_every_market_of_the_channel() {
+    // A connection that fell behind the broadcast may get `out_of_sync` with no
+    // market for a per-market channel: every market of it was dropped.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (sock, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(sock).await.unwrap();
+        for _ in 0..3 {
+            let _sub = read_text(&mut ws).await;
+        }
+        send_json(
+            &mut ws,
+            json!({ "op": "out_of_sync", "channel": "trades", "market": null, "oldest_seq": null }),
+        )
+        .await;
+        let mut markets = Vec::new();
+        for _ in 0..2 {
+            let resub = read_text(&mut ws).await;
+            assert_eq!(resub["channel"], "trades");
+            markets.push(resub["market"].as_str().unwrap().to_string());
+        }
+        markets.sort();
+        assert_eq!(markets, ["BTC-USDX-PERP", "ETH-USDX-PERP"]);
+        send_json(
+            &mut ws,
+            json!({ "op": "event", "channel": "trades", "market": "ETH-USDX-PERP", "seq": 1, "payload": {} }),
+        )
+        .await;
+        while let Some(Ok(msg)) = ws.next().await {
+            if msg.is_close() {
+                break;
+            }
+        }
+    });
+
+    let client = client_for(addr, 64);
+    let mut stream = client
+        .subscribe(vec![
+            Channel::trades("BTC-USDX-PERP"),
+            Channel::trades("ETH-USDX-PERP"),
+            Channel::book("BTC-USDX-PERP"),
+        ])
+        .unwrap();
+
+    assert!(matches!(
+        next_item(&mut stream).await,
+        Some(Ok(ServerMessage::OutOfSync { .. }))
+    ));
+    // The book subscription is untouched; only trades was resubscribed.
+    assert!(matches!(
+        next_item(&mut stream).await,
+        Some(Ok(ServerMessage::Event { seq: 1, .. }))
+    ));
+
+    stream.close().await;
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn candles_resume_from_cursor_on_reconnect() {
+    // Server candle frames carry no `interval`, so a cursor keyed on it never
+    // matched and candles always restarted live-from-now (ENG-18685).
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (sock, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(sock).await.unwrap();
+        let sub = read_text(&mut ws).await;
+        assert_eq!(sub["interval"], "1m");
+        send_json(
+            &mut ws,
+            json!({ "op": "subscribed", "channel": "candles", "market": "BTC-USDX-PERP", "seq_at_join": 5 }),
+        )
+        .await;
+        send_json(
+            &mut ws,
+            json!({ "op": "event", "channel": "candles", "market": "BTC-USDX-PERP", "seq": 6, "payload": {} }),
+        )
+        .await;
+        ws.close(None).await.unwrap();
+
+        let (sock2, _) = listener.accept().await.unwrap();
+        let mut ws2 = tokio_tungstenite::accept_async(sock2).await.unwrap();
+        let resub = read_text(&mut ws2).await;
+        assert_eq!(resub["interval"], "1m");
+        assert_eq!(resub["since"], json!(6), "candles must resume from cursor");
+        send_json(
+            &mut ws2,
+            json!({ "op": "event", "channel": "candles", "market": "BTC-USDX-PERP", "seq": 7, "payload": {} }),
+        )
+        .await;
+        while let Some(Ok(msg)) = ws2.next().await {
+            if msg.is_close() {
+                break;
+            }
+        }
+    });
+
+    let client = client_for(addr, 64);
+    let mut stream = client
+        .subscribe(vec![Channel::candles("BTC-USDX-PERP", "1m")])
+        .unwrap();
+    for _ in 0..2 {
+        assert!(next_item(&mut stream).await.unwrap().is_ok());
+    }
+    assert!(matches!(
+        next_item(&mut stream).await,
+        Some(Ok(ServerMessage::Event { seq: 7, .. }))
+    ));
+
+    stream.close().await;
+    server.await.unwrap();
+}
+
+#[tokio::test]
 #[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 async fn private_channel_without_credentials_fails_fast() {
     let client = Client::new(Config::with_base_url("http://unused"));

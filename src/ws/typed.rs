@@ -15,6 +15,10 @@
 //!   (seeded from each `subscribed` frame's `seq_at_join`) and, on reconnect,
 //!   replays each `subscribe` with a `since` cursor so the server resumes after
 //!   the last frame the client processed.
+//! * **Resync.** An `out_of_sync` means the server dropped that subscription.
+//!   The client surfaces the frame, drops the cursor, and subscribes again from
+//!   the live edge on the same connection, so the channel keeps delivering; what
+//!   was missed must be re-read over REST.
 //!
 //! # Delivery semantics
 //!
@@ -361,8 +365,10 @@ where
         tokio::select! {
             frame = read.next() => match frame {
                 Some(Ok(msg)) => {
-                    if let Some(exit) =
-                        handle_frame(msg, event_tx, &mut write, cursors, delivered, &mut dropped).await
+                    if let Some(exit) = handle_frame(
+                        msg, event_tx, &mut write, channels, cursors, delivered, &mut dropped,
+                    )
+                    .await
                     {
                         return exit;
                     }
@@ -422,6 +428,7 @@ async fn handle_frame<W>(
     msg: Message,
     event_tx: &mpsc::Sender<Item>,
     write: &mut W,
+    channels: &[Channel],
     cursors: &mut HashMap<CursorKey, u64>,
     delivered: &mut bool,
     dropped: &mut u64,
@@ -429,7 +436,7 @@ async fn handle_frame<W>(
 where
     W: SinkExt<Message> + Unpin,
 {
-    match msg {
+    let (exit, reset) = match msg {
         Message::Text(text) => decode(
             text.as_str().as_bytes(),
             event_tx,
@@ -439,27 +446,53 @@ where
         ),
         Message::Binary(bytes) => decode(&bytes, event_tx, cursors, delivered, dropped),
         // Keepalive: pong promptly. A failed pong means the socket is gone.
-        Message::Ping(payload) => match write.send(Message::Pong(payload)).await {
-            Ok(()) => None,
-            Err(_) => Some(LoopExit::Reconnect),
-        },
-        Message::Close(_) => Some(LoopExit::Reconnect),
+        Message::Ping(payload) => {
+            return match write.send(Message::Pong(payload)).await {
+                Ok(()) => None,
+                Err(_) => Some(LoopExit::Reconnect),
+            }
+        }
+        Message::Close(_) => return Some(LoopExit::Reconnect),
         // Pong / raw Frame: nothing to do.
-        _ => None,
+        _ => return None,
+    };
+    if exit.is_some() {
+        return exit;
     }
+    // `out_of_sync`: the server dropped the subscription. Subscribe again from
+    // the live edge (the cursor is already gone), or the channel stays silent on
+    // a healthy socket. A `None` market names every market of the channel.
+    if let Some((name, market)) = reset {
+        for channel in channels {
+            let key = channel.cursor_key();
+            if key.0 != name || (market.is_some() && key.1 != market) {
+                continue;
+            }
+            cursors.remove(&key);
+            if write
+                .send(Message::Text(channel.subscribe_text(None).into()))
+                .await
+                .is_err()
+            {
+                return Some(LoopExit::Reconnect);
+            }
+        }
+    }
+    None
 }
 
 /// Decode an op-envelope payload, fold its cursor forward, and forward it to the
-/// consumer. A frame that doesn't parse into a known [`ServerMessage`] (an
-/// unknown future `op`, or a non-JSON text frame) is skipped rather than tearing
-/// down an otherwise healthy connection.
+/// consumer. Returns the loop exit, if any, and the stream an `out_of_sync`
+/// invalidated, which the caller resubscribes. A frame that doesn't parse into
+/// a known [`ServerMessage`] (an unknown future `op`, or a non-JSON text frame)
+/// is skipped rather than tearing down an otherwise healthy connection.
 fn decode(
     bytes: &[u8],
     event_tx: &mpsc::Sender<Item>,
     cursors: &mut HashMap<CursorKey, u64>,
     delivered: &mut bool,
     dropped: &mut u64,
-) -> Option<LoopExit> {
+) -> (Option<LoopExit>, Option<CursorKey>) {
     match serde_json::from_slice::<ServerMessage>(bytes) {
         Ok(msg) => {
             if let Some((key, seq)) = msg.cursor_advance() {
@@ -468,16 +501,11 @@ fn decode(
                 // cursor below a seq we've already processed.
                 *entry = (*entry).max(seq);
             }
-            // An `out_of_sync` invalidates the stale cursor: drop it so the next
-            // (re)subscribe resumes from the live edge instead of replaying a
-            // `since` the server can no longer satisfy. The frame is still
-            // surfaced below so the consumer can REST-refetch.
-            if let Some(key) = msg.cursor_reset() {
-                cursors.remove(&key);
-            }
-            deliver(event_tx, msg, delivered, dropped)
+            // The frame is still surfaced so the consumer can REST-refetch.
+            let reset = msg.cursor_reset();
+            (deliver(event_tx, msg, delivered, dropped), reset)
         }
-        Err(_) => None,
+        Err(_) => (None, None),
     }
 }
 
@@ -679,32 +707,37 @@ mod tests {
         );
         assert_eq!(cursors.get(&key), Some(&5));
 
-        // An `out_of_sync` drops the stale cursor so the next subscribe omits
-        // `since` and resumes from the live edge.
+        // An `out_of_sync` names the stream to resubscribe; `handle_frame`
+        // drops its cursor and sends the subscribe.
         let oos = json!({
             "op": "out_of_sync", "channel": "trades", "market": "BTC-USDX-PERP", "oldest_seq": 9
         })
         .to_string();
-        decode(
+        let (_, reset) = decode(
             oos.as_bytes(),
             &tx,
             &mut cursors,
             &mut delivered,
             &mut dropped,
         );
-        assert_eq!(cursors.get(&key), None, "out_of_sync clears the cursor");
+        assert_eq!(reset, Some(key), "out_of_sync names the stream");
 
         // Non-JSON / unknown frames are skipped, leaving cursors untouched.
         let before = cursors.clone();
-        assert!(decode(b"not json", &tx, &mut cursors, &mut delivered, &mut dropped).is_none());
-        assert!(decode(
-            br#"{"op":"future_op"}"#,
-            &tx,
-            &mut cursors,
-            &mut delivered,
-            &mut dropped
-        )
-        .is_none());
+        assert!(matches!(
+            decode(b"not json", &tx, &mut cursors, &mut delivered, &mut dropped),
+            (None, None)
+        ));
+        assert!(matches!(
+            decode(
+                br#"{"op":"future_op"}"#,
+                &tx,
+                &mut cursors,
+                &mut delivered,
+                &mut dropped
+            ),
+            (None, None)
+        ));
         assert_eq!(cursors, before);
     }
 }

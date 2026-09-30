@@ -17,8 +17,17 @@
 //!   the last frame the client processed.
 //! * **Resync.** An `out_of_sync` means the server dropped that subscription.
 //!   The client surfaces the frame, drops the cursor, and subscribes again from
-//!   the live edge on the same connection, so the channel keeps delivering; what
-//!   was missed must be re-read over REST.
+//!   the live edge on the same connection, so the channel keeps delivering.
+//!
+//! # Refetch once live
+//!
+//! Events missed before an `out_of_sync` must be re-read over REST, but not
+//! straight away. Wait for the next `subscribed` frame for that channel and
+//! market, which marks the resubscribe as live, and refetch then. A refetch that
+//! lands before the resubscribe takes effect can miss events published in
+//! between: they are newer than the REST answer and older than the live edge
+//! the stream rejoined at. You never resubscribe yourself; the client already
+//! has.
 //!
 //! # Delivery semantics
 //!
@@ -175,14 +184,22 @@ impl Client {
     ///
     /// ```no_run
     /// use futures_util::StreamExt;
-    /// use nexus_exchange::ws::Channel;
+    /// use nexus_exchange::ws::{Channel, ServerMessage};
     /// use nexus_exchange::{Client, Config};
     ///
     /// # async fn run() -> nexus_exchange::Result<()> {
     /// let client = Client::new(Config::default());
     /// let mut stream = client.subscribe(vec![Channel::trades("BTC-USDX-PERP")])?;
+    /// let mut resyncing = false;
     /// while let Some(item) = stream.next().await {
     ///     match item {
+    ///         // The client has already resubscribed. Don't refetch yet.
+    ///         Ok(ServerMessage::OutOfSync { .. }) => resyncing = true,
+    ///         // Live again: now re-read what was missed over REST.
+    ///         Ok(ServerMessage::Subscribed { .. }) if resyncing => {
+    ///             resyncing = false;
+    ///             /* REST-refetch the trades you track */
+    ///         }
     ///         Ok(msg) => { let _ = msg; /* handle the typed frame */ }
     ///         Err(err) => eprintln!("stream: {err}"),
     ///     }

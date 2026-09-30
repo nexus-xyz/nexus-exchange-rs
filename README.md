@@ -82,6 +82,35 @@ on `/positions/closed`. Two things follow that are easy to get wrong:
 - `/account/equity-history` defaults to **720**, not 100, so omitting `limit`
   there asks for the whole ~1h / 5s window and the first page is usually the last.
 
+## Account stream
+
+`Client::subscribe` opens the `/ws` socket (token plus `op` envelope) and returns
+a typed `MessageStream`. It reconnects on its own and resumes each channel from
+its last `seq`.
+
+On `out_of_sync` the server has dropped that subscription, and the client
+resubscribes it automatically from the live edge. Wait until the subscription
+is live again, which is the next `subscribed` frame for that channel and
+market, and only then REST-refetch what was missed. A refetch that lands before
+the resubscribe takes effect can miss events published in between.
+
+```rust
+use nexus_exchange::ws::{Channel, ServerMessage};
+
+let mut stream = client.subscribe(vec![Channel::Fills])?;
+let mut resyncing = false;
+while let Some(item) = stream.next().await {
+    match item {
+        Ok(ServerMessage::OutOfSync { .. }) => resyncing = true, // already resubscribed
+        Ok(ServerMessage::Subscribed { .. }) if resyncing => {
+            resyncing = false; /* live again: refetch fills over REST */
+        }
+        Ok(ServerMessage::Event { payload, .. }) => { /* apply the event */ }
+        _ => {}
+    }
+}
+```
+
 ## Public market-data stream
 
 `Client::market_stream` opens the public `/stream` socket, which needs no

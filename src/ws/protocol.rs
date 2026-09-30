@@ -19,20 +19,22 @@
 //! seen per channel and, on reconnect, replays each `subscribe` with a `since`
 //! cursor so the server resumes *after* the last frame the client processed —
 //! closing the gap that an unqualified resubscribe would leave. If the client's
-//! cursor predates the server's ring buffer the server sends `out_of_sync`
-//! instead; the client drops that channel's cursor (so it stops asking for a
-//! `since` the server can't satisfy) and surfaces the frame so the consumer can
-//! REST-refetch. See [`crate::ws::MessageStream`].
+//! cursor predates the server's ring buffer (or the connection falls behind the
+//! server's broadcast) the server sends `out_of_sync` and drops the
+//! subscription; the client drops that channel's cursor, subscribes it again
+//! from the live edge, and surfaces the frame so the consumer can REST-refetch
+//! what was missed. See [`crate::ws::MessageStream`].
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Identity of a subscribed stream, used to track resume cursors and to
-/// de-duplicate the replay set. A `(channel, market, interval)` triple: the
-/// extra dimensions are `None` for channels that don't use them (e.g. `orders`
-/// has no market; `trades` has no interval), so two distinct streams never
-/// collide on one cursor.
-pub(crate) type CursorKey = (&'static str, Option<String>, Option<String>);
+/// de-duplicate the replay set. A `(channel, market)` pair, `market` being
+/// `None` for account channels. This is how the server keys a stream: it
+/// ignores a subscribe's `interval` and its frames carry none, so candles at two
+/// intervals on one market are one stream, and a key that included the interval
+/// could never match an inbound frame (ENG-18685).
+pub(crate) type CursorKey = (&'static str, Option<String>);
 
 /// A channel to subscribe to over the streaming API — the op-envelope
 /// subscription selector.
@@ -163,11 +165,7 @@ impl Channel {
 
     /// Stable identity for cursor tracking and replay-set de-duplication.
     pub(crate) fn cursor_key(&self) -> CursorKey {
-        (
-            self.name(),
-            self.market().map(str::to_string),
-            self.interval().map(str::to_string),
-        )
+        (self.name(), self.market().map(str::to_string))
     }
 
     /// Serialize the `subscribe` op for this channel, carrying the `since`
@@ -293,9 +291,9 @@ pub enum ServerMessage {
     /// The client's resume cursor predates the server's ring buffer, so the
     /// requested `since` can no longer be satisfied: there is a real gap. The
     /// consumer must REST-refetch the current state and treat the stream as
-    /// resumed from now. Non-fatal — the connection stays up, and the client
-    /// drops this channel's cursor so it stops requesting an unsatisfiable
-    /// `since`.
+    /// resumed from now. Non-fatal — the connection stays up. The server has
+    /// dropped the subscription, so the client drops this channel's cursor and
+    /// subscribes it again from the live edge; a fresh `subscribed` follows.
     OutOfSync {
         /// Channel that overran its buffer.
         channel: String,
@@ -325,29 +323,29 @@ impl ServerMessage {
             ServerMessage::Event {
                 channel,
                 market,
-                interval,
                 seq,
                 ..
-            } => Some((key_of(channel, market, interval), *seq)),
+            } => Some((key_of(channel, market), *seq)),
             ServerMessage::Subscribed {
                 channel,
                 market,
-                interval,
                 seq_at_join,
-            } => Some((key_of(channel, market, interval), *seq_at_join)),
+                ..
+            } => Some((key_of(channel, market), *seq_at_join)),
             _ => None,
         }
     }
 
-    /// The resume cursor this frame *invalidates*, if any. An `out_of_sync`
-    /// frame means the server can no longer satisfy this stream's `since`, so
-    /// the client drops that cursor — the next (re)subscribe omits `since` and
-    /// resumes from the live edge instead of replaying an unsatisfiable gap.
+    /// The stream this frame *invalidates*, if any. An `out_of_sync` frame
+    /// means the server has dropped the subscription (it could not replay the
+    /// requested `since`, or this connection fell behind its broadcast), so the
+    /// client drops the cursor and subscribes again from the live edge. A
+    /// `None` market on a per-market channel names every market of it.
     pub(crate) fn cursor_reset(&self) -> Option<CursorKey> {
         match self {
             ServerMessage::OutOfSync {
                 channel, market, ..
-            } => Some(key_of(channel, market, &None)),
+            } => Some(key_of(channel, market)),
             _ => None,
         }
     }
@@ -356,7 +354,7 @@ impl ServerMessage {
 /// Build a [`CursorKey`] from the wire fields of an inbound frame, normalizing
 /// the channel name to the same `&'static str` a [`Channel`] produces so inbound
 /// and outbound keys match.
-fn key_of(channel: &str, market: &Option<String>, interval: &Option<String>) -> CursorKey {
+fn key_of(channel: &str, market: &Option<String>) -> CursorKey {
     let name = match channel {
         "trades" => "trades",
         "book" => "book",
@@ -370,7 +368,7 @@ fn key_of(channel: &str, market: &Option<String>, interval: &Option<String>) -> 
         // stable so repeated frames for it still fold consistently.
         _ => "",
     };
-    (name, market.clone(), interval.clone())
+    (name, market.clone())
 }
 
 #[cfg(test)]
@@ -436,7 +434,7 @@ mod tests {
         .unwrap();
         let (key, seq) = event.cursor_advance().unwrap();
         assert_eq!(key, Channel::Liquidations.cursor_key());
-        assert_eq!(key, ("liquidations", None, None));
+        assert_eq!(key, ("liquidations", None));
         assert_eq!(seq, 7);
     }
 
@@ -448,7 +446,7 @@ mod tests {
         .unwrap();
         // `subscribed` seeds the resume baseline from `seq_at_join`.
         let (key, seq) = subscribed.cursor_advance().unwrap();
-        assert_eq!(key, ("trades", Some("BTC-USDX-PERP".to_string()), None));
+        assert_eq!(key, ("trades", Some("BTC-USDX-PERP".to_string())));
         assert_eq!(seq, 100);
 
         let event: ServerMessage = serde_json::from_value(json!({
@@ -457,7 +455,7 @@ mod tests {
         }))
         .unwrap();
         let (key, seq) = event.cursor_advance().unwrap();
-        assert_eq!(key, ("trades", Some("BTC-USDX-PERP".to_string()), None));
+        assert_eq!(key, ("trades", Some("BTC-USDX-PERP".to_string())));
         assert_eq!(seq, 105);
 
         // An `event` may carry engine-stamped gap metadata.
@@ -486,7 +484,7 @@ mod tests {
         assert!(oos.cursor_advance().is_none());
         assert_eq!(
             oos.cursor_reset().unwrap(),
-            ("trades", Some("BTC-USDX-PERP".to_string()), None)
+            ("trades", Some("BTC-USDX-PERP".to_string()))
         );
 
         // Server error frames carry only `message`.
@@ -502,10 +500,11 @@ mod tests {
     fn inbound_and_outbound_cursor_keys_match() {
         // The key derived from a Channel must equal the key derived from the
         // server's frame for the same stream, or resume cursors never line up.
+        // Server candle frames carry no `interval` (ENG-18685).
         let channel = Channel::candles("BTC-USDX-PERP", "1m");
         let msg: ServerMessage = serde_json::from_value(json!({
             "op": "event", "channel": "candles", "market": "BTC-USDX-PERP",
-            "interval": "1m", "seq": 7, "payload": {}
+            "seq": 7, "payload": {}
         }))
         .unwrap();
         assert_eq!(channel.cursor_key(), msg.cursor_advance().unwrap().0);

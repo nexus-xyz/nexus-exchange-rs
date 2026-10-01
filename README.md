@@ -98,12 +98,18 @@ the resubscribe takes effect can miss events published in between.
 use nexus_exchange::ws::{Channel, ServerMessage};
 
 let mut stream = client.subscribe(vec![Channel::Fills])?;
-let mut resyncing = false;
+// The stream an `out_of_sync` named; a `None` market means every market.
+let mut resyncing: Option<(String, Option<String>)> = None;
 while let Some(item) = stream.next().await {
     match item {
-        Ok(ServerMessage::OutOfSync { .. }) => resyncing = true, // already resubscribed
-        Ok(ServerMessage::Subscribed { .. }) if resyncing => {
-            resyncing = false; /* live again: refetch fills over REST */
+        // Already resubscribed: wait for that stream's `subscribed`.
+        Ok(ServerMessage::OutOfSync { channel, market, .. }) => resyncing = Some((channel, market)),
+        Ok(ServerMessage::Subscribed { channel, market, .. })
+            if resyncing
+                .as_ref()
+                .is_some_and(|(c, m)| *c == channel && (m.is_none() || *m == market)) =>
+        {
+            resyncing = None; /* live again: refetch fills over REST */
         }
         Ok(ServerMessage::Event { payload, .. }) => { /* apply the event */ }
         _ => {}

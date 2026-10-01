@@ -190,14 +190,22 @@ impl Client {
     /// # async fn run() -> nexus_exchange::Result<()> {
     /// let client = Client::new(Config::default());
     /// let mut stream = client.subscribe(vec![Channel::trades("BTC-USDX-PERP")])?;
-    /// let mut resyncing = false;
+    /// // The stream an `out_of_sync` named; `None` market means every market.
+    /// let mut resyncing: Option<(String, Option<String>)> = None;
     /// while let Some(item) = stream.next().await {
     ///     match item {
     ///         // The client has already resubscribed. Don't refetch yet.
-    ///         Ok(ServerMessage::OutOfSync { .. }) => resyncing = true,
-    ///         // Live again: now re-read what was missed over REST.
-    ///         Ok(ServerMessage::Subscribed { .. }) if resyncing => {
-    ///             resyncing = false;
+    ///         Ok(ServerMessage::OutOfSync { channel, market, .. }) => {
+    ///             resyncing = Some((channel, market));
+    ///         }
+    ///         // Live again once THAT stream's `subscribed` arrives: now re-read
+    ///         // what was missed over REST. Another channel's ack doesn't count.
+    ///         Ok(ServerMessage::Subscribed { channel, market, .. })
+    ///             if resyncing
+    ///                 .as_ref()
+    ///                 .is_some_and(|(c, m)| *c == channel && (m.is_none() || *m == market)) =>
+    ///         {
+    ///             resyncing = None;
     ///             /* REST-refetch the trades you track */
     ///         }
     ///         Ok(msg) => { let _ = msg; /* handle the typed frame */ }

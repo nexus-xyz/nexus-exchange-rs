@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use nexus_exchange::{AgentSigner, Client, Config, Error, EthSigner, Nonce};
+use nexus_exchange::{AgentSigner, Client, Config, Credential, Error, EthSigner, Nonce};
 use secrecy::ExposeSecret;
 use wiremock::matchers::{body_json, header, header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -158,4 +158,131 @@ async fn agent_key_request_sends_reference_signed_headers() {
             .with_nonce(Arc::new(FixedClock(1_776_033_900_000))),
     );
     assert!(client.fetch_api_keys().await.unwrap().is_empty());
+}
+
+// ENG-17010. A mock of the server's agent-nonce rule: a mutating request is
+// accepted only if its `x-nonce` is strictly greater than the last accepted
+// one, otherwise it is a replay and gets a `401`, exactly as Accounts does.
+#[derive(Default)]
+struct StrictNonceServer {
+    last: std::sync::Mutex<u64>,
+    replays: std::sync::atomic::AtomicUsize,
+}
+
+impl wiremock::Respond for StrictNonceServer {
+    fn respond(&self, req: &wiremock::Request) -> ResponseTemplate {
+        let nonce: u64 = req.headers["x-nonce"].to_str().unwrap().parse().unwrap();
+        let mut last = self.last.lock().unwrap();
+        if nonce <= *last {
+            self.replays
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            return ResponseTemplate::new(401)
+                .set_body_json(serde_json::json!({ "code": "unauthorized" }));
+        }
+        *last = nonce;
+        let body = if req.method.as_str() == "DELETE" {
+            serde_json::json!({ "status": "Cancelled" })
+        } else {
+            serde_json::json!({
+                "order": {
+                    "id": "o1", "market_id": "BTC-USDX-PERP", "account_id": "0xabc",
+                    "side": "Buy", "order_type": "Limit", "price": "50000",
+                    "quantity": "0.1", "filled_qty": "0", "status": "Open",
+                    "time_in_force": "GTC", "created_at": 1, "updated_at": 1
+                },
+                "fills": []
+            })
+        };
+        ResponseTemplate::new(200).set_body_json(body)
+    }
+}
+
+// Stands in for the network: a delay of 0 to 3 ms between signing a request and
+// it reaching the server. Without the signer's write queue that is enough for a
+// later nonce to overtake an earlier one.
+#[derive(Debug)]
+struct Jitter(AgentSigner, std::sync::atomic::AtomicU64);
+
+impl Credential for Jitter {
+    fn auth_headers(
+        &self,
+        ctx: &nexus_exchange::auth::SigningContext<'_>,
+    ) -> nexus_exchange::Result<Vec<(&'static str, String)>> {
+        let headers = self.0.auth_headers(ctx)?;
+        let n = self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(n * 7 % 4));
+        Ok(headers)
+    }
+
+    fn write_queue(&self) -> Option<&nexus_exchange::WriteQueue> {
+        self.0.write_queue()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[allow(deprecated)] // Throwaway test origin; the selector stays supported.
+async fn concurrent_writes_from_one_agent_signer_are_never_replays() {
+    use nexus_exchange::types::{Decimal, OrderRequest, Side, TimeInForce};
+
+    const N: usize = 40;
+    let server = MockServer::start().await;
+    let rule = Arc::new(StrictNonceServer::default());
+    Mock::given(wiremock::matchers::any())
+        .respond_with(ArcResponder(rule.clone()))
+        .expect(N as u64)
+        .mount(&server)
+        .await;
+
+    let signer =
+        AgentSigner::from_hex("0x0101010101010101010101010101010101010101010101010101010101010101")
+            .unwrap();
+    let client = Client::new(
+        Config::with_base_url(server.uri())
+            .with_credential(Arc::new(Jitter(signer, Default::default()))),
+    );
+
+    // Placements and cancels interleaved: both are mutating, so both share the
+    // one per-agent nonce sequence on the server.
+    let tasks: Vec<_> = (0..N)
+        .map(|i| {
+            let client = client.clone();
+            tokio::spawn(async move {
+                if i % 2 == 0 {
+                    let order = OrderRequest::limit(
+                        "BTC-USDX-PERP",
+                        Side::Buy,
+                        "50000".parse::<Decimal>().unwrap(),
+                        "0.1".parse::<Decimal>().unwrap(),
+                        TimeInForce::Gtc,
+                    );
+                    client.create_order(&order).await.map(drop)
+                } else {
+                    client.cancel_order("o1", "BTC-USDX-PERP").await.map(drop)
+                }
+            })
+        })
+        .collect();
+    let mut failures = Vec::new();
+    for task in tasks {
+        if let Err(e) = task.await.unwrap() {
+            failures.push(e);
+        }
+    }
+
+    assert_eq!(
+        rule.replays.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "replays: {failures:?}"
+    );
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+// `Mock::respond_with` takes ownership; this shares the rule so the test can
+// read its counter afterwards.
+struct ArcResponder(Arc<StrictNonceServer>);
+
+impl wiremock::Respond for ArcResponder {
+    fn respond(&self, req: &wiremock::Request) -> ResponseTemplate {
+        self.0.respond(req)
+    }
 }

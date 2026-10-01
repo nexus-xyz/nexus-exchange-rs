@@ -8,7 +8,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
-use crate::auth::SigningContext;
+use crate::auth::{Credential, SigningContext};
 use crate::config::{API_VERSION_HEADER, API_VERSION_RAW, DEFAULT_USER_AGENT};
 use crate::ratelimit::{RateLimiter, ThrottleInfo};
 use crate::rest::pagination::{Cursor, NEXT_CURSOR_HEADER};
@@ -402,7 +402,9 @@ impl Client {
         // the real-funds gate. One rule, one place — no builder gets its own base.
         let base = self.base()?;
         let body_bytes = serde_json::to_vec(body)?;
-        let headers = self.creds()?.auth_headers(&SigningContext {
+        let creds = self.creds()?;
+        let _turn = write_turn(creds).await;
+        let headers = creds.auth_headers(&SigningContext {
             method: "PATCH",
             path,
             query: &qs,
@@ -452,7 +454,9 @@ impl Client {
         // Resolve the base *before* signing — see `signed_get_page`.
         let base = self.base()?;
         let body_bytes = serde_json::to_vec(body)?;
-        let headers = self.creds()?.auth_headers(&SigningContext {
+        let creds = self.creds()?;
+        let _turn = write_turn(creds).await;
+        let headers = creds.auth_headers(&SigningContext {
             method: method.as_str(),
             path,
             query: "",
@@ -485,7 +489,9 @@ impl Client {
             .map_err(|e| Error::invalid_request(format!("could not encode query string: {e}")))?;
         // Resolve the base *before* signing — see `signed_get_page`.
         let base = self.base()?;
-        let headers = self.creds()?.auth_headers(&SigningContext {
+        let creds = self.creds()?;
+        let _turn = write_turn(creds).await;
+        let headers = creds.auth_headers(&SigningContext {
             method: method.as_str(),
             path,
             query: &qs,
@@ -553,6 +559,20 @@ impl Client {
     /// Sync the client-side limiter to a server-reported rate-limit snapshot.
     pub(crate) fn sync_rate_limit(&self, status: &RateLimitStatus) {
         self.limiter.sync(status.limit, status.remaining);
+    }
+}
+
+/// Wait for a mutating request's turn in the credential's
+/// [`write_queue`](crate::Credential::write_queue), if it has one.
+///
+/// Every signed write takes this before it is signed and holds the guard until
+/// its response is decoded, so the nonce is drawn in send order and the next
+/// write cannot overtake it on the wire. Signed reads skip it: the server
+/// records no nonce on a `GET`.
+async fn write_turn(creds: &dyn Credential) -> Option<tokio::sync::MutexGuard<'_, ()>> {
+    match creds.write_queue() {
+        Some(queue) => Some(queue.turn().await),
+        None => None,
     }
 }
 
@@ -851,5 +871,42 @@ mod tests {
             .signed_get("/x", &[("limit", "10".to_string())])
             .await
             .unwrap();
+    }
+
+    /// ENG-17010: while an agent signer's write queue is held, a signed read
+    /// still goes straight out (the server records no nonce on a `GET`), and a
+    /// signed write waits its turn.
+    #[tokio::test]
+    #[allow(deprecated)] // Throwaway wiremock target; see above.
+    async fn agent_writes_queue_but_reads_do_not() {
+        let server = MockServer::start().await;
+        Mock::given(path("/x"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+        let signer = Arc::new(
+            crate::AgentSigner::from_hex(
+                "0x0101010101010101010101010101010101010101010101010101010101010101",
+            )
+            .unwrap(),
+        );
+        let client =
+            Client::new(Config::with_base_url(server.uri()).with_credential(signer.clone()));
+
+        let held = signer.write_queue().unwrap().turn().await;
+        let wait = Duration::from_millis(500);
+        let read = tokio::time::timeout(wait, client.signed_get::<serde_json::Value>("/x", &[]));
+        assert!(
+            read.await.is_ok(),
+            "a signed read must not wait on the write queue"
+        );
+        let body = serde_json::json!({});
+        let write = tokio::time::timeout(
+            wait,
+            client.signed_post::<_, serde_json::Value>("/x", &body),
+        );
+        assert!(write.await.is_err(), "a signed write must wait its turn");
+        drop(held);
+        let _: serde_json::Value = client.signed_post("/x", &body).await.unwrap();
     }
 }

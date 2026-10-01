@@ -99,13 +99,18 @@ use std::collections::HashSet;
 use nexus_exchange::ws::{Channel, ServerMessage};
 
 let mut stream = client.subscribe(vec![Channel::Fills])?;
-// The streams this subscribes, named as the server names them.
+// The streams this subscribes, as `(channel, market)` the way the server's
+// frames name them: `Channel::trades(m)` is `("trades", Some(m))`, an account
+// channel such as `Channel::Fills` is `("fills", None)`. Keep it in step with
+// the `subscribe` call above.
 let held = [("fills".to_string(), None)];
 // Streams an `out_of_sync` ended that are not live again yet.
 let mut resyncing: HashSet<(String, Option<String>)> = HashSet::new();
 while let Some(item) = stream.next().await {
     match item {
-        // Already resubscribed. A `None` market ends every market of the channel.
+        // Already resubscribed, but don't refetch yet: until it is live, events
+        // can land after the REST answer and before the new live edge. A `None`
+        // market ends every market of the channel, the rule the client resubscribes by.
         Ok(ServerMessage::OutOfSync { channel, market, .. }) => resyncing.extend(
             held.iter()
                 .filter(|(c, m)| *c == channel && (market.is_none() || *m == market))
@@ -113,7 +118,7 @@ while let Some(item) = stream.next().await {
         ),
         // Live again on that stream's own `subscribed`: refetch what it missed.
         Ok(ServerMessage::Subscribed { channel, market, .. }) => {
-            if resyncing.remove(&(channel, market)) { /* refetch fills over REST */ }
+            if resyncing.remove(&(channel, market)) { /* REST-refetch fills since the last one applied */ }
         }
         Ok(ServerMessage::Event { payload, .. }) => { /* apply the event */ }
         _ => {}

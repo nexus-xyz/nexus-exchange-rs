@@ -192,14 +192,19 @@ impl Client {
     /// # async fn run() -> nexus_exchange::Result<()> {
     /// let client = Client::new(Config::default());
     /// let mut stream = client.subscribe(vec![Channel::trades("BTC-USDX-PERP")])?;
-    /// // The streams this subscribes, named as the server names them.
+    /// // The streams this subscribes, as `(channel, market)` the way the server's
+    /// // frames name them: `Channel::trades(m)` is `("trades", Some(m))`, an
+    /// // account channel such as `Channel::Fills` is `("fills", None)`. Keep it
+    /// // in step with the `subscribe` call above.
     /// let held = [("trades".to_string(), Some("BTC-USDX-PERP".to_string()))];
     /// // Streams an `out_of_sync` ended that are not live again yet.
     /// let mut resyncing: HashSet<(String, Option<String>)> = HashSet::new();
     /// while let Some(item) = stream.next().await {
     ///     match item {
-    ///         // The client has already resubscribed. Don't refetch yet. A `None`
-    ///         // market ends every market of that channel, so mark each one held.
+    ///         // The client has already resubscribed. Don't refetch yet: until the
+    ///         // resubscribe is live, events can still land after the REST answer
+    ///         // and before the new live edge, and be missed. A `None` market ends
+    ///         // every market of the channel, the same rule the client resubscribes by.
     ///         Ok(ServerMessage::OutOfSync { channel, market, .. }) => resyncing.extend(
     ///             held.iter()
     ///                 .filter(|(c, m)| *c == channel && (market.is_none() || *m == market))
@@ -209,7 +214,7 @@ impl Client {
     ///         // what it missed over REST. Another stream's ack doesn't count.
     ///         Ok(ServerMessage::Subscribed { channel, market, .. }) => {
     ///             if resyncing.remove(&(channel, market)) {
-    ///                 /* REST-refetch the trades you track */
+    ///                 /* REST-refetch from the last trade you applied */
     ///             }
     ///         }
     ///         Ok(msg) => { let _ = msg; /* handle the typed frame */ }

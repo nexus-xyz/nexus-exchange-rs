@@ -43,7 +43,7 @@ use sha2::Sha256;
 use sha3::{Digest, Keccak256};
 
 use super::eth::{address_of, sign_prehash, signing_key, to_hex_address};
-use super::{Credential, SigningContext};
+use super::{Credential, SigningContext, WriteQueue};
 use crate::Result;
 
 /// Signs REST requests with a registered agent key: the `x-agent`,
@@ -62,16 +62,29 @@ use crate::Result;
 /// strictly increasing within one signer and roughly tracks the wall clock, so
 /// a restarted process picks up above the nonces it issued before.
 ///
-/// Some cases can still produce a rejected nonce:
+/// Nonces are issued in order, but concurrent requests could still reach the
+/// server out of order, and the server would reject the lower nonce as a
+/// replay with a `401`. To prevent that, the client sends a signer's mutating
+/// requests (`POST`, `PUT`, `PATCH`, `DELETE`) one at a time, first come first
+/// served: each one is signed only when its turn comes and holds the signer's
+/// queue until its response arrives (or [`Config::with_timeout`](crate::Config::with_timeout)
+/// expires). You can call write methods concurrently from one signer.
 ///
-/// - **Concurrent writes from one signer.** Requests signed in nonce order can
-///   reach the server in a different order. The server then rejects the lower
-///   nonce as a replay with a `401`. If you send mutating requests
-///   concurrently and cannot absorb that, serialize them.
-/// - **One agent key in several processes.** The processes' nonces can
-///   collide. Register one agent per process instead.
+/// That has two costs:
 ///
-/// Reads (`GET`) do not consume a nonce on the server, so they are unaffected.
+/// - **Write throughput per agent key is one round trip at a time.** Register
+///   more agents if one key is not enough.
+/// - **Cancels wait in the same queue as order placements.** The server keeps
+///   one nonce sequence per agent across every mutating method, so a separate
+///   cancel lane would bring the replay rejections back. A cancel issued
+///   behind a slow placement waits for it.
+///
+/// Reads (`GET`) do not consume a nonce on the server, so they skip the queue.
+///
+/// One case can still produce a rejected nonce: **one agent key in several
+/// processes** (or several `AgentSigner`s built from one key). Each has its own
+/// counter and queue, so their nonces can collide or interleave. Register one
+/// agent per process instead.
 #[derive(Debug)]
 pub struct AgentSigner {
     /// 32-byte secp256k1 private key, hex-encoded.
@@ -80,6 +93,8 @@ pub struct AgentSigner {
     address: [u8; 20],
     /// Highest nonce issued so far (0 before the first request).
     last_nonce: AtomicU64,
+    /// Orders this signer's mutating requests; see the type docs.
+    queue: WriteQueue,
 }
 
 impl AgentSigner {
@@ -95,6 +110,7 @@ impl AgentSigner {
             key,
             address,
             last_nonce: AtomicU64::new(0),
+            queue: WriteQueue::new(),
         })
     }
 
@@ -113,6 +129,8 @@ impl AgentSigner {
     /// Issue the next nonce, `max(last + 1, floor)`. The update is atomic, so
     /// concurrent callers always get distinct, increasing values.
     fn next_nonce(&self, floor: u64) -> u64 {
+        // `try_update`, the suggested replacement, is newer than the 1.86 MSRV.
+        #[allow(deprecated)]
         let prev = self
             .last_nonce
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |last| {
@@ -148,6 +166,10 @@ impl Credential for AgentSigner {
     fn auth_headers(&self, ctx: &SigningContext<'_>) -> Result<Vec<(&'static str, String)>> {
         let nonce = self.next_nonce(ctx.timestamp_ms);
         self.headers_with_nonce(ctx, nonce)
+    }
+
+    fn write_queue(&self) -> Option<&WriteQueue> {
+        Some(&self.queue)
     }
 }
 
@@ -187,6 +209,14 @@ mod tests {
 
     fn get<'a>(headers: &'a [(&'static str, String)], name: &str) -> &'a str {
         &headers.iter().find(|(k, _)| *k == name).unwrap().1
+    }
+
+    // Adding the write queue must not drop an auto trait from the public type
+    // (cargo-semver-checks `auto_trait_impl_removed`).
+    #[test]
+    fn agent_signer_keeps_its_auto_traits() {
+        fn assert_auto<T: Send + Sync + std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+        assert_auto::<AgentSigner>();
     }
 
     // The server's own pinned vector (`exchange-sec-utils::signing`

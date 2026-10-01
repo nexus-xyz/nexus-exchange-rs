@@ -96,7 +96,41 @@ impl<'a> SigningContext<'a> {
 pub trait Credential: fmt::Debug + Send + Sync {
     /// Produce the authentication headers for `ctx`, as `(name, value)` pairs.
     fn auth_headers(&self, ctx: &SigningContext<'_>) -> Result<Vec<(&'static str, String)>>;
+
+    /// The queue the client sends this credential's mutating requests through,
+    /// or `None` (the default) to send them concurrently.
+    ///
+    /// Return one when the server requires the credential's nonces to arrive
+    /// in increasing order. The client then holds the queue from signing a
+    /// mutating request until its response arrives, so requests reach the
+    /// server in the order their nonces were issued. Reads never wait on it.
+    /// [`AgentSigner`] returns one.
+    fn write_queue(&self) -> Option<&WriteQueue> {
+        None
+    }
 }
+
+/// A first-in, first-out queue that lets one mutating request through at a
+/// time. See [`Credential::write_queue`].
+#[derive(Debug, Default)]
+pub struct WriteQueue(tokio::sync::Mutex<()>);
+
+impl WriteQueue {
+    /// An empty queue.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Wait for this request's turn. `tokio`'s mutex is fair, so callers are
+    /// let through in the order they started waiting.
+    pub(crate) async fn turn(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.0.lock().await
+    }
+}
+
+// The mutex guards `()`, so a panic during a turn leaves nothing half-updated.
+// This keeps `AgentSigner` `RefUnwindSafe`, as it was before the queue.
+impl std::panic::RefUnwindSafe for WriteQueue {}
 
 /// Source of the millisecond timestamp stamped on each signed request to make
 /// it unique and replay-resistant.

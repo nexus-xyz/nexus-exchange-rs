@@ -20,7 +20,9 @@ pub mod stream;
 pub mod types;
 pub mod ws;
 
-pub use auth::{AgentSigner, Credential, Credentials, EthSigner, Nonce, SystemTimeNonce};
+pub use auth::{
+    AgentSigner, Credential, Credentials, EthSigner, Nonce, SystemTimeNonce, WriteQueue,
+};
 pub use client::Client;
 pub use config::{Config, CustomNetwork, Funds, Network, RateLimit, RetryConfig, SigningDomain};
 pub use error::{Error, TerminalError, TransientError};

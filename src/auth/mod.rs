@@ -128,6 +128,10 @@ impl WriteQueue {
     }
 }
 
+// The mutex guards `()`, so a panic during a turn leaves nothing half-updated.
+// This keeps `AgentSigner` `RefUnwindSafe`, as it was before the queue.
+impl std::panic::RefUnwindSafe for WriteQueue {}
+
 /// Source of the millisecond timestamp stamped on each signed request to make
 /// it unique and replay-resistant.
 ///

@@ -129,6 +129,8 @@ impl AgentSigner {
     /// Issue the next nonce, `max(last + 1, floor)`. The update is atomic, so
     /// concurrent callers always get distinct, increasing values.
     fn next_nonce(&self, floor: u64) -> u64 {
+        // `try_update`, the suggested replacement, is newer than the 1.86 MSRV.
+        #[allow(deprecated)]
         let prev = self
             .last_nonce
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |last| {
@@ -207,6 +209,14 @@ mod tests {
 
     fn get<'a>(headers: &'a [(&'static str, String)], name: &str) -> &'a str {
         &headers.iter().find(|(k, _)| *k == name).unwrap().1
+    }
+
+    // Adding the write queue must not drop an auto trait from the public type
+    // (cargo-semver-checks `auto_trait_impl_removed`).
+    #[test]
+    fn agent_signer_keeps_its_auto_traits() {
+        fn assert_auto<T: Send + Sync + std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+        assert_auto::<AgentSigner>();
     }
 
     // The server's own pinned vector (`exchange-sec-utils::signing`

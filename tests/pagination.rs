@@ -18,8 +18,8 @@ use nexus_exchange::{Client, Config};
 use wiremock::matchers::{header_exists, method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const TRADES_PATH: &str = "/api/v1/markets/BTC-USDX-PERP/trades";
-const FILLS_PATH: &str = "/api/v1/fills";
+const TRADES_PATH: &str = "/markets/BTC-USDX-PERP/trades";
+const FILLS_PATH: &str = "/fills";
 
 #[allow(deprecated)] // Throwaway test origin; the selector stays supported.
 fn public(uri: String) -> Client {

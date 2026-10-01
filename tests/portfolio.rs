@@ -67,7 +67,7 @@ fn summary_json() -> serde_json::Value {
 async fn fetch_portfolio_history_parses_and_sends_window_and_limit() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account/portfolio-history"))
+        .and(path("/account/portfolio-history"))
         .and(header("x-api-key", "nx_test"))
         .and(query_param("window", "week"))
         .and(query_param("limit", "168"))
@@ -107,7 +107,7 @@ async fn fetch_portfolio_history_omits_unset_params() {
     // `day` default rather than the SDK guessing one.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account/portfolio-history"))
+        .and(path("/account/portfolio-history"))
         .and(query_param_is_missing("window"))
         .and(query_param_is_missing("limit"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -159,7 +159,7 @@ async fn fetch_portfolio_history_sends_the_schema_maximum() {
     // `> 366`, not `>= 366`.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account/portfolio-history"))
+        .and(path("/account/portfolio-history"))
         .and(query_param("limit", "366"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "window": "all", "cadence_ms": 86400000i64, "points": []
@@ -234,7 +234,7 @@ async fn unknown_served_window_degrades_to_none_but_stays_reportable() {
     // display it. Losing the value entirely is what makes leniency expensive.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account/portfolio-history"))
+        .and(path("/account/portfolio-history"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "window": "quarter",
             "cadence_ms": 21600000i64,
@@ -280,7 +280,7 @@ async fn portfolio_history_required_fields_fail_loudly_when_missing() {
     ] {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/v1/account/portfolio-history"))
+            .and(path("/account/portfolio-history"))
             .respond_with(ResponseTemplate::new(200).set_body_json(body.clone()))
             .mount(&server)
             .await;
@@ -300,7 +300,7 @@ async fn portfolio_history_required_fields_fail_loudly_when_missing() {
 async fn fetch_account_state_parses_summary_and_positions() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account/state"))
+        .and(path("/account/state"))
         .and(header("x-api-key", "nx_test"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "summary": summary_json(),
@@ -326,7 +326,7 @@ async fn fetch_account_state_parses_summary_and_positions() {
 async fn fetch_account_summary_parses_withdrawable() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account/summary"))
+        .and(path("/account/summary"))
         .and(header("x-api-key", "nx_test"))
         .respond_with(ResponseTemplate::new(200).set_body_json(summary_json()))
         .mount(&server)
@@ -355,7 +355,7 @@ async fn account_summary_tolerates_absent_and_null_withdrawable() {
     null["withdrawable"] = serde_json::Value::Null;
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/account/summary"))
+        .and(path("/account/summary"))
         .respond_with(ResponseTemplate::new(200).set_body_json(absent))
         .up_to_n_times(1)
         .mount(&server)
@@ -368,7 +368,7 @@ async fn account_summary_tolerates_absent_and_null_withdrawable() {
 
     let server2 = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account/summary"))
+        .and(path("/account/summary"))
         .respond_with(ResponseTemplate::new(200).set_body_json(null))
         .mount(&server2)
         .await;
@@ -386,7 +386,7 @@ async fn withdrawable_is_never_negative_even_when_margin_is() {
     body["available_margin"] = serde_json::json!("-250.00");
     body["withdrawable"] = serde_json::json!("0");
     Mock::given(method("GET"))
-        .and(path("/api/v1/account/summary"))
+        .and(path("/account/summary"))
         .respond_with(ResponseTemplate::new(200).set_body_json(body))
         .mount(&server)
         .await;
@@ -404,7 +404,7 @@ async fn account_summary_tolerates_every_field_being_absent() {
     // read — the same rationale that makes `withdrawable` optional.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account/summary"))
+        .and(path("/account/summary"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
         .mount(&server)
         .await;
@@ -430,7 +430,7 @@ async fn partial_summary_keeps_the_fields_the_server_did_send() {
     // A partial payload must not lose the fields that ARE present.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account/state"))
+        .and(path("/account/state"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "summary": { "total_equity": "42.50", "withdrawable": "10.00" },
             "positions": []
@@ -453,7 +453,7 @@ async fn authoritative_margin_unavailable_is_retryable_and_keeps_its_code() {
     // `message`, so the code is the only signal there is — a caller must be able
     // to tell this from an ordinary gateway blip, because the correct responses
     // differ (retry the read vs. treat balances as unknown).
-    for route in ["/api/v1/account/state", "/api/v1/account/summary"] {
+    for route in ["/account/state", "/account/summary"] {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path(route))
@@ -491,7 +491,7 @@ async fn authoritative_margin_unavailable_is_retryable_and_keeps_its_code() {
 async fn fetch_positions_parses_enriched_risk_fields() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/positions"))
+        .and(path("/positions"))
         .and(header("x-api-key", "nx_test"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(serde_json::json!([enriched_position()])),
@@ -522,7 +522,7 @@ async fn null_risk_fields_decode_to_none_with_error_reasons() {
     // null and the companion `*_error` says why. `None` must not be read as zero.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/positions"))
+        .and(path("/positions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(serde_json::json!([{
                 "market_id": "ETH-USDX-PERP", "side": "short", "size": "1",
@@ -572,7 +572,7 @@ async fn leverage_decodes_from_integer_and_fractional_json_numbers() {
     // an integral value may arrive as `5` rather than `5.0`. Both must decode.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/positions"))
+        .and(path("/positions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
             {
                 "market_id": "BTC-USDX-PERP", "side": "long", "size": "1",
@@ -599,7 +599,7 @@ async fn positions_from_a_server_without_enriched_fields_still_decode() {
     // must degrade to None, not fail the whole positions read.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/positions"))
+        .and(path("/positions"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(serde_json::json!([{
                 "market_id": "ETH-USDX-PERP", "side": "long", "size": "1",
@@ -626,7 +626,7 @@ async fn fetch_balance_still_decodes_enriched_positions() {
     // fields must not disturb the balance payload's embedded positions.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account"))
+        .and(path("/account"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "balance": "10000.00", "collateral": "10000.00", "equity": "10012.34",
             "available_margin": "7511.73",
@@ -649,7 +649,7 @@ async fn fetch_balance_still_decodes_enriched_positions() {
 async fn fetch_account_fees_parses() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account/fees"))
+        .and(path("/account/fees"))
         .and(header("x-api-key", "nx_test"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "maker_fee_bps": -2,
@@ -680,7 +680,7 @@ async fn account_fees_surfaces_estimated_volume_and_opaque_discounts() {
     // discount object of not-yet-specified shape must be preserved, not dropped.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account/fees"))
+        .and(path("/account/fees"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "maker_fee_bps": 0,
             "taker_fee_bps": 3,
@@ -715,7 +715,7 @@ async fn account_fees_defaults_absent_discounts_but_is_strict_elsewhere() {
     // way in both.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account/fees"))
+        .and(path("/account/fees"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "maker_fee_bps": 1, "taker_fee_bps": 5, "tier": "base",
             "schedule": "standard", "volume_30d": "0", "volume_30d_estimated": false
@@ -747,7 +747,7 @@ async fn account_fees_defaults_absent_discounts_but_is_strict_elsewhere() {
 
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/v1/account/fees"))
+            .and(path("/account/fees"))
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
             .mount(&server)
             .await;

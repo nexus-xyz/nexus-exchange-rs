@@ -25,7 +25,7 @@ use nexus_exchange::{AgentSigner, Credential, Credentials};
 
 // Shared fixture — identical bytes in all three SDK benches.
 const METHOD: &str = "POST";
-const PATH: &str = "/api/v1/orders";
+const PATH: &str = "/orders";
 const QUERY: &str = "";
 const BODY: &[u8] = br#"{"market_id":"BTC-USDX-PERP","side":"Buy","order_type":"Limit","price":"50000","quantity":"0.1","time_in_force":"GTC","client_order_id":"bench-0000000001"}"#;
 const TIMESTAMP_MS: u64 = 1_776_033_900_000;

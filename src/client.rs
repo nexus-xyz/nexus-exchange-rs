@@ -22,30 +22,6 @@ struct ApiErrorBody {
     message: Option<String>,
 }
 
-/// Path prefix for the direct-service (`/api/v1`) surface. A request whose path
-/// begins with this is routed to the direct base
-/// ([`Config::direct_base_url`](crate::Config::direct_base_url)) rather than the
-/// legacy `/api/exchange` gateway base; everything else stays on the gateway. On
-/// today's deployments those two bases are equal — the direct surface is mounted
-/// *under* the gateway prefix — so the split is about where the surface may move
-/// next, not about where it is now.
-///
-/// The prefix is part of the `path` that is both **signed and sent**: the server
-/// verifies the HMAC over the exact path the indexer receives. The gateway
-/// strips its own `/api/exchange` prefix before the indexer verifies, so a
-/// request sent to `…/api/exchange/api/v1/orders` is verified as
-/// `/api/v1/orders` — the full `/api/v1/...` path, and exactly what this client
-/// signs. Legacy routes reach the same indexer with the prefix likewise stripped,
-/// which is why they sign the bare `/orders`.
-///
-/// Selecting the base off this same prefix keeps the signed path and the sent
-/// URL from ever disagreeing. Note the corollary: the signed path is independent
-/// of the base, so retargeting [`Config::with_direct_base_url`] at a deployment
-/// that serves `/api/v1` somewhere else needs no signing change — but a base
-/// whose *own* path segment is not stripped server-side would, so verify before
-/// pointing this at a host that is not a gateway.
-const API_V1_PREFIX: &str = "/api/v1/";
-
 /// Why a [`Network::Mainnet`] client refuses every request. Kept as one
 /// constant so the REST path and any future caller give the identical reason.
 pub(crate) const MAINNET_NOT_TARGETABLE: &str =
@@ -130,14 +106,11 @@ impl Client {
         &self.config.base_url
     }
 
-    /// Select the base URL for `path`: the direct base for the `/api/v1`
-    /// surface, the legacy `/api/exchange` gateway base otherwise.
+    /// The REST base every request is appended to.
     ///
-    /// Detection keys off the path prefix rather than a per-call flag so a single
-    /// centralized rule governs every request builder below — there is no way for
-    /// a v1 path to be sent to the gateway base (or vice versa) by omission. The
-    /// `path` argument is unchanged by this choice, so the value signed always
-    /// equals the value appended to the base.
+    /// There is one base: the path a method names is the path it signs, and the
+    /// base's own prefix (`/v1` on testnet) is stripped at the edge before the
+    /// indexer verifies (EDR-006, ENG-18324).
     ///
     /// # Why this returns `Result`
     ///
@@ -150,7 +123,7 @@ impl Client {
     ///
     /// The rejection is local and total — it happens before any DNS, TLS or
     /// bytes on the wire, and before any credential is used.
-    fn base_for(&self, path: &str) -> Result<&str> {
+    fn base(&self) -> Result<&str> {
         // Keyed on the `Mainnet` *variant*, not on `funds()`. The refusal is
         // about a host that does not resolve yet, not about real money, so a
         // `Network::Custom` declaring `Funds::Real` is targetable — the caller
@@ -159,16 +132,12 @@ impl Client {
         if matches!(self.config.network, Network::Mainnet) {
             return Err(Error::invalid_request(MAINNET_NOT_TARGETABLE));
         }
-        Ok(if path.starts_with(API_V1_PREFIX) {
-            &self.config.direct_base_url
-        } else {
-            &self.config.base_url
-        })
+        Ok(&self.config.base_url)
     }
 
     /// The WebSocket URL to open, or why there is none.
     ///
-    /// The streaming counterpart of [`base_for`](Self::base_for), and the gate
+    /// The streaming counterpart of [`base`](Self::base), and the gate
     /// every streaming entry point resolves its URL through: it refuses
     /// [`Network::Mainnet`] for the same reason REST does — `api.nexus.xyz`
     /// does not resolve yet, so [`Network::ws_base`] reports the shape of a
@@ -228,7 +197,7 @@ impl Client {
         query: &[(&str, String)],
         cost: f64,
     ) -> Result<(T, Option<Cursor>)> {
-        let url = format!("{}{}", self.base_for(path)?, path);
+        let url = format!("{}{}", self.base()?, path);
 
         // Reserve the endpoint's cost once for this logical request. Retries
         // below reuse that reservation and pace off `Retry-After` instead, so a
@@ -323,7 +292,7 @@ impl Client {
         let body_bytes = serde_json::to_vec(body)?;
         let req = self
             .http
-            .post(format!("{}{}", self.base_for(path)?, path))
+            .post(format!("{}{}", self.base()?, path))
             .timeout(self.config.timeout)
             .header("content-type", "application/json")
             .body(body_bytes);
@@ -353,7 +322,7 @@ impl Client {
     ) -> Result<(T, Option<Cursor>)> {
         // Resolve the base *before* signing: a refused network must not consume
         // a nonce or produce a signature for a request that will never be sent.
-        let base = self.base_for(path)?;
+        let base = self.base()?;
         let creds = self.creds()?;
         let qs = serde_urlencoded::to_string(query).unwrap_or_default();
         let headers = creds.auth_headers(&SigningContext {
@@ -428,13 +397,10 @@ impl Client {
         // silently empty query would misroute the request.
         let qs = serde_urlencoded::to_string(query)
             .map_err(|e| Error::invalid_request(format!("could not encode query string: {e}")))?;
-        // Resolve through `base_for` like every other builder, and before
-        // signing. This one used to read `config.base_url` directly, which
-        // silently opted out of the `/api/v1` routing rule (harmless only
-        // because its single caller is a gateway path today) and, more
-        // importantly, out of the real-funds gate. One rule, one place — no
-        // builder gets its own base.
-        let base = self.base_for(path)?;
+        // Resolve through `base` like every other builder, and before signing.
+        // This one used to read `config.base_url` directly, which opted out of
+        // the real-funds gate. One rule, one place — no builder gets its own base.
+        let base = self.base()?;
         let body_bytes = serde_json::to_vec(body)?;
         let headers = self.creds()?.auth_headers(&SigningContext {
             method: "PATCH",
@@ -484,7 +450,7 @@ impl Client {
         body: &B,
     ) -> Result<T> {
         // Resolve the base *before* signing — see `signed_get_page`.
-        let base = self.base_for(path)?;
+        let base = self.base()?;
         let body_bytes = serde_json::to_vec(body)?;
         let headers = self.creds()?.auth_headers(&SigningContext {
             method: method.as_str(),
@@ -518,7 +484,7 @@ impl Client {
         let qs = serde_urlencoded::to_string(query)
             .map_err(|e| Error::invalid_request(format!("could not encode query string: {e}")))?;
         // Resolve the base *before* signing — see `signed_get_page`.
-        let base = self.base_for(path)?;
+        let base = self.base()?;
         let headers = self.creds()?.auth_headers(&SigningContext {
             method: method.as_str(),
             path,
@@ -734,68 +700,32 @@ mod tests {
         let _: serde_json::Value = client.get("/x", &[], 0.0).await.unwrap();
     }
 
-    /// `/api/v1/*` paths route to the direct base; everything else stays on the
-    /// gateway base. This is the single rule every request builder relies on, so
-    /// pin it directly.
-    ///
-    /// On today's deployments the two bases are equal — both surfaces are mounted
-    /// under the same `/indexer` route prefix — so this asserts the *routing
-    /// rule*, not a difference between the bases. See
-    /// [`Network::direct_base_url`].
+    /// Every path goes to the one REST base, which on testnet is the published
+    /// `/v1` (EDR-006, ENG-18324).
     #[test]
-    fn base_for_routes_v1_to_direct_and_rest_to_gateway() {
+    fn testnet_requests_go_to_the_v1_base() {
         let client = Client::new(Config::new(Network::Testnet));
-        assert_eq!(
-            client.base_for("/api/v1/orders").unwrap(),
-            "https://api.testnet.nexus.xyz/indexer"
-        );
-        assert_eq!(
-            client.base_for("/api/v1/markets/summary").unwrap(),
-            "https://api.testnet.nexus.xyz/indexer"
-        );
-        // Not-yet-migrated routes stay on the unprefixed base.
-        assert_eq!(
-            client.base_for("/status").unwrap(),
-            "https://api.testnet.nexus.xyz/indexer"
-        );
-        assert_eq!(
-            client.base_for("/orders/o1").unwrap(),
-            "https://api.testnet.nexus.xyz/indexer"
-        );
+        assert_eq!(client.base().unwrap(), "https://api.testnet.nexus.xyz/v1");
     }
 
-    /// A `Mainnet` client resolves **no** base, for any path shape. This is the
+    /// A `Mainnet` client resolves **no** base. This is the
     /// choke point every request builder goes through, so proving it here proves
     /// no request of any kind can reach a real-funds host.
     #[test]
     #[allow(deprecated)] // Throwaway bare-URL target; see above.
-    fn mainnet_resolves_no_base_for_any_path() {
+    fn mainnet_resolves_no_base() {
         let client = Client::new(Config::new(Network::Mainnet));
-        for path in [
-            "/api/v1/orders",
-            "/status",
-            "/orders/o1",
-            "/api/v1/account/credit",
-            "",
-        ] {
-            let err = client
-                .base_for(path)
-                .expect_err("mainnet must not resolve a base");
-            assert!(
-                !err.is_retryable(),
-                "the refusal is a permanent local decision, not a transient failure"
-            );
-        }
+        let err = client.base().expect_err("mainnet must not resolve a base");
+        assert!(
+            !err.is_retryable(),
+            "the refusal is a permanent local decision, not a transient failure"
+        );
         // The play-funds networks are unaffected by the guard.
-        assert!(Client::new(Config::new(Network::Testnet))
-            .base_for("/status")
-            .is_ok());
-        assert!(Client::new(Config::new(Network::Local))
-            .base_for("/status")
-            .is_ok());
+        assert!(Client::new(Config::new(Network::Testnet)).base().is_ok());
+        assert!(Client::new(Config::new(Network::Local)).base().is_ok());
         // A custom base URL carries no network, so it is never gated here.
         assert!(Client::new(Config::with_base_url("http://127.0.0.1:1"))
-            .base_for("/status")
+            .base()
             .is_ok());
     }
 
@@ -850,29 +780,52 @@ mod tests {
         );
     }
 
-    /// A signed request to a `/api/v1` path must be sent to the **direct base**
-    /// AND sign the full `/api/v1/...` path — the indexer verifies the path it
-    /// receives, which retains `/api/v1` after the gateway strips its own prefix.
-    /// Drive it through a mock serving the direct base to prove both.
+    /// A signed request goes out under the base's own prefix (`/v1/account`)
+    /// but is signed over the bare path (`/account`): the edge strips `/v1`
+    /// before the indexer verifies, so the signature must cover the path the
+    /// indexer receives. Pinned by recomputing the expected signature.
     #[tokio::test]
     #[allow(deprecated)] // Throwaway wiremock target; see above.
-    async fn v1_path_is_sent_to_direct_base_and_signed_over_full_path() {
+    async fn prefixed_base_sends_under_prefix_and_signs_the_bare_path() {
+        use crate::auth::{Credential, Credentials};
+
+        const SECRET: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+        #[derive(Debug)]
+        struct FixedNonce;
+        impl crate::auth::Nonce for FixedNonce {
+            fn next(&self) -> u64 {
+                1_700_000_000_000
+            }
+        }
+        let expected = Credentials::api_key("nx", SECRET)
+            .auth_headers(&SigningContext {
+                method: "GET",
+                path: "/account",
+                query: "",
+                body: &[],
+                timestamp_ms: 1_700_000_000_000,
+            })
+            .unwrap()
+            .into_iter()
+            .find(|(name, _)| *name == "x-signature")
+            .unwrap()
+            .1;
+
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/v1/account"))
-            .and(header_exists("x-signature"))
+            .and(path("/v1/account"))
+            .and(header("x-signature", expected.as_str()))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
             .mount(&server)
             .await;
 
-        // A bare origin: the derived direct base equals the gateway base, so the
-        // only thing sending the request to `/api/v1/account` is the path prefix.
-        let client = Client::new(Config::with_base_url(server.uri()).api_key(
-            "nx",
-            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
-        ));
-        let _: serde_json::Value = client.signed_get("/api/v1/account", &[]).await.unwrap();
+        let client = Client::new(
+            Config::with_base_url(format!("{}/v1", server.uri()))
+                .api_key("nx", SECRET)
+                .with_nonce(Arc::new(FixedNonce)),
+        );
+        let _: serde_json::Value = client.signed_get("/account", &[]).await.unwrap();
     }
 
     #[tokio::test]

@@ -719,18 +719,18 @@ OPERATION_IDS_AHEAD_OF_PIN = {
     ("POST", "/account/margin"): "addMargin",
     ("GET", "/admin/tiers"): "fetchTiers",
     ("GET", "/agents"): "fetchAgents",
-    ("POST", "/api/v1/account/credit"): "claimCreditV1",
-    ("GET", "/api/v1/account/fees"): "fetchTradingFeesV1",
+    ("POST", "/account/credit"): "claimCredit",
+    ("GET", "/account/fees"): "fetchTradingFees",
     ("GET", "/api/v1/bridge/assets"): "fetchBridgeAssets",
     ("GET", "/api/v1/bridge/deposits"): "fetchBridgeDeposits",
     ("GET", "/api/v1/bridge/deposits/{id}"): "fetchBridgeDeposit",
-    ("GET", "/api/v1/fills"): "fetchMyTradesV1",
-    ("GET", "/api/v1/markets/{market_id}/funding"): "fetchFundingRateHistoryV1",
-    ("POST", "/api/v1/orders/batch"): "createOrdersV1",
-    ("GET", "/api/v1/orders/history"): "fetchOrdersV1",
-    ("GET", "/api/v1/positions/closed"): "fetchPositionsHistoryV1",
+    ("GET", "/fills"): "fetchMyTrades",
     ("GET", "/funding"): "fetchFundingHistory",
     ("GET", "/keys"): "fetchApiKeys",
+    ("GET", "/markets/{market_id}/funding"): "fetchFundingRateHistory",
+    ("POST", "/orders/batch"): "createOrders",
+    ("GET", "/orders/history"): "fetchOrders",
+    ("GET", "/positions/closed"): "fetchPositionsHistory",
 }
 
 # Methods whose name deliberately is not `snake_case(operationId)` or that
@@ -740,7 +740,7 @@ METHOD_NAME_EXEMPT = {
     "post_margin": "private; the one POST /account/margin call site that "
     "add_margin and remove_margin share",
     "cancel_orders_for_market": "the market-scoped form of cancel_all_orders "
-    "(DELETE /api/v1/orders?market_id=); its name predates R2.25",
+    "(DELETE /orders?market_id=); its name predates R2.25",
     "fetch_bridge_deposit_addresses": "pinned id is listBridgeDepositAddresses and "
     "the monorepo spec has since removed the route (ENG-10373), so there is no "
     "canonical id to rename to; the name follows the fetch grammar ENG-17740 "

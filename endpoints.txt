@@ -17,51 +17,52 @@
 # the drift check fails. Format:
 #   METHOD /path   (path placeholders match the spec, e.g. {market_id})
 #
-# Dual-stack routing (ENG-4947 / gateway elimination ENG-4740): paths under the
-# `/api/v1/` prefix are the direct-indexer surface (served at the host root); the
-# rest stay on the legacy `/api/exchange` gateway. The path here is the FULL path
-# the SDK signs and sends — so a migrated op is listed with its `/api/v1` prefix,
-# exactly as it appears in the spec and in the src/rest.rs literal.
+# Paths are the spec's bare spellings (EDR-006, ENG-18324): the REST base is
+# `https://<host>/v1`, so `GET /orders` goes out as `/v1/orders` and is signed as
+# `/orders`, the path the indexer verifies after the edge strips `/v1`. The five
+# bridge operations keep their `/api/v1/...` spelling until a published spec tag
+# declares their bare twins (ENG-18318 landed them in the monorepo spec, not yet
+# in a nexus-exchange-api release); `/v1/api/v1/bridge/...` routes and verifies
+# as `/api/v1/bridge/...` (ENG-17186's routing table).
 
-# --- Direct-service surface (/api/v1) — migrated off the gateway ---
-GET /api/v1/markets/summary
-GET /api/v1/tickers
-GET /api/v1/markets/{market_id}/ticker
-GET /api/v1/markets/{market_id}/orderbook
-GET /api/v1/markets/{market_id}/trades
-GET /api/v1/markets/{market_id}/candles
-GET /api/v1/markets/{market_id}/funding
-GET /api/v1/markets/{market_id}/funding-samples
-GET /api/v1/markets/{market_id}/mark-price
+# --- Venue operations ---
+GET /markets/summary
+GET /tickers
+GET /markets/{market_id}/ticker
+GET /markets/{market_id}/orderbook
+GET /markets/{market_id}/trades
+GET /markets/{market_id}/candles
+GET /markets/{market_id}/funding
+GET /markets/{market_id}/funding-samples
+GET /markets/{market_id}/mark-price
 GET /markets/{market_id}/risk-params
-GET /api/v1/markets/{market_id}/status
-GET /api/v1/account
-GET /api/v1/account/rate-limit
-GET /api/v1/account/summary
-GET /api/v1/account/state
-GET /api/v1/account/fees
-GET /api/v1/account/portfolio-history
-GET /api/v1/account/equity-history
-POST /api/v1/account/credit
-GET /api/v1/positions
-GET /api/v1/positions/closed
-GET /api/v1/fills
-POST /api/v1/orders
-POST /api/v1/orders/preview
-GET /api/v1/orders
-GET /api/v1/orders/history
-DELETE /api/v1/orders
-POST /api/v1/orders/batch
-DELETE /api/v1/orders/{order_id}
-GET /api/v1/account/cancel-on-disconnect
-PUT /api/v1/account/cancel-on-disconnect
+GET /markets/{market_id}/status
+GET /account
+GET /account/rate-limit
+GET /account/summary
+GET /account/state
+GET /account/fees
+GET /account/portfolio-history
+GET /account/equity-history
+POST /account/credit
+GET /positions
+GET /positions/closed
+GET /fills
+POST /orders
+POST /orders/preview
+GET /orders
+GET /orders/history
+DELETE /orders
+POST /orders/batch
+DELETE /orders/{order_id}
+GET /account/cancel-on-disconnect
+PUT /account/cancel-on-disconnect
 GET /api/v1/bridge/assets
 POST /api/v1/bridge/deposit-addresses
 GET /api/v1/bridge/deposit-addresses
 GET /api/v1/bridge/deposits
 GET /api/v1/bridge/deposits/{id}
 
-# --- Legacy gateway surface (/api/exchange) — no /api/v1 variant yet ---
 GET /markets
 GET /markets/{market_id}/adl-events
 GET /account/{address}/adl-history

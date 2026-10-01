@@ -3,19 +3,13 @@
 //! Added incrementally by route group: public market data, account & trading,
 //! admin. Skeleton.
 //!
-//! **Dual-stack routing (ENG-4947 / gateway elimination ENG-4740).** Endpoints
-//! whose path begins with `/api/v1/` are served by the indexer's direct-service
-//! surface ([`Config::direct_base_url`](crate::Config::direct_base_url)); every
-//! other path stays on the legacy `/api/exchange` gateway base. On today's
-//! deployments that surface is mounted *under* the gateway prefix rather than at
-//! the host root, so the two bases are equal and the split records where the
-//! surface may move next, not where it is now (ENG-10063). The [`Client`] picks
-//! the base off the path prefix, so the method here just names the full path it
-//! targets. Market-data and account/trading endpoints have been migrated to
-//! `/api/v1`; endpoints without a `/api/v1` variant yet (health,
-//! keys, agents, wallet auth, deposits/withdrawals, ADL, admin, WebSocket-token,
-//! `GET /orders/{id}`, and the tier-3 endpoints) remain on the gateway until the
-//! spec grows those variants.
+//! **Paths are the spec's bare spellings (EDR-006, ENG-18324).** Every method
+//! names the path it signs; the [`Client`] appends it to the one REST base
+//! (`https://<host>/v1` on testnet), and the edge strips `/v1` before the indexer
+//! verifies the signature over that same bare path. The bridge reads still use
+//! their `/api/v1/...` spelling, because the pinned spec tag does not declare
+//! their bare twins yet; under the `/v1` base they go out as `/v1/api/v1/...` and
+//! verify as `/api/v1/...`.
 //!
 //! List endpoints return an auto-paging [`pagination::Paginator`] rather than a
 //! bare page, so callers never have to drive cursors by hand.
@@ -58,7 +52,7 @@ const COST_DEFAULT: f64 = 1.0;
 /// same bound instead of hard-coding it.
 pub const MAX_PORTFOLIO_HISTORY_LIMIT: u32 = 366;
 
-/// Largest `limit` (page size) the `GET /api/v1/markets/{id}/trades` request
+/// Largest `limit` (page size) the `GET /markets/{id}/trades` request
 /// schema permits (`maximum: 1000`, default 100).
 ///
 /// Enforced by [`Client::fetch_trades_paginated`] before a page is fetched, so an
@@ -66,7 +60,7 @@ pub const MAX_PORTFOLIO_HISTORY_LIMIT: u32 = 366;
 /// round trip.
 pub const MAX_TRADES_LIMIT: u32 = 1000;
 
-/// Largest `limit` (page size) the `GET /api/v1/fills` request schema permits
+/// Largest `limit` (page size) the `GET /fills` request schema permits
 /// (`maximum: 1000`, default 100). Enforced by
 /// [`Client::fetch_my_trades_paginated`].
 ///
@@ -77,20 +71,20 @@ pub const MAX_TRADES_LIMIT: u32 = 1000;
 /// `/account/portfolio-history`, which is not cursor-paginated at all.
 pub const MAX_FILLS_LIMIT: u32 = 1000;
 
-/// Largest `limit` (page size) the `GET /api/v1/orders/history` request schema
+/// Largest `limit` (page size) the `GET /orders/history` request schema
 /// permits (`maximum: 500`, default 100) — half what `/fills` and the public
 /// trades feed allow. Enforced by [`Client::fetch_orders`] and
 /// [`Client::fetch_orders_paginated`].
 pub const MAX_ORDER_HISTORY_LIMIT: u32 = 500;
 
-/// Largest `limit` (page size) the `GET /api/v1/positions/closed` request schema
+/// Largest `limit` (page size) the `GET /positions/closed` request schema
 /// permits (`maximum: 200`, default 100) — the **smallest** of the five paginated
 /// maxima, so a long close history takes proportionally more pages than `/fills`
 /// would. Enforced by [`Client::fetch_positions_history`] and
 /// [`Client::fetch_positions_history_paginated`].
 pub const MAX_CLOSED_POSITIONS_LIMIT: u32 = 200;
 
-/// Largest `limit` (page size) the `GET /api/v1/account/equity-history` request
+/// Largest `limit` (page size) the `GET /account/equity-history` request
 /// schema permits (`maximum: 720`) — which is also that endpoint's **default**.
 /// Enforced by [`Client::fetch_equity_history`] and
 /// [`Client::fetch_equity_history_paginated`].
@@ -211,7 +205,7 @@ impl Client {
 
     /// Per-market summaries with 24h volume and halt state.
     pub async fn fetch_markets_summary(&self) -> Result<Vec<MarketSummary>> {
-        self.get("/api/v1/markets/summary", &[], COST_DEFAULT).await
+        self.get("/markets/summary", &[], COST_DEFAULT).await
     }
 
     /// Tickers for all markets, keyed by market id (e.g. `BTC-USDX-PERP`).
@@ -223,7 +217,7 @@ impl Client {
     /// model is authoritative; an empty result is `{}`, which decodes to an
     /// empty map.
     pub async fn fetch_tickers(&self) -> Result<HashMap<String, Ticker>> {
-        self.get("/api/v1/tickers", &[], COST_DEFAULT).await
+        self.get("/tickers", &[], COST_DEFAULT).await
     }
 
     /// Risk parameters for a single market
@@ -234,15 +228,6 @@ impl Client {
     /// "no margin required", the most dangerous possible default here.
     pub async fn fetch_market_risk_params(&self, market_id: &str) -> Result<MarketRiskParams> {
         let id = encoded_segment(market_id, "market_id")?;
-        // Unprefixed, deliberately: the spec does NOT dual-mount this one under
-        // `/api/v1` — it declares only `/markets/{market_id}/risk-params`. It is
-        // not the lone exception either; `/markets/{market_id}/adl-events` is
-        // also declared bare-only, while the other seven single-market reads
-        // (candles, funding, funding-samples, mark-price, orderbook, status,
-        // ticker, trades) carry both mounts. So this reads as a consistent gap in
-        // the `/api/v1` mirror rather than a property of this route. Following
-        // the contract rather than the sibling routes' shape either way;
-        // `check_spec_drift.py` catches it if the spec changes.
         self.get(&format!("/markets/{id}/risk-params"), &[], COST_DEFAULT)
             .await
     }
@@ -261,19 +246,15 @@ impl Client {
     /// Fetch the ticker for a single market, e.g. `BTC-USDX-PERP`.
     pub async fn fetch_ticker(&self, market_id: &str) -> Result<Ticker> {
         let id = encoded_segment(market_id, "market_id")?;
-        self.get(&format!("/api/v1/markets/{id}/ticker"), &[], COST_DEFAULT)
+        self.get(&format!("/markets/{id}/ticker"), &[], COST_DEFAULT)
             .await
     }
 
     /// Order book snapshot for a market.
     pub async fn fetch_order_book(&self, market_id: &str) -> Result<OrderBook> {
         let id = encoded_segment(market_id, "market_id")?;
-        self.get(
-            &format!("/api/v1/markets/{id}/orderbook"),
-            &[],
-            COST_DEFAULT,
-        )
-        .await
+        self.get(&format!("/markets/{id}/orderbook"), &[], COST_DEFAULT)
+            .await
     }
 
     /// Recent public trades for a market (newest first), optionally limited.
@@ -283,12 +264,8 @@ impl Client {
         if let Some(limit) = limit {
             query.push(("limit", limit.to_string()));
         }
-        self.get(
-            &format!("/api/v1/markets/{id}/trades"),
-            &query,
-            COST_DEFAULT,
-        )
-        .await
+        self.get(&format!("/markets/{id}/trades"), &query, COST_DEFAULT)
+            .await
     }
 
     /// Every recent public trade for a market, as an auto-paging
@@ -331,7 +308,7 @@ impl Client {
                 check_page_size(req.limit, MAX_TRADES_LIMIT, "trades")?;
                 let (items, next) = client
                     .get_page::<Vec<Trade>>(
-                        &format!("/api/v1/markets/{id}/trades"),
+                        &format!("/markets/{id}/trades"),
                         &page_query(&req),
                         COST_DEFAULT,
                     )
@@ -356,12 +333,8 @@ impl Client {
         if let Some(limit) = limit {
             query.push(("limit", limit.to_string()));
         }
-        self.get(
-            &format!("/api/v1/markets/{id}/candles"),
-            &query,
-            COST_DEFAULT,
-        )
-        .await
+        self.get(&format!("/markets/{id}/candles"), &query, COST_DEFAULT)
+            .await
     }
 
     /// Intra-hour funding-rate history for a market.
@@ -375,12 +348,8 @@ impl Client {
         if let Some(limit) = limit {
             query.push(("limit", limit.to_string()));
         }
-        self.get(
-            &format!("/api/v1/markets/{id}/funding"),
-            &query,
-            COST_DEFAULT,
-        )
-        .await
+        self.get(&format!("/markets/{id}/funding"), &query, COST_DEFAULT)
+            .await
     }
 
     /// Dense premium-index samples for a market (60s cadence, up to 8h).
@@ -405,7 +374,7 @@ impl Client {
             query.push(("limit", limit.to_string()));
         }
         self.get(
-            &format!("/api/v1/markets/{id}/funding-samples"),
+            &format!("/markets/{id}/funding-samples"),
             &query,
             COST_DEFAULT,
         )
@@ -415,18 +384,14 @@ impl Client {
     /// Current mark price for a market.
     pub async fn fetch_mark_price(&self, market_id: &str) -> Result<MarkPrice> {
         let id = encoded_segment(market_id, "market_id")?;
-        self.get(
-            &format!("/api/v1/markets/{id}/mark-price"),
-            &[],
-            COST_DEFAULT,
-        )
-        .await
+        self.get(&format!("/markets/{id}/mark-price"), &[], COST_DEFAULT)
+            .await
     }
 
     /// Lifecycle / halt status for a market.
     pub async fn fetch_market_status(&self, market_id: &str) -> Result<MarketStatus> {
         let id = encoded_segment(market_id, "market_id")?;
-        self.get(&format!("/api/v1/markets/{id}/status"), &[], COST_DEFAULT)
+        self.get(&format!("/markets/{id}/status"), &[], COST_DEFAULT)
             .await
     }
 
@@ -559,7 +524,7 @@ impl Client {
     /// tier, so subsequent requests are metered against the actual server-side
     /// budget instead of the conservative default.
     pub async fn fetch_rate_limit_status(&self) -> Result<RateLimitStatus> {
-        let status: RateLimitStatus = self.signed_get("/api/v1/account/rate-limit", &[]).await?;
+        let status: RateLimitStatus = self.signed_get("/account/rate-limit", &[]).await?;
         self.sync_rate_limit(&status);
         Ok(status)
     }
@@ -633,7 +598,7 @@ impl Client {
 
     /// Account balance and collateral summary. Requires credentials.
     pub async fn fetch_balance(&self) -> Result<AccountSummary> {
-        self.signed_get("/api/v1/account", &[]).await
+        self.signed_get("/account", &[]).await
     }
 
     /// Open positions for the authenticated account. Requires credentials.
@@ -643,11 +608,11 @@ impl Client {
     /// see [`Position`] for why a risk field can be `None` and why its
     /// companion `*_error` matters.
     pub async fn fetch_positions(&self) -> Result<Vec<Position>> {
-        self.signed_get("/api/v1/positions", &[]).await
+        self.signed_get("/positions", &[]).await
     }
 
     /// Closed positions for the authenticated account, newest first
-    /// (`GET /api/v1/positions/closed`). Requires credentials.
+    /// (`GET /positions/closed`). Requires credentials.
     ///
     /// The realized counterpart of [`fetch_positions`](Self::fetch_positions):
     /// [`ClosedPosition`] carries the size and prices at close plus the PnL the
@@ -661,7 +626,7 @@ impl Client {
     /// for the whole history.
     pub async fn fetch_positions_history(&self, limit: Option<u32>) -> Result<Vec<ClosedPosition>> {
         check_page_size(limit, MAX_CLOSED_POSITIONS_LIMIT, "positions/closed")?;
-        self.signed_get("/api/v1/positions/closed", &limit_query(limit))
+        self.signed_get("/positions/closed", &limit_query(limit))
             .await
     }
 
@@ -694,10 +659,7 @@ impl Client {
             async move {
                 check_page_size(req.limit, MAX_CLOSED_POSITIONS_LIMIT, "positions/closed")?;
                 let (items, next) = client
-                    .signed_get_page::<Vec<ClosedPosition>>(
-                        "/api/v1/positions/closed",
-                        &page_query(&req),
-                    )
+                    .signed_get_page::<Vec<ClosedPosition>>("/positions/closed", &page_query(&req))
                     .await?;
                 Ok(Page::new(items, next))
             }
@@ -705,7 +667,7 @@ impl Client {
     }
 
     /// Aggregate portfolio summary for the authenticated account
-    /// (`GET /api/v1/account/summary`) — equity, PnL, volume, open counts, and
+    /// (`GET /account/summary`) — equity, PnL, volume, open counts, and
     /// [`withdrawable`](AccountPortfolioSummary::withdrawable). Requires
     /// credentials.
     ///
@@ -721,10 +683,10 @@ impl Client {
     /// after a short delay; **do not** read the error as a flat or zero-balance
     /// account.
     pub async fn fetch_account_summary(&self) -> Result<AccountPortfolioSummary> {
-        self.signed_get("/api/v1/account/summary", &[]).await
+        self.signed_get("/account/summary", &[]).await
     }
 
-    /// Consolidated account snapshot (`GET /api/v1/account/state`) — the
+    /// Consolidated account snapshot (`GET /account/state`) — the
     /// portfolio summary **and** every open position from one server-side read.
     /// Requires credentials.
     ///
@@ -744,22 +706,22 @@ impl Client {
     /// than serving a locally-estimated balance. Retry after a short delay;
     /// **do not** read the error as an account with no positions.
     pub async fn fetch_account_state(&self) -> Result<AccountState> {
-        self.signed_get("/api/v1/account/state", &[]).await
+        self.signed_get("/account/state", &[]).await
     }
 
     /// The authenticated account's effective fee schedule
-    /// (`GET /api/v1/account/fees`). Requires credentials.
+    /// (`GET /account/fees`). Requires credentials.
     ///
     /// Returns the forward-looking schedule rate, not a realized per-fill
     /// average. Note [`AccountFees::maker_fee_bps`] is signed — a negative value
     /// is a maker *rebate* — and [`AccountFees::schedule`] scopes which
     /// per-market schedule the rate belongs to.
     pub async fn fetch_trading_fees(&self) -> Result<AccountFees> {
-        self.signed_get("/api/v1/account/fees", &[]).await
+        self.signed_get("/account/fees", &[]).await
     }
 
     /// Portfolio time series for the authenticated account
-    /// (`GET /api/v1/account/portfolio-history`) — equity, cumulative PnL, and
+    /// (`GET /account/portfolio-history`) — equity, cumulative PnL, and
     /// cumulative volume, oldest first. Requires credentials.
     ///
     /// `window` selects the span *and* the server-side downsample cadence and
@@ -800,12 +762,11 @@ impl Client {
             }
             query.push(("limit", limit.to_string()));
         }
-        self.signed_get("/api/v1/account/portfolio-history", &query)
-            .await
+        self.signed_get("/account/portfolio-history", &query).await
     }
 
     /// Account equity time series, **oldest first**
-    /// (`GET /api/v1/account/equity-history`). Requires credentials.
+    /// (`GET /account/equity-history`). Requires credentials.
     ///
     /// The high-resolution recent view — 5s cadence over roughly one hour — where
     /// [`fetch_portfolio_history`](Self::fetch_portfolio_history) is the
@@ -822,7 +783,7 @@ impl Client {
     /// the series is longer than one page.
     pub async fn fetch_equity_history(&self, limit: Option<u32>) -> Result<Vec<EquityPoint>> {
         check_page_size(limit, MAX_EQUITY_HISTORY_LIMIT, "account/equity-history")?;
-        self.signed_get("/api/v1/account/equity-history", &limit_query(limit))
+        self.signed_get("/account/equity-history", &limit_query(limit))
             .await
     }
 
@@ -858,7 +819,7 @@ impl Client {
                 )?;
                 let (items, next) = client
                     .signed_get_page::<Vec<EquityPoint>>(
-                        "/api/v1/account/equity-history",
+                        "/account/equity-history",
                         &page_query(&req),
                     )
                     .await?;
@@ -868,7 +829,7 @@ impl Client {
     }
 
     /// Recent fills (private trade executions) for the authenticated account
-    /// (`GET /api/v1/fills`). Requires credentials.
+    /// (`GET /fills`). Requires credentials.
     ///
     /// Returns the **first page only**. `limit` is that page's size and must be in
     /// `1..=`[`MAX_FILLS_LIMIT`] (1000); pass `None` for the server's default of
@@ -901,7 +862,7 @@ impl Client {
         if let Some(limit) = limit {
             query.push(("limit", limit.to_string()));
         }
-        self.signed_get("/api/v1/fills", &query).await
+        self.signed_get("/fills", &query).await
     }
 
     /// Every fill on the authenticated account, as an auto-paging [`Paginator`]
@@ -936,7 +897,7 @@ impl Client {
             async move {
                 check_page_size(req.limit, MAX_FILLS_LIMIT, "fills")?;
                 let (items, next) = client
-                    .signed_get_page::<Vec<Fill>>("/api/v1/fills", &page_query(&req))
+                    .signed_get_page::<Vec<Fill>>("/fills", &page_query(&req))
                     .await?;
                 Ok(Page::new(items, next))
             }
@@ -945,11 +906,11 @@ impl Client {
 
     /// Place a single order. Requires credentials.
     pub async fn create_order(&self, order: &OrderRequest) -> Result<OrderResponse> {
-        self.signed_post("/api/v1/orders", order).await
+        self.signed_post("/orders", order).await
     }
 
     /// Project an order's margin / equity / fee impact **without submitting it**
-    /// (`POST /api/v1/orders/preview`). Requires credentials.
+    /// (`POST /orders/preview`). Requires credentials.
     ///
     /// Takes the same [`OrderRequest`] as [`create_order`](Self::create_order),
     /// so the preview-then-commit flow reuses one value: build it, preview it,
@@ -1001,10 +962,10 @@ impl Client {
     /// [`TransientError::RateLimited`]: crate::TransientError::RateLimited
     /// [`TransientError::Unavailable`]: crate::TransientError::Unavailable
     pub async fn preview_order(&self, order: &OrderRequest) -> Result<OrderPreview> {
-        self.signed_post("/api/v1/orders/preview", order).await
+        self.signed_post("/orders/preview", order).await
     }
 
-    /// Submit a batch of orders (`POST /api/v1/orders/batch`). Requires
+    /// Submit a batch of orders (`POST /orders/batch`). Requires
     /// credentials.
     ///
     /// Orders are processed sequentially and non-atomically: an early order
@@ -1015,7 +976,7 @@ impl Client {
     /// [`OrderResult::succeeded`]) per entry rather than assuming the whole
     /// batch succeeded.
     pub async fn create_orders(&self, orders: &[OrderRequest]) -> Result<Vec<OrderResult>> {
-        self.signed_post("/api/v1/orders/batch", &orders).await
+        self.signed_post("/orders/batch", &orders).await
     }
 
     /// Cancel a single order by id on `market_id`. Requires credentials.
@@ -1027,7 +988,7 @@ impl Client {
     pub async fn cancel_order(&self, order_id: &str, market_id: &str) -> Result<serde_json::Value> {
         require_non_empty(market_id, "market_id")?;
         self.signed_delete_with_query(
-            &format!("/api/v1/orders/{order_id}"),
+            &format!("/orders/{order_id}"),
             &[("market_id", market_id.to_string())],
         )
         .await
@@ -1040,24 +1001,24 @@ impl Client {
     /// the [`fetch_open_orders`](Self::fetch_open_orders) → filter →
     /// [`cancel_order`](Self::cancel_order) round-trip on the hot reprice path.
     pub async fn cancel_all_orders(&self) -> Result<serde_json::Value> {
-        self.signed_delete("/api/v1/orders").await
+        self.signed_delete("/orders").await
     }
 
     /// Cancel all open orders for a single market
-    /// (`DELETE /api/v1/orders?market_id=`). Requires credentials.
+    /// (`DELETE /orders?market_id=`). Requires credentials.
     ///
     /// Maps to the per-market reprice loop of a market maker quoting many
     /// markets: flatten one market in a single round-trip rather than fetching
     /// open orders, filtering client-side, and cancelling by id.
     ///
     /// An empty `market_id` is rejected locally and never sent: omitting the
-    /// filter on `DELETE /api/v1/orders` cancels account-wide, so a blank market must
+    /// filter on `DELETE /orders` cancels account-wide, so a blank market must
     /// not be allowed to silently widen a per-market cancel into a full
     /// account flatten. Use [`cancel_all_orders`](Self::cancel_all_orders)
     /// when that account-wide cancel is what you actually want.
     pub async fn cancel_orders_for_market(&self, market_id: &str) -> Result<serde_json::Value> {
         require_non_empty(market_id, "market_id")?;
-        self.signed_delete_with_query("/api/v1/orders", &[("market_id", market_id.to_string())])
+        self.signed_delete_with_query("/orders", &[("market_id", market_id.to_string())])
             .await
     }
 
@@ -1066,12 +1027,12 @@ impl Client {
     /// For orders that have already finished, see
     /// [`fetch_orders`](Self::fetch_orders).
     pub async fn fetch_open_orders(&self) -> Result<Vec<Order>> {
-        self.signed_get("/api/v1/orders", &[]).await
+        self.signed_get("/orders", &[]).await
     }
 
     /// Terminal-status order history — filled / cancelled / rejected / expired
     /// orders for the authenticated account, newest first
-    /// (`GET /api/v1/orders/history`). Requires credentials.
+    /// (`GET /orders/history`). Requires credentials.
     ///
     /// The history counterpart of
     /// [`fetch_open_orders`](Self::fetch_open_orders), returning
@@ -1085,7 +1046,7 @@ impl Client {
     /// walk the whole history.
     pub async fn fetch_orders(&self, limit: Option<u32>) -> Result<Vec<OrderHistoryEntry>> {
         check_page_size(limit, MAX_ORDER_HISTORY_LIMIT, "orders/history")?;
-        self.signed_get("/api/v1/orders/history", &limit_query(limit))
+        self.signed_get("/orders/history", &limit_query(limit))
             .await
     }
 
@@ -1124,10 +1085,7 @@ impl Client {
             async move {
                 check_page_size(req.limit, MAX_ORDER_HISTORY_LIMIT, "orders/history")?;
                 let (items, next) = client
-                    .signed_get_page::<Vec<OrderHistoryEntry>>(
-                        "/api/v1/orders/history",
-                        &page_query(&req),
-                    )
+                    .signed_get_page::<Vec<OrderHistoryEntry>>("/orders/history", &page_query(&req))
                     .await?;
                 Ok(Page::new(items, next))
             }
@@ -1184,7 +1142,7 @@ impl Client {
             Some(a) => serde_json::json!({ "amount": a.to_string() }),
             None => serde_json::json!({}),
         };
-        self.signed_post("/api/v1/account/credit", &body).await
+        self.signed_post("/account/credit", &body).await
     }
 
     /// Network-aware funding convenience: fund the account with `amount` USDX
@@ -1378,18 +1336,17 @@ impl Client {
     // --- Cancel-on-disconnect (COD) --------------------------------------------
 
     /// Fetch the account's cancel-on-disconnect status
-    /// (`GET /api/v1/account/cancel-on-disconnect`). Requires credentials.
+    /// (`GET /account/cancel-on-disconnect`). Requires credentials.
     ///
     /// When enabled and active, the exchange cancels the account's resting orders
     /// if the `/ws` connection drops and is not re-established within the grace
     /// window (see [`CancelOnDisconnectStatus`]).
     pub async fn fetch_cancel_on_disconnect(&self) -> Result<CancelOnDisconnectStatus> {
-        self.signed_get("/api/v1/account/cancel-on-disconnect", &[])
-            .await
+        self.signed_get("/account/cancel-on-disconnect", &[]).await
     }
 
     /// Enable or disable cancel-on-disconnect for the account
-    /// (`PUT /api/v1/account/cancel-on-disconnect`). Requires credentials.
+    /// (`PUT /account/cancel-on-disconnect`). Requires credentials.
     ///
     /// Returns the resulting [`CancelOnDisconnectStatus`]; note `active` may stay
     /// false if the exchange has the feature switched off deployment-wide even
@@ -1399,7 +1356,7 @@ impl Client {
         enabled: bool,
     ) -> Result<CancelOnDisconnectStatus> {
         self.signed_put(
-            "/api/v1/account/cancel-on-disconnect",
+            "/account/cancel-on-disconnect",
             &serde_json::json!({ "enabled": enabled }),
         )
         .await
@@ -1646,7 +1603,7 @@ mod tests {
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/api/v1/account/credit"))
+            .and(path("/account/credit"))
             .and(body_json(serde_json::json!({ "amount": "250" })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "amount": "250", "credited_today": "250", "daily_limit": "500"
@@ -1655,9 +1612,6 @@ mod tests {
             .mount(&server)
             .await;
 
-        // `account/credit` lives on the `/api/v1` surface, which routes to the
-        // direct base; a `Custom` target defaults that to its REST base, so one
-        // URL points both at the mock.
         let stage = CustomNetwork::new("mock", server.uri(), Funds::Play)
             .expect("mock server uri is a valid base")
             .with_faucet(true);

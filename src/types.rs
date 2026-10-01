@@ -1138,7 +1138,7 @@ pub struct Position {
     pub funding_paid: Option<Decimal>,
 }
 
-/// A closed position (`GET /api/v1/positions/closed`, spec v0.7.2).
+/// A closed position (`GET /positions/closed`, spec v0.7.2).
 ///
 /// The realized counterpart of [`Position`]: the size and prices at close plus
 /// the PnL the close booked. [`side`](Self::side) is the side the position held
@@ -1222,11 +1222,11 @@ pub struct ClosedPosition {
 }
 
 /// Portfolio summary for the authenticated account
-/// (`GET /api/v1/account/summary`) — aggregate equity, PnL, volume, and open
+/// (`GET /account/summary`) — aggregate equity, PnL, volume, and open
 /// counts.
 ///
 /// Distinct from [`AccountSummary`], which is the balance/collateral view from
-/// `GET /api/v1/account` and embeds the account's positions.
+/// `GET /account` and embeds the account's positions.
 ///
 /// # Every field is optional
 ///
@@ -1298,7 +1298,7 @@ pub struct AccountPortfolioSummary {
     pub early_access_allowed: Option<bool>,
 }
 
-/// Consolidated single-call account snapshot (`GET /api/v1/account/state`) — the
+/// Consolidated single-call account snapshot (`GET /account/state`) — the
 /// portfolio summary plus every open position.
 ///
 /// Both halves come from **one coherent server-side read**, so they cannot tear
@@ -1419,7 +1419,7 @@ pub struct PortfolioPoint {
 }
 
 /// Portfolio time series for the authenticated account
-/// (`GET /api/v1/account/portfolio-history`): equity, cumulative PnL, and
+/// (`GET /account/portfolio-history`): equity, cumulative PnL, and
 /// cumulative volume over the requested window.
 ///
 /// The spec marks all three properties `required`, and all three decode
@@ -1473,7 +1473,7 @@ impl PortfolioHistory {
     }
 }
 
-/// One equity sample (`GET /api/v1/account/equity-history`, spec v0.7.2).
+/// One equity sample (`GET /account/equity-history`, spec v0.7.2).
 ///
 /// The high-resolution recent view of account equity — 5s cadence over roughly a
 /// one-hour window, **oldest first** — where [`PortfolioHistory`] is the
@@ -1516,7 +1516,7 @@ pub struct EquityPoint {
 }
 
 /// The authenticated account's effective fee schedule
-/// (`GET /api/v1/account/fees`).
+/// (`GET /account/fees`).
 ///
 /// Reports the **forward-looking schedule rate**, not a realized per-fill
 /// average.
@@ -1924,7 +1924,7 @@ pub struct Order {
     pub updated_at: i64,
 }
 
-/// A terminal-status order (`GET /api/v1/orders/history`, spec v0.7.2).
+/// A terminal-status order (`GET /orders/history`, spec v0.7.2).
 ///
 /// Orders that have reached `Filled` / `Cancelled` / `Rejected` / `Expired`,
 /// newest first. Distinct from [`Order`], which
@@ -2017,7 +2017,7 @@ pub struct OrderResponse {
 }
 
 /// Projected pre-trade impact of an order that was **not** submitted
-/// (`POST /api/v1/orders/preview`, spec schema `PreviewResponse`) — returned by
+/// (`POST /orders/preview`, spec schema `PreviewResponse`) — returned by
 /// [`Client::preview_order`](crate::Client::preview_order).
 ///
 /// # A rejected preview is a success, not an error
@@ -2405,7 +2405,7 @@ pub struct AgentRegistered {
 }
 
 /// Cancel-on-disconnect (COD) status for the authenticated account
-/// (`GET /api/v1/account/cancel-on-disconnect`).
+/// (`GET /account/cancel-on-disconnect`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct CancelOnDisconnectStatus {
     /// The account's own COD opt-in setting.

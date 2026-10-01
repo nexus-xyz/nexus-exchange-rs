@@ -185,7 +185,6 @@ impl Funds {
 pub struct CustomNetwork {
     label: String,
     base_url: String,
-    direct_base_url: String,
     ws_url: Option<String>,
     funds: Funds,
     has_faucet: bool,
@@ -197,12 +196,11 @@ impl CustomNetwork {
     /// classification. All three are required — see the type docs for why
     /// `funds` has no default.
     ///
-    /// The direct `/api/v1` base defaults to `base_url` (on every deployment
-    /// that exists today the `/api/v1` surface is mounted *under* the gateway
-    /// prefix — see [`Network::direct_base_url`]); override it with
-    /// [`with_direct_base_url`](Self::with_direct_base_url) when a deployment
-    /// genuinely splits them. The faucet is assumed **absent**, and the WS
-    /// origin and signing domain **unknown**, until declared.
+    /// Every request is sent to `base_url` plus the spec's bare path, and signed
+    /// over the bare path, so the base's own prefix must be one the deployment
+    /// strips before it verifies (as `/v1` is on the public hosts). The faucet
+    /// is assumed **absent**, and the WS origin and signing domain **unknown**,
+    /// until declared.
     ///
     /// # Errors
     ///
@@ -220,24 +218,12 @@ impl CustomNetwork {
         let base_url = validate_url(&base_url.into(), &["https://", "http://"], "base URL")?;
         Ok(Self {
             label,
-            direct_base_url: base_url.clone(),
             base_url,
             ws_url: None,
             funds,
             has_faucet: false,
             signing_domain: None,
         })
-    }
-
-    /// Point the direct `/api/v1` surface at a different base than the REST
-    /// base. Validated exactly like the REST base.
-    pub fn with_direct_base_url(mut self, direct_base_url: impl Into<String>) -> Result<Self> {
-        self.direct_base_url = validate_url(
-            &direct_base_url.into(),
-            &["https://", "http://"],
-            "direct base URL",
-        )?;
-        Ok(self)
     }
 
     /// Declare this deployment's WebSocket origin (a `ws://` or `wss://` URL).
@@ -310,7 +296,6 @@ impl CustomNetwork {
         let base_url = base_url.trim_end_matches('/').to_string();
         Self {
             label: LEGACY_BASE_URL_LABEL.to_string(),
-            direct_base_url: derive_direct_base(&base_url),
             base_url,
             ws_url: None,
             funds: Funds::Unknown,
@@ -387,15 +372,12 @@ pub enum Network {
     /// carry no real-world value. The safe target for integration work and CI,
     /// and the [`Default`] for [`Config`].
     ///
-    /// Served by its durable host, `api.testnet.nexus.xyz/indexer` (ENG-8870).
-    /// Note the `/indexer`: it is the route prefix the deployment mounts the
-    /// service under, not part of the API contract. Copy it whole — trimming it
-    /// does not fail cleanly, because the host serves `/api/v1/*` unprefixed as
-    /// well. A trimmed base keeps `/api/v1` calls working while `/status`,
-    /// `/orders/{id}` and the other v1-less routes `404`, and the signature
-    /// (which covers the logical path, not the base) verifies either way.
-    /// Testnet traffic goes there and **never** to the bare `api.nexus.xyz`,
-    /// which is real funds.
+    /// Served at the spec's published REST base, `api.testnet.nexus.xyz/v1`
+    /// (EDR-006, ENG-18324). The edge strips `/v1` before the indexer verifies,
+    /// so a request sent to `/v1/orders` is signed as `/orders`. Copy the base
+    /// whole: the bare host routes nothing and answers `404`. Testnet traffic
+    /// goes there and **never** to the bare `api.nexus.xyz`, which is real
+    /// funds.
     Testnet,
     /// A locally run indexer. Play funds, faucet available. Not a public
     /// network and not a deployment target.
@@ -410,9 +392,8 @@ pub enum Network {
 }
 
 impl Network {
-    /// Base URL for this network's unprefixed REST routes. Routes that have
-    /// **not** yet migrated to the direct `/api/v1` service are served here
-    /// (dual-stack — ENG-4751).
+    /// Base URL every REST request is sent to; each method appends the spec's
+    /// bare path to it.
     ///
     /// For [`Mainnet`](Self::Mainnet) this reports the documented durable base
     /// for completeness; requests are refused before it is ever used. See the
@@ -420,94 +401,19 @@ impl Network {
     pub fn base_url(&self) -> &str {
         // Named cases, never interpolated — see the type-level note.
         match self {
-            // Host root, not `/v1` (ENG-9963). ENG-9134 settled the layout as
-            // path-versioned `/api/v1`, which is what this SDK builds and signs, so a
-            // base carrying `/v1` would compose `/v1/api/v1/orders`.
+            // Host root, reported for completeness only: requests to this network
+            // are refused, because `api.nexus.xyz` does not resolve yet
+            // (ENG-15183). It moves to the `/v1` shape testnet uses once it does;
+            // until then there is no route table to check a base against.
             Network::Mainnet => "https://api.nexus.xyz",
-            // The durable host PLUS the `/indexer` route prefix the deployment
-            // mounts the service under (ENG-8870) — the bare host is the
-            // marketing frontend and answers `404`. This replaced the legacy
-            // `exchange.nexus.xyz/api/exchange` gateway, which proxies to a
-            // decommissioned Cloud Run indexer and now answers `500` on every
-            // route (ENG-14039), so the base this crate shipped was dead.
-            Network::Testnet => "https://api.testnet.nexus.xyz/indexer",
+            // The spec's published `rest_base` (EDR-006, ENG-18324). `/v1` is
+            // stripped at the edge, so the bare paths each method signs are the
+            // paths the indexer verifies. The bare host answers `404`.
+            Network::Testnet => concat!("https://", testnet_v1!()),
             Network::Local => concat!("http://", local_host!()),
             // Verbatim from the caller. Nothing is appended, rewritten or
             // inferred — see `CustomNetwork`.
             Network::Custom(custom) => &custom.base_url,
-        }
-    }
-
-    /// Base URL for the direct-service `/api/v1` surface.
-    ///
-    /// Under the gateway-elimination work (ENG-4740) each backend service
-    /// exposes its own REST API under an `/api/v1` prefix. Requests to
-    /// `/api/v1/*` paths are routed here; see [`crate::Client`] for how the base
-    /// is selected per request.
-    ///
-    /// # This is *not* the host root
-    ///
-    /// It reads as though it should be — the migration is described as moving to
-    /// "the host root" — but on every deployment that exists today the `/api/v1`
-    /// surface is mounted **under the same route prefix as everything else**, so
-    /// this equals [`base_url`]. Measured on testnet, 2026-09-09:
-    ///
-    /// ```text
-    /// https://api.testnet.nexus.xyz/indexer/api/v1/markets/summary  -> 200 (JSON)
-    /// https://api.testnet.nexus.xyz/indexer/markets/summary         -> 200 (JSON)
-    /// https://api.testnet.nexus.xyz/api/v1/markets/summary          -> 404
-    /// https://api.testnet.nexus.xyz/markets/summary                 -> 404
-    /// ```
-    ///
-    /// Both surfaces answer under that one prefix, exactly as they did under the
-    /// retired gateway prefix. Pointing this at the host root sends every
-    /// `/api/v1` request past the deployment's route and out to a `404`
-    /// (ENG-10063, the bug that is pinned by the tests below).
-    ///
-    /// The method survives that correction because the split is still real: when
-    /// a deployment serves the direct surface elsewhere it moves *per
-    /// deployment*, and [`Config::with_direct_base_url`] retargets it without
-    /// touching any path literal.
-    ///
-    /// # Comparing this against the other Nexus SDKs
-    ///
-    /// The two-base split here is an artifact of being **dual-stack**, not a
-    /// different target: some routes still live on the gateway, so the base has
-    /// to be chosen per path. An SDK that only speaks the `/api/v1` surface
-    /// needs no such choice and can fold the prefix into a single base instead.
-    /// The field names therefore do *not* line up one-to-one, and the pairing
-    /// that matters is:
-    ///
-    /// ```text
-    /// this SDK / Python:  direct_base_url + "/api/v1/orders"
-    /// TypeScript:         baseUrl (= REST base + "/api/v1") + "/orders"
-    /// ```
-    ///
-    /// Both compose to `https://api.testnet.nexus.xyz/indexer/api/v1/orders`
-    /// and both sign the **full** path including `/api/v1` but *excluding* the
-    /// route prefix, which the route strips before the indexer verifies. So
-    /// TypeScript's `baseUrl` is the analogue of this method plus the prefix —
-    /// it is *not* the analogue of [`base_url`]. Reading the two
-    /// `base_url`-shaped fields as the same thing is the one way to conclude
-    /// that a prefix disagrees when it does not.
-    ///
-    /// [`base_url`]: Self::base_url
-    pub fn direct_base_url(&self) -> &str {
-        // Named cases, never interpolated — see the type-level note.
-        match self {
-            // Host root, same as `base_url` (ENG-9963): mainnet is path-versioned
-            // per ENG-9134, so there is no separate direct surface to point at and
-            // nothing for this to differ on. Reported for completeness only —
-            // requests to this network are refused. See the `Mainnet` variant docs.
-            Network::Mainnet => "https://api.nexus.xyz",
-            // The same base as `base_url`, NOT the host root: `/api/v1` is
-            // mounted under the `/indexer` route prefix on this deployment
-            // (ENG-8870). See the method docs.
-            Network::Testnet => "https://api.testnet.nexus.xyz/indexer",
-            Network::Local => concat!("http://", local_host!()),
-            // Defaults to the caller's REST base, since today's deployments
-            // mount `/api/v1` under it; overridden only if the caller split them.
-            Network::Custom(custom) => &custom.direct_base_url,
         }
     }
 
@@ -879,25 +785,6 @@ pub(crate) const API_VERSION_RAW: &str = include_str!("../.api-version");
 /// spec version (ENG-4804). HTTP header names are case-insensitive.
 pub(crate) const API_VERSION_HEADER: &str = "X-Nexus-Api-Version";
 
-/// Derive the direct-service base for the `/api/v1` surface from a REST base
-/// URL. The two are the **same base**: `/api/v1` is mounted under whatever
-/// route prefix the deployment serves, not at the host root, so the only
-/// correct derivation is the identity (bar a trailing slash, which would
-/// otherwise double up when a path is joined).
-///
-/// This used to strip a trailing `/api/exchange`, which produced a base that
-/// serves no API at all — the host root of a prefixed deployment answers `404`,
-/// as `https://api.testnet.nexus.xyz/api/v1/...` still does today. Stripping
-/// therefore broke every `/api/v1` route in the client — see
-/// [`Network::direct_base_url`] for the measurements.
-///
-/// When a deployment genuinely serves the direct surface on another host,
-/// override it with [`Config::with_direct_base_url`]; that is the supported way
-/// to express a split, rather than inferring one from the base's shape.
-fn derive_direct_base(base_url: &str) -> String {
-    base_url.trim_end_matches('/').to_string()
-}
-
 /// Longest accepted [`CustomNetwork`] label. Long enough for any stage name we
 /// would plausibly use, short enough that it cannot be a smuggled payload.
 const MAX_LABEL_LEN: usize = 64;
@@ -1066,11 +953,6 @@ fn validate_url(url: &str, allowed_schemes: &[&str], what: &str) -> Result<Strin
 #[derive(Debug, Clone)]
 pub struct Config {
     pub(crate) base_url: String,
-    /// Host-root base for the direct-service `/api/v1` surface (see
-    /// [`Network::direct_base_url`]). Requests whose path begins with `/api/v1/`
-    /// are sent here instead of [`base_url`](Self::base_url); everything else
-    /// stays on the legacy gateway base.
-    pub(crate) direct_base_url: String,
     /// The [`Network`] this client targets. Always present: a raw base URL
     /// ([`Config::with_base_url`]) becomes a [`Network::Custom`] whose funds are
     /// [`Funds::Unknown`], so "which target is this" and "what does it move" are
@@ -1098,7 +980,6 @@ impl Config {
     pub fn new(network: Network) -> Self {
         Self {
             base_url: network.base_url().to_string(),
-            direct_base_url: network.direct_base_url().to_string(),
             ws_url: network.ws_base().map(str::to_string),
             network,
             ws: WsConfig::default(),
@@ -1216,26 +1097,6 @@ impl Config {
         self
     }
 
-    /// Override the base URL used for the `/api/v1` surface (see
-    /// [`Network::direct_base_url`]).
-    ///
-    /// [`Config::with_base_url`] uses the REST base unchanged, because `/api/v1`
-    /// is mounted under the gateway prefix on every deployment that exists
-    /// today. Use this setter when a deployment genuinely serves the direct
-    /// service elsewhere — e.g. once gateway elimination (ENG-4740) moves it to
-    /// its own host.
-    ///
-    /// Retargeting the base does **not** change what is signed: the canonical
-    /// path is the `/api/v1/...` literal, independent of the base. That holds as
-    /// long as the new base's own path segment is stripped before the indexer
-    /// verifies, as the gateway does with `/api/exchange`. Against a base that
-    /// does not strip, the signature would cover a path the server never sees —
-    /// verify with one authenticated call before trusting a new host.
-    pub fn with_direct_base_url(mut self, direct_base_url: impl Into<String>) -> Self {
-        self.direct_base_url = direct_base_url.into();
-        self
-    }
-
     /// Override the WebSocket URL to stream from — the authenticated socket,
     /// e.g. `wss://api.testnet.nexus.xyz/v1/ws`; see [`Network::ws_base`] for
     /// the built-in values. Required to stream on a custom base that declares
@@ -1307,15 +1168,9 @@ impl Config {
         self
     }
 
-    /// The configured (legacy gateway) REST base URL.
+    /// The configured REST base URL.
     pub fn base_url(&self) -> &str {
         &self.base_url
-    }
-
-    /// The configured direct-service base URL for the `/api/v1` surface (see
-    /// [`Network::direct_base_url`]).
-    pub fn direct_base_url(&self) -> &str {
-        &self.direct_base_url
     }
 
     /// The [`Network`] this client targets — always known.
@@ -1329,10 +1184,9 @@ impl Config {
     /// [`Funds::Unknown`], so the second question has its own answer and every
     /// guard reads it explicitly.
     ///
-    /// This reports the **declared target**. The URLs requests actually go to are
-    /// [`Config::base_url`] and [`Config::direct_base_url`], which
-    /// [`Config::with_direct_base_url`] can override after the fact — so read
-    /// those two, not `network().base_url()`, when you want the effective address.
+    /// This reports the **declared target**. The URL requests actually go to is
+    /// [`Config::base_url`], so read that, not `network().base_url()`, when you
+    /// want the effective address.
     pub fn network(&self) -> &Network {
         &self.network
     }
@@ -1491,10 +1345,8 @@ mod tests {
     /// exists so a future "tidy-up" into an interpolated host fails loudly.
     #[test]
     fn mainnet_host_is_not_interpolated_from_the_network_name() {
-        for url in [
-            Network::Mainnet.base_url(),
-            Network::Mainnet.direct_base_url(),
-        ] {
+        {
+            let url = Network::Mainnet.base_url();
             assert!(
                 url.starts_with("https://api.nexus.xyz"),
                 "mainnet must be the bare api.nexus.xyz host, got {url}"
@@ -1504,25 +1356,13 @@ mod tests {
                 "mainnet host must not be derived by interpolation, got {url}"
             );
         }
-        // The layout ENG-9134 settled, pinned (ENG-9963): the version lives in the
-        // PATH, so the base must be the host root. A `/v1` base would send
-        // `/v1/api/v1/orders` while signing `/api/v1/orders` — a wrong URL, not a
-        // wrong signature, because `base_for()` and `SigningContext` are independent.
-        for url in [
-            Network::Mainnet.base_url(),
-            Network::Mainnet.direct_base_url(),
-        ] {
-            assert_eq!(
-                url, "https://api.nexus.xyz",
-                "mainnet base must be the host root, with no version segment, got {url}"
-            );
-        }
+        // Mainnet keeps the host root until `api.nexus.xyz` resolves (ENG-15183);
+        // it is refused either way, and moves to testnet's `/v1` shape then.
+        assert_eq!(Network::Mainnet.base_url(), "https://api.nexus.xyz");
 
         // ...and testnet must never collapse onto the real-funds host.
-        for url in [
-            Network::Testnet.base_url(),
-            Network::Testnet.direct_base_url(),
-        ] {
+        {
+            let url = Network::Testnet.base_url();
             assert!(
                 !url.starts_with("https://api.nexus.xyz"),
                 "testnet must never point at the real-funds host, got {url}"
@@ -1617,96 +1457,33 @@ mod tests {
         assert_eq!(cfg.ws.channel_capacity, 1);
     }
 
-    /// Built-in networks carry both bases, and on every deployment that exists
-    /// today they are the **same** base: `/api/v1` is mounted under the
-    /// deployment's route prefix, not at the host root.
-    ///
-    /// Testnet is on its durable host (ENG-8870), and the value carries the
-    /// `/indexer` prefix the service is mounted under — the bare host `404`s.
-    /// That was a host change, not a path-layout change; the path stays
-    /// `/api/v1` either way.
+    /// Testnet is the spec's published `rest_base` (EDR-006, ENG-18324): the
+    /// edge strips `/v1`, so the bare paths the client signs are the paths the
+    /// indexer verifies. The bare host `404`s.
     #[test]
-    fn networks_expose_gateway_and_direct_bases() {
+    fn testnet_base_is_the_published_v1_base() {
         assert_eq!(
             Network::Testnet.base_url(),
-            "https://api.testnet.nexus.xyz/indexer"
+            "https://api.testnet.nexus.xyz/v1"
         );
         assert_eq!(
-            Network::Testnet.direct_base_url(),
-            "https://api.testnet.nexus.xyz/indexer"
-        );
-        // Local dev serves both surfaces from one origin.
-        assert_eq!(Network::Local.base_url(), Network::Local.direct_base_url());
-    }
-
-    /// The `/api/v1` surface must resolve to an **absolute URL that carries the
-    /// deployment's route prefix**, for every built-in network.
-    ///
-    /// This is the assertion whose absence let the bug ship. The tests around it
-    /// checked the base and the path prefix separately, and both halves were
-    /// individually defensible while the composed URL pointed at a host that
-    /// serves no API. Asserting the resolved URL is what fails when the two
-    /// agree with each other but disagree with the deployment.
-    #[test]
-    #[allow(deprecated)] // Pins the deprecated selector's behaviour; see above.
-    fn v1_surface_resolves_under_the_gateway_prefix() {
-        assert_eq!(
-            format!(
-                "{}{}",
-                Network::Testnet.direct_base_url(),
-                "/api/v1/markets/summary"
-            ),
-            "https://api.testnet.nexus.xyz/indexer/api/v1/markets/summary",
-        );
-        // A custom gateway-style base keeps its prefix rather than losing it.
-        assert_eq!(
-            format!(
-                "{}{}",
-                Config::with_base_url("https://preview.example/api/exchange").direct_base_url(),
-                "/api/v1/orders"
-            ),
-            "https://preview.example/api/exchange/api/v1/orders",
+            format!("{}{}", Network::Testnet.base_url(), "/markets/summary"),
+            "https://api.testnet.nexus.xyz/v1/markets/summary",
         );
     }
 
-    /// `with_base_url` uses one base for both surfaces: `/api/v1` is mounted
-    /// under the gateway prefix, so the direct base keeps it rather than
-    /// stripping it. A bare origin is likewise used unchanged (this is what
-    /// keeps the wiremock tests, which pass a bare `http://127.0.0.1:PORT`,
-    /// working).
+    /// `with_base_url` uses the base unchanged, bar a trailing slash: `//orders`
+    /// is a different path than the `/orders` the client signs, so a doubled
+    /// separator would fail verification rather than just look untidy. A bare
+    /// origin is likewise used unchanged (this is what keeps the wiremock tests,
+    /// which pass a bare `http://127.0.0.1:PORT`, working).
     #[test]
     #[allow(deprecated)] // Pins the deprecated selector's behaviour; see above.
-    fn direct_base_keeps_the_gateway_prefix() {
-        let cfg = Config::with_base_url("https://preview.example/api/exchange");
-        assert_eq!(cfg.base_url(), "https://preview.example/api/exchange");
-        assert_eq!(
-            cfg.direct_base_url(),
-            "https://preview.example/api/exchange"
-        );
-
-        // Trailing slash trimmed on BOTH bases, so joining a path never doubles
-        // the separator. `//orders` is a different path than the `/orders` the
-        // client signs, so a doubled separator fails verification rather than
-        // just looking untidy — pin both halves.
-        let slashed = Config::with_base_url("https://preview.example/api/exchange/");
-        assert_eq!(slashed.base_url(), "https://preview.example/api/exchange");
-        assert_eq!(
-            slashed.direct_base_url(),
-            "https://preview.example/api/exchange"
-        );
-
-        // A bare origin (no gateway segment) is used unchanged for both.
+    fn with_base_url_trims_only_a_trailing_slash() {
+        let slashed = Config::with_base_url("https://preview.example/v1/");
+        assert_eq!(slashed.base_url(), "https://preview.example/v1");
         let bare = Config::with_base_url("http://127.0.0.1:8080");
         assert_eq!(bare.base_url(), "http://127.0.0.1:8080");
-        assert_eq!(bare.direct_base_url(), "http://127.0.0.1:8080");
-
-        // Explicit override wins over the derivation.
-        assert_eq!(
-            Config::with_base_url("https://preview.example/api/exchange")
-                .with_direct_base_url("https://direct.preview.example")
-                .direct_base_url(),
-            "https://direct.preview.example"
-        );
     }
 
     /// A helper for the `Custom` tests: a syntactically valid target on a host
@@ -1717,36 +1494,18 @@ mod tests {
             .expect("valid custom network")
     }
 
-    /// A `Custom` target drives both bases, and the direct `/api/v1` base
-    /// defaults to the REST base — because on every deployment that exists today
-    /// `/api/v1` is mounted *under* the gateway prefix (ENG-10063). A caller that
-    /// genuinely splits them can say so, and then only that base moves.
+    /// A `Custom` target drives the base, with a trailing slash trimmed so
+    /// `base + path` never doubles the separator into a path that differs from
+    /// the one signed.
     #[test]
-    fn custom_network_drives_both_bases() {
+    fn custom_network_drives_the_base() {
         let config = Config::new(Network::Custom(custom(Funds::Play)));
         assert_eq!(config.base_url(), "https://example.invalid/api/exchange");
-        assert_eq!(
-            config.direct_base_url(),
-            "https://example.invalid/api/exchange"
-        );
 
-        let split = custom(Funds::Play)
-            .with_direct_base_url("https://direct.example.invalid")
-            .expect("valid direct base");
-        let config = Config::new(Network::Custom(split));
-        assert_eq!(config.base_url(), "https://example.invalid/api/exchange");
-        assert_eq!(config.direct_base_url(), "https://direct.example.invalid");
-
-        // A trailing slash is trimmed on both, so `base + path` never doubles the
-        // separator into a path that differs from the one signed.
         let slashed =
             CustomNetwork::new("dev", "https://example.invalid/api/exchange/", Funds::Play)
                 .expect("valid custom network");
         assert_eq!(slashed.base_url, "https://example.invalid/api/exchange");
-        assert_eq!(
-            slashed.direct_base_url,
-            "https://example.invalid/api/exchange"
-        );
     }
 
     /// The WS origin is **never derived** from the REST base: it is a separate
@@ -1795,7 +1554,8 @@ mod tests {
     #[test]
     fn custom_hardcodes_no_hostname() {
         let network = Network::Custom(custom(Funds::Real));
-        for url in [network.base_url(), network.direct_base_url()] {
+        {
+            let url = network.base_url();
             assert!(
                 url.starts_with("https://example.invalid"),
                 "custom must resolve to exactly the caller's host, got {url}"
@@ -1959,12 +1719,7 @@ mod tests {
             );
         }
 
-        // The direct base is held to the same standard as the REST base...
-        assert!(custom(Funds::Play)
-            .with_direct_base_url("https://user:pw@example.invalid")
-            .is_err());
-
-        // ...and the WS origin to the WS schemes. A REST base is not a WS origin.
+        // The WS origin is held to the WS schemes. A REST base is not a WS origin.
         for bad in [
             "https://stream.example.invalid",
             "stream.example.invalid",

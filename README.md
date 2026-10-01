@@ -47,11 +47,11 @@ first-page method and a `Paginator`:
 
 | Endpoint | First page | Whole history | `limit` max |
 |---|---|---|---|
-| `GET /api/v1/markets/{id}/trades` | `fetch_trades` | `fetch_trades_paginated` | `MAX_TRADES_LIMIT` = **1000** |
-| `GET /api/v1/fills` | `fetch_my_trades` | `fetch_my_trades_paginated` | `MAX_FILLS_LIMIT` = **1000** |
-| `GET /api/v1/orders/history` | `fetch_orders` | `fetch_orders_paginated` | `MAX_ORDER_HISTORY_LIMIT` = **500** |
-| `GET /api/v1/positions/closed` | `fetch_positions_history` | `fetch_positions_history_paginated` | `MAX_CLOSED_POSITIONS_LIMIT` = **200** |
-| `GET /api/v1/account/equity-history` | `fetch_equity_history` | `fetch_equity_history_paginated` | `MAX_EQUITY_HISTORY_LIMIT` = **720** |
+| `GET /markets/{id}/trades` | `fetch_trades` | `fetch_trades_paginated` | `MAX_TRADES_LIMIT` = **1000** |
+| `GET /fills` | `fetch_my_trades` | `fetch_my_trades_paginated` | `MAX_FILLS_LIMIT` = **1000** |
+| `GET /orders/history` | `fetch_orders` | `fetch_orders_paginated` | `MAX_ORDER_HISTORY_LIMIT` = **500** |
+| `GET /positions/closed` | `fetch_positions_history` | `fetch_positions_history_paginated` | `MAX_CLOSED_POSITIONS_LIMIT` = **200** |
+| `GET /account/equity-history` | `fetch_equity_history` | `fetch_equity_history_paginated` | `MAX_EQUITY_HISTORY_LIMIT` = **720** |
 
 The flat methods return the first page only, and never a cursor. Their `limit`
 is the same per-endpoint bound as `page_size` below; `None` sends no `limit` at

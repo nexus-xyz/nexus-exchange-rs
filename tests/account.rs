@@ -14,7 +14,7 @@ fn authed(uri: String) -> Client {
 async fn fetch_balance_parses() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account"))
+        .and(path("/account"))
         .and(header("x-api-key", "nx_test"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "balance": "1000.00", "collateral": "1000.00", "equity": "1012.34",
@@ -38,7 +38,7 @@ async fn fetch_my_trades_parses_fills() {
     use nexus_exchange::types::Side;
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/fills"))
+        .and(path("/fills"))
         .and(header("x-api-key", "nx_test"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(serde_json::json!([{
@@ -58,7 +58,7 @@ async fn fetch_my_trades_parses_fills() {
 async fn fetch_rate_limit_status_handles_nulls() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account/rate-limit"))
+        .and(path("/account/rate-limit"))
         .and(header("x-api-key", "nx_test"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "tier": "unlimited", "limit": null, "remaining": null, "reset_at_ms": null
@@ -79,7 +79,7 @@ async fn fetch_balance_tolerates_missing_liquidation_price() {
     // must decode to None, not fail the whole fetch_balance call.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/account"))
+        .and(path("/account"))
         .and(header("x-api-key", "nx_test"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "balance": "1000.00", "collateral": "1000.00", "equity": "1000.00",

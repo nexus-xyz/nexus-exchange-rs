@@ -41,7 +41,7 @@ async fn fetch_ticker_parses_numbers_and_nulls() {
         "markPrice": 50011.6, "indexPrice": 50010.0, "info": {}
     });
     Mock::given(method("GET"))
-        .and(path("/api/v1/markets/BTC-USDX-PERP/ticker"))
+        .and(path("/markets/BTC-USDX-PERP/ticker"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&server)
         .await;
@@ -59,7 +59,7 @@ async fn fetch_ticker_parses_numbers_and_nulls() {
 async fn error_envelope_is_decoded() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/markets/NOPE/ticker"))
+        .and(path("/markets/NOPE/ticker"))
         .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
             "code": "market_not_found", "message": "no such market"
         })))
@@ -92,7 +92,7 @@ async fn fetch_order_book_parses_number_levels() {
         "timestamp": 1776033900000i64, "datetime": "2026-04-13T00:00:00Z", "nonce": 42
     });
     Mock::given(method("GET"))
-        .and(path("/api/v1/markets/BTC-USDX-PERP/orderbook"))
+        .and(path("/markets/BTC-USDX-PERP/orderbook"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&server)
         .await;
@@ -118,7 +118,7 @@ async fn fetch_trades_parses_side_and_limit() {
         "takerOrMaker": "taker", "is_liquidation": false, "info": {}
     }]);
     Mock::given(method("GET"))
-        .and(path("/api/v1/markets/BTC-USDX-PERP/trades"))
+        .and(path("/markets/BTC-USDX-PERP/trades"))
         .and(wiremock::matchers::query_param("limit", "1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&server)
@@ -141,7 +141,7 @@ async fn fetch_funding_parses_string_decimals() {
         "mark_price": "50011.60", "oracle_price": "50010.00"
     }]);
     Mock::given(method("GET"))
-        .and(path("/api/v1/markets/BTC-USDX-PERP/funding"))
+        .and(path("/markets/BTC-USDX-PERP/funding"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&server)
         .await;
@@ -162,7 +162,7 @@ async fn fetch_funding_premium_samples_parses_and_passes_limit() {
         { "timestamp": 1776033960000i64, "premium_index": "-0.00004" },
     ]);
     Mock::given(method("GET"))
-        .and(path("/api/v1/markets/BTC-USDX-PERP/funding-samples"))
+        .and(path("/markets/BTC-USDX-PERP/funding-samples"))
         .and(query_param("limit", "2"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&server)
@@ -219,7 +219,7 @@ async fn fetch_ohlcv_parses_array_candles() {
     let server = MockServer::start().await;
     let body = serde_json::json!([[1776033900000i64, 48062.0, 51903.0, 44992.0, 51903.0, 27.123]]);
     Mock::given(method("GET"))
-        .and(path("/api/v1/markets/BTC-USDX-PERP/candles"))
+        .and(path("/markets/BTC-USDX-PERP/candles"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&server)
         .await;
@@ -244,7 +244,7 @@ async fn fetch_ticker_tolerates_omitted_fields() {
         "last": 50011.6
     });
     Mock::given(method("GET"))
-        .and(path("/api/v1/markets/BTC-USDX-PERP/ticker"))
+        .and(path("/markets/BTC-USDX-PERP/ticker"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&server)
         .await;
@@ -271,7 +271,7 @@ async fn fetch_ticker_float_decimal_is_not_lossy_for_nice_values() {
         "datetime": "2026-04-13T00:00:00Z", "last": 1.1, "percentage": 0.3, "info": {}
     });
     Mock::given(method("GET"))
-        .and(path("/api/v1/markets/BTC-USDX-PERP/ticker"))
+        .and(path("/markets/BTC-USDX-PERP/ticker"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&server)
         .await;
@@ -301,7 +301,7 @@ async fn fetch_market_summaries_parses_numbers_and_halted_null() {
         }
     ]);
     Mock::given(method("GET"))
-        .and(path("/api/v1/markets/summary"))
+        .and(path("/markets/summary"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&server)
         .await;
@@ -339,7 +339,7 @@ async fn fetch_tickers_parses_market_keyed_map() {
         }
     });
     Mock::given(method("GET"))
-        .and(path("/api/v1/tickers"))
+        .and(path("/tickers"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&server)
         .await;
@@ -367,7 +367,7 @@ async fn fetch_tickers_empty_response_is_empty_map() {
     // rather than erroring, so a caller can iterate over zero tickers safely.
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/tickers"))
+        .and(path("/tickers"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
         .mount(&server)
         .await;
@@ -383,7 +383,7 @@ async fn fetch_mark_price_parses_string_decimal() {
     let server = MockServer::start().await;
     let body = serde_json::json!({ "market_id": "BTC-USDX-PERP", "mark_price": "50011.60" });
     Mock::given(method("GET"))
-        .and(path("/api/v1/markets/BTC-USDX-PERP/mark-price"))
+        .and(path("/markets/BTC-USDX-PERP/mark-price"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&server)
         .await;
@@ -406,7 +406,7 @@ async fn fetch_market_status_parses_halt_fields() {
         "adl_event_count": 3
     });
     Mock::given(method("GET"))
-        .and(path("/api/v1/markets/BTC-USDX-PERP/status"))
+        .and(path("/markets/BTC-USDX-PERP/status"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&server)
         .await;
@@ -434,7 +434,7 @@ async fn fetch_ticker_encodes_market_id_path_segment() {
         "markPrice": 1.0, "indexPrice": 1.0, "info": {}
     });
     Mock::given(method("GET"))
-        .and(path("/api/v1/markets/a%2Fb%20c/ticker"))
+        .and(path("/markets/a%2Fb%20c/ticker"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&server)
         .await;

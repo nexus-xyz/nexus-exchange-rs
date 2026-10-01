@@ -183,6 +183,8 @@ impl Client {
     /// Must be called from within a Tokio runtime (it spawns a task).
     ///
     /// ```no_run
+    /// use std::collections::HashSet;
+    ///
     /// use futures_util::StreamExt;
     /// use nexus_exchange::ws::{Channel, ServerMessage};
     /// use nexus_exchange::{Client, Config};
@@ -190,23 +192,25 @@ impl Client {
     /// # async fn run() -> nexus_exchange::Result<()> {
     /// let client = Client::new(Config::default());
     /// let mut stream = client.subscribe(vec![Channel::trades("BTC-USDX-PERP")])?;
-    /// // The stream an `out_of_sync` named; `None` market means every market.
-    /// let mut resyncing: Option<(String, Option<String>)> = None;
+    /// // The streams this subscribes, named as the server names them.
+    /// let held = [("trades".to_string(), Some("BTC-USDX-PERP".to_string()))];
+    /// // Streams an `out_of_sync` ended that are not live again yet.
+    /// let mut resyncing: HashSet<(String, Option<String>)> = HashSet::new();
     /// while let Some(item) = stream.next().await {
     ///     match item {
-    ///         // The client has already resubscribed. Don't refetch yet.
-    ///         Ok(ServerMessage::OutOfSync { channel, market, .. }) => {
-    ///             resyncing = Some((channel, market));
-    ///         }
-    ///         // Live again once THAT stream's `subscribed` arrives: now re-read
-    ///         // what was missed over REST. Another channel's ack doesn't count.
-    ///         Ok(ServerMessage::Subscribed { channel, market, .. })
-    ///             if resyncing
-    ///                 .as_ref()
-    ///                 .is_some_and(|(c, m)| *c == channel && (m.is_none() || *m == market)) =>
-    ///         {
-    ///             resyncing = None;
-    ///             /* REST-refetch the trades you track */
+    ///         // The client has already resubscribed. Don't refetch yet. A `None`
+    ///         // market ends every market of that channel, so mark each one held.
+    ///         Ok(ServerMessage::OutOfSync { channel, market, .. }) => resyncing.extend(
+    ///             held.iter()
+    ///                 .filter(|(c, m)| *c == channel && (market.is_none() || *m == market))
+    ///                 .cloned(),
+    ///         ),
+    ///         // Live again once THAT stream's own `subscribed` arrives: now re-read
+    ///         // what it missed over REST. Another stream's ack doesn't count.
+    ///         Ok(ServerMessage::Subscribed { channel, market, .. }) => {
+    ///             if resyncing.remove(&(channel, market)) {
+    ///                 /* REST-refetch the trades you track */
+    ///             }
     ///         }
     ///         Ok(msg) => { let _ = msg; /* handle the typed frame */ }
     ///         Err(err) => eprintln!("stream: {err}"),

@@ -95,21 +95,25 @@ market, and only then REST-refetch what was missed. A refetch that lands before
 the resubscribe takes effect can miss events published in between.
 
 ```rust
+use std::collections::HashSet;
 use nexus_exchange::ws::{Channel, ServerMessage};
 
 let mut stream = client.subscribe(vec![Channel::Fills])?;
-// The stream an `out_of_sync` named; a `None` market means every market.
-let mut resyncing: Option<(String, Option<String>)> = None;
+// The streams this subscribes, named as the server names them.
+let held = [("fills".to_string(), None)];
+// Streams an `out_of_sync` ended that are not live again yet.
+let mut resyncing: HashSet<(String, Option<String>)> = HashSet::new();
 while let Some(item) = stream.next().await {
     match item {
-        // Already resubscribed: wait for that stream's `subscribed`.
-        Ok(ServerMessage::OutOfSync { channel, market, .. }) => resyncing = Some((channel, market)),
-        Ok(ServerMessage::Subscribed { channel, market, .. })
-            if resyncing
-                .as_ref()
-                .is_some_and(|(c, m)| *c == channel && (m.is_none() || *m == market)) =>
-        {
-            resyncing = None; /* live again: refetch fills over REST */
+        // Already resubscribed. A `None` market ends every market of the channel.
+        Ok(ServerMessage::OutOfSync { channel, market, .. }) => resyncing.extend(
+            held.iter()
+                .filter(|(c, m)| *c == channel && (market.is_none() || *m == market))
+                .cloned(),
+        ),
+        // Live again on that stream's own `subscribed`: refetch what it missed.
+        Ok(ServerMessage::Subscribed { channel, market, .. }) => {
+            if resyncing.remove(&(channel, market)) { /* refetch fills over REST */ }
         }
         Ok(ServerMessage::Event { payload, .. }) => { /* apply the event */ }
         _ => {}

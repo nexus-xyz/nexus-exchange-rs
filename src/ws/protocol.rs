@@ -288,12 +288,13 @@ pub enum ServerMessage {
         /// The payload, forwarded verbatim (no client-side reconstruction).
         payload: Value,
     },
-    /// The client's resume cursor predates the server's ring buffer, so the
-    /// requested `since` can no longer be satisfied: there is a real gap. The
-    /// consumer must REST-refetch the current state and treat the stream as
-    /// resumed from now. Non-fatal — the connection stays up. The server has
-    /// dropped the subscription, so the client drops this channel's cursor and
-    /// subscribes it again from the live edge; a fresh `subscribed` follows.
+    /// The client's resume cursor predates the server's ring buffer, or the
+    /// connection fell behind the server's broadcast: there is a real gap.
+    /// Non-fatal, the connection stays up. The server has dropped the
+    /// subscription, so the client drops this channel's cursor and subscribes
+    /// it again from the live edge. Wait for the next `subscribed` frame for the
+    /// same channel and market, then REST-refetch what was missed; a refetch
+    /// sent before that can miss events published in between.
     OutOfSync {
         /// Channel that overran its buffer.
         channel: String,

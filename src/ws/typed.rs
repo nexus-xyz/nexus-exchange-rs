@@ -17,8 +17,17 @@
 //!   the last frame the client processed.
 //! * **Resync.** An `out_of_sync` means the server dropped that subscription.
 //!   The client surfaces the frame, drops the cursor, and subscribes again from
-//!   the live edge on the same connection, so the channel keeps delivering; what
-//!   was missed must be re-read over REST.
+//!   the live edge on the same connection, so the channel keeps delivering.
+//!
+//! # Refetch once live
+//!
+//! Events missed before an `out_of_sync` must be re-read over REST, but not
+//! straight away. Wait for the next `subscribed` frame for that channel and
+//! market, which marks the resubscribe as live, and refetch then. A refetch that
+//! lands before the resubscribe takes effect can miss events published in
+//! between: they are newer than the REST answer and older than the live edge
+//! the stream rejoined at. You never resubscribe yourself; the client already
+//! has.
 //!
 //! # Delivery semantics
 //!
@@ -174,15 +183,40 @@ impl Client {
     /// Must be called from within a Tokio runtime (it spawns a task).
     ///
     /// ```no_run
+    /// use std::collections::HashSet;
+    ///
     /// use futures_util::StreamExt;
-    /// use nexus_exchange::ws::Channel;
+    /// use nexus_exchange::ws::{Channel, ServerMessage};
     /// use nexus_exchange::{Client, Config};
     ///
     /// # async fn run() -> nexus_exchange::Result<()> {
     /// let client = Client::new(Config::default());
     /// let mut stream = client.subscribe(vec![Channel::trades("BTC-USDX-PERP")])?;
+    /// // The streams this subscribes, as `(channel, market)` the way the server's
+    /// // frames name them: `Channel::trades(m)` is `("trades", Some(m))`, an
+    /// // account channel such as `Channel::Fills` is `("fills", None)`. Keep it
+    /// // in step with the `subscribe` call above.
+    /// let held = [("trades".to_string(), Some("BTC-USDX-PERP".to_string()))];
+    /// // Streams an `out_of_sync` ended that are not live again yet.
+    /// let mut resyncing: HashSet<(String, Option<String>)> = HashSet::new();
     /// while let Some(item) = stream.next().await {
     ///     match item {
+    ///         // The client has already resubscribed. Don't refetch yet: until the
+    ///         // resubscribe is live, events can still land after the REST answer
+    ///         // and before the new live edge, and be missed. A `None` market ends
+    ///         // every market of the channel, the same rule the client resubscribes by.
+    ///         Ok(ServerMessage::OutOfSync { channel, market, .. }) => resyncing.extend(
+    ///             held.iter()
+    ///                 .filter(|(c, m)| *c == channel && (market.is_none() || *m == market))
+    ///                 .cloned(),
+    ///         ),
+    ///         // Live again once THAT stream's own `subscribed` arrives: now re-read
+    ///         // what it missed over REST. Another stream's ack doesn't count.
+    ///         Ok(ServerMessage::Subscribed { channel, market, .. }) => {
+    ///             if resyncing.remove(&(channel, market)) {
+    ///                 /* REST-refetch from the last trade you applied */
+    ///             }
+    ///         }
     ///         Ok(msg) => { let _ = msg; /* handle the typed frame */ }
     ///         Err(err) => eprintln!("stream: {err}"),
     ///     }

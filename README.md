@@ -82,6 +82,50 @@ on `/positions/closed`. Two things follow that are easy to get wrong:
 - `/account/equity-history` defaults to **720**, not 100, so omitting `limit`
   there asks for the whole ~1h / 5s window and the first page is usually the last.
 
+## Account stream
+
+`Client::subscribe` opens the `/ws` socket (token plus `op` envelope) and returns
+a typed `MessageStream`. It reconnects on its own and resumes each channel from
+its last `seq`.
+
+On `out_of_sync` the server has dropped that subscription, and the client
+resubscribes it automatically from the live edge. Wait until the subscription
+is live again, which is the next `subscribed` frame for that channel and
+market, and only then REST-refetch what was missed. A refetch that lands before
+the resubscribe takes effect can miss events published in between.
+
+```rust
+use std::collections::HashSet;
+use nexus_exchange::ws::{Channel, ServerMessage};
+
+let mut stream = client.subscribe(vec![Channel::Fills])?;
+// The streams this subscribes, as `(channel, market)` the way the server's
+// frames name them: `Channel::trades(m)` is `("trades", Some(m))`, an account
+// channel such as `Channel::Fills` is `("fills", None)`. Keep it in step with
+// the `subscribe` call above.
+let held = [("fills".to_string(), None)];
+// Streams an `out_of_sync` ended that are not live again yet.
+let mut resyncing: HashSet<(String, Option<String>)> = HashSet::new();
+while let Some(item) = stream.next().await {
+    match item {
+        // Already resubscribed, but don't refetch yet: until it is live, events
+        // can land after the REST answer and before the new live edge. A `None`
+        // market ends every market of the channel, the rule the client resubscribes by.
+        Ok(ServerMessage::OutOfSync { channel, market, .. }) => resyncing.extend(
+            held.iter()
+                .filter(|(c, m)| *c == channel && (market.is_none() || *m == market))
+                .cloned(),
+        ),
+        // Live again on that stream's own `subscribed`: refetch what it missed.
+        Ok(ServerMessage::Subscribed { channel, market, .. }) => {
+            if resyncing.remove(&(channel, market)) { /* REST-refetch fills since the last one applied */ }
+        }
+        Ok(ServerMessage::Event { payload, .. }) => { /* apply the event */ }
+        _ => {}
+    }
+}
+```
+
 ## Public market-data stream
 
 `Client::market_stream` opens the public `/stream` socket, which needs no

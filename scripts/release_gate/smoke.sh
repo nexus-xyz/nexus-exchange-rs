@@ -20,14 +20,18 @@ esac
 
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
-name="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["name"])')"
-version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+# The target directory too, not a hardcoded ./target: `cargo package` writes into
+# CARGO_TARGET_DIR (or build.target-dir) when one is set.
+meta="$(cargo metadata --no-deps --format-version 1)"
+name="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["name"])' <<<"$meta")"
+version="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])' <<<"$meta")"
+target_dir="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])' <<<"$meta")"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 cargo package --locked --allow-dirty --no-verify --quiet
-tar -xzf "target/package/${name}-${version}.crate" -C "$work"
+tar -xzf "${target_dir}/package/${name}-${version}.crate" -C "$work"
 
 mkdir -p "$work/smoke/src"
 cp scripts/release_gate/smoke/main.rs "$work/smoke/src/main.rs"
@@ -47,7 +51,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 EOF
 # Resolve against the versions the packed crate ships in its own Cargo.lock.
 cp "$work/${name}-${version}/Cargo.lock" "$work/smoke/Cargo.lock"
-CARGO_TARGET_DIR="$root/target" cargo build --quiet --manifest-path "$work/smoke/Cargo.toml"
+CARGO_TARGET_DIR="$target_dir" cargo build --quiet --manifest-path "$work/smoke/Cargo.toml"
 echo "built a consumer of ${name}-${version}.crate"
 
 summary() {
@@ -63,7 +67,7 @@ if [ "$mode" = "build" ]; then
 fi
 
 set +e
-line="$("$root/target/debug/nexus-exchange-smoke")"
+line="$("${target_dir}/debug/nexus-exchange-smoke")"
 code=$?
 set -e
 echo "$line"

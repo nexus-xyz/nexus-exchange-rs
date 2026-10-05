@@ -4,42 +4,52 @@ on:
   push:
     branches: [main]
 
-permissions:
-  contents: write
-  pull-requests: write
-  # crates.io trusted publishing (ENG-18798): lets the publish step trade this run's OIDC token for a
-  # 30-minute crates.io token instead of using a long-lived one. See the steps below.
-  id-token: write
+# Each job opts into what it needs.
+permissions: {}
 
-concurrency:
-  group: release-plz-${{ github.ref }}
-  cancel-in-progress: false
-
+# Two jobs, as in release-plz's quickstart (release-plz.dev/docs/github/quickstart, "Concurrency"):
+# the release-PR job is serialised per branch, the publishing job is not. A concurrency group keeps
+# only ONE pending run, so a third push while a run is in progress cancels the second push's
+# pending run. With `release_always = false` (release-plz.toml) only the release PR's merge
+# publishes, so if that merge were the cancelled one nothing would publish, and the run would show
+# Cancelled, not failed (ENG-18798 review).
 jobs:
-  release-plz:
+  # Publishes what a merged release PR proposed. No concurrency group, on purpose (above).
+  release-plz-release:
+    name: Release-plz release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # tags and the GitHub release
+      pull-requests: read # is this push a release PR's merge? (release-plz asks too)
+      # crates.io trusted publishing (ENG-18798): lets the publish step trade this run's OIDC token
+      # for a 30-minute crates.io token instead of using a long-lived one. See the steps below.
+      id-token: write
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          # Prefer a real PAT / GitHub App token so release-plz's release PRs are
-          # authored by that identity and natively trigger the required CI checks.
-          # Falls back to the default GITHUB_TOKEN so this workflow is safe to
-          # merge BEFORE the RELEASE_PLZ_TOKEN secret exists.
+          # Prefer a real PAT / GitHub App token (see the release-plz-pr job). Falls back to the
+          # default GITHUB_TOKEN so this workflow is safe to merge BEFORE the RELEASE_PLZ_TOKEN
+          # secret exists.
           token: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # release-plz publishes only when this push is a release PR's merge (`release_always = false`
       # in release-plz.toml). Ask the same question here, so a crates.io token is minted only for
-      # the one push that can use it.
+      # the one push that can use it. A failed lookup (an API blip) must not stop the job: it only
+      # skips the trusted-publishing attempt, so a publish falls back to CARGO_REGISTRY_TOKEN.
+      # release-plz still decides on its own whether to publish.
       - name: Is this push a release PR's merge?
         id: release-merge
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          n="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
-            --jq '[.[] | select(.head.ref | startswith("release-plz-"))] | length')"
+          if ! n="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+            --jq '[.[] | select(.head.ref | startswith("release-plz-"))] | length')"; then
+            echo "::warning title=release-merge lookup::Could not ask GitHub whether ${GITHUB_SHA} is a release PR's merge. Trusted publishing is skipped for this run; if release-plz publishes, it uses CARGO_REGISTRY_TOKEN."
+            n=0
+          fi
           if [ "$n" -gt 0 ]; then echo "merged=true" >> "$GITHUB_OUTPUT"; else echo "merged=false" >> "$GITHUB_OUTPUT"; fi
       # Trusted publishing first, the stored token second, so this keeps publishing both before and
       # after a crates.io owner adds the trusted publisher (owner nexus-xyz, repo nexus-exchange-rs,
@@ -68,6 +78,37 @@ jobs:
             echo "::warning title=crates.io credential::Trusted publishing is not configured on crates.io for this repo yet; publishing with the long-lived CARGO_REGISTRY_TOKEN (ENG-18798)."
           fi
       - uses: MarcoIeni/release-plz-action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
+
+  # Opens and refreshes the release PR. Serialised per branch so two runs never edit it at once. A
+  # cancelled pending run here loses nothing: the next run refreshes the same PR from a newer main.
+  release-plz-pr:
+    name: Release-plz PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          # Prefer a real PAT / GitHub App token so release-plz's release PRs are
+          # authored by that identity and natively trigger the required CI checks.
+          # Falls back to the default GITHUB_TOKEN so this workflow is safe to
+          # merge BEFORE the RELEASE_PLZ_TOKEN secret exists.
+          token: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: MarcoIeni/release-plz-action@v0.5
+        with:
+          command: release-pr
         env:
           # Once a RELEASE_PLZ_TOKEN (a fine-grained PAT or GitHub App token with
           # contents + pull-requests write) is added as a repo secret, release-plz's
@@ -76,4 +117,5 @@ jobs:
           # then this falls back to the default token (release PRs open, but do not
           # trigger required checks on their own).
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
+          # As in release-plz's quickstart. `release-pr` never publishes.
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

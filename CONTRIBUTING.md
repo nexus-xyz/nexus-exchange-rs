@@ -86,7 +86,12 @@ would have gone out as a patch.
 release-plz opens and maintains the release PR (version bump + changelog). Merging
 it is the release: the run on that merge publishes to crates.io. No other push
 publishes (`release_always = false` in `release-plz.toml`), so a publish that
-fails is retried by re-running that run, not by the next merge.
+fails is retried by re-running that run, not by the next merge. The same goes for
+a release job that shows **Cancelled**: re-run it. If the publish needs a code fix,
+put the fix on a branch named `release-plz-*` (for example `release-plz-fix-ci`):
+release-plz publishes only commits associated with a PR from such a branch
+([release-plz docs, `release_always`](https://release-plz.dev/docs/config#the-release_always-field)),
+and `pre-publish.yml` treats it as a release PR.
 
 **Before merging, the pre-publish checks have to be green on the release PR**
 (`.github/workflows/pre-publish.yml`, ENG-18798). release-plz opens the PR with

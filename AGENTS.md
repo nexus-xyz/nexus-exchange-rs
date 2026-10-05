@@ -22,7 +22,9 @@ The Rust SDK for the Nexus Exchange API.
 - If you changed the public API, regenerate `public-api.txt` with
   `scripts/release_gate/public_api.sh --write` and commit it in the same PR.
   `prepublish-surface` fails on any difference, so a removal shows up in the diff
-  a reviewer reads (ENG-18798).
+  a reviewer reads (ENG-18798). The listing names items by their dependency paths
+  (`serde_core::`, `rust_decimal::`), so a dependency bump can need a `--write`
+  commit even when nothing changes for users.
 
 ## API contract
 

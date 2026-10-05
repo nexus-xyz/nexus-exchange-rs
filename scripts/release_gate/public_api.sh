@@ -10,6 +10,13 @@
 # removed or changed item then shows up as a `-` line in the diff a reviewer reads, instead of
 # first surfacing in the release PR's cargo-semver-checks report (or in a downstream build).
 #
+# What it does not see. `-ss` leaves auto-trait impls out of the listing, so a type that stops being
+# Send, Sync or UnwindSafe (a new field can do that) passes here. cargo-public-api does not render
+# private fields either, so adding one to an exhaustive struct whose fields are all public, which
+# breaks struct-literal construction downstream, passes too. The `semver` job (cargo-semver-checks,
+# lints `auto_trait_impl_removed` and `constructible_struct_adds_private_field`) catches both when
+# the PR does not declare the break.
+#
 # Needs cargo-public-api and a nightly that it can read, because the listing comes from rustdoc
 # JSON, which is nightly-only. Both are pinned, and they move together: cargo-public-api 0.52.x
 # reads the rustdoc JSON of nightly-2025-11-22 onward, until a nightly changes the format again.
@@ -31,8 +38,12 @@ esac
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
-name="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["name"])')"
-version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+# The target directory too, not a hardcoded ./target: `cargo package` writes into
+# CARGO_TARGET_DIR (or build.target-dir) when one is set.
+meta="$(cargo metadata --no-deps --format-version 1)"
+name="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["name"])' <<<"$meta")"
+version="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])' <<<"$meta")"
+target_dir="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])' <<<"$meta")"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -41,9 +52,9 @@ trap 'rm -rf "$work"' EXIT
 # tree is the PR head and clean anyway. --no-verify: the listing below builds the docs from the
 # unpacked crate, which is the verification that matters here.
 cargo package --locked --allow-dirty --no-verify --quiet
-tar -xzf "target/package/${name}-${version}.crate" -C "$work"
+tar -xzf "${target_dir}/package/${name}-${version}.crate" -C "$work"
 
-CARGO_TARGET_DIR="$root/target" cargo "+${NIGHTLY}" public-api -ss \
+CARGO_TARGET_DIR="$target_dir" cargo "+${NIGHTLY}" public-api -ss \
   --manifest-path "$work/${name}-${version}/Cargo.toml" > "$work/public-api.txt"
 
 if [ "$mode" = "write" ]; then

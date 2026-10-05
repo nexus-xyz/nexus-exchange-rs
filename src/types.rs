@@ -54,13 +54,22 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// A tradable market and its trading rules.
+///
+/// The server sends the three identifiers under CCXT's names, `id` / `base` /
+/// `quote`. The pinned spec still declares `market_id` / `base_asset` /
+/// `quote_asset`, so those decode too. All three stay required: a row carrying
+/// neither name fails to decode rather than yielding an empty id (ENG-19677).
 #[derive(Debug, Clone, Deserialize)]
 pub struct Market {
-    /// Market identifier, e.g. `BTC-USDX-PERP`.
+    /// Market identifier, e.g. `BTC-USDX-PERP`. Served as `id`.
+    #[serde(alias = "id")]
     pub market_id: String,
-    /// Base asset symbol (the asset being traded), e.g. `BTC`.
+    /// Base asset symbol (the asset being traded), e.g. `BTC`. Served as `base`.
+    #[serde(alias = "base")]
     pub base_asset: String,
     /// Quote asset symbol (the asset prices are denominated in), e.g. `USDX`.
+    /// Served as `quote`.
+    #[serde(alias = "quote")]
     pub quote_asset: String,
     /// Smallest permitted price increment. Order prices must be a multiple of this.
     #[serde(with = "rust_decimal::serde::str")]

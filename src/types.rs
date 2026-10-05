@@ -62,14 +62,14 @@ use serde_json::Value;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Market {
     /// Market identifier, e.g. `BTC-USDX-PERP`. Served as `id`.
-    #[serde(rename = "id", alias = "market_id")]
+    #[serde(alias = "id")]
     pub market_id: String,
     /// Base asset symbol (the asset being traded), e.g. `BTC`. Served as `base`.
-    #[serde(rename = "base", alias = "base_asset")]
+    #[serde(alias = "base")]
     pub base_asset: String,
     /// Quote asset symbol (the asset prices are denominated in), e.g. `USDX`.
     /// Served as `quote`.
-    #[serde(rename = "quote", alias = "quote_asset")]
+    #[serde(alias = "quote")]
     pub quote_asset: String,
     /// Smallest permitted price increment. Order prices must be a multiple of this.
     #[serde(with = "rust_decimal::serde::str")]

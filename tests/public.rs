@@ -67,12 +67,18 @@ async fn fetch_markets_decodes_the_served_shape() {
 #[test]
 fn market_without_an_identifier_fails_to_decode() {
     // The identifiers stay required: a missing one is a decode error, not "".
-    for key in ["id", "base", "quote"] {
+    // serde names the field by its spec name; the served one is an alias.
+    for (key, field) in [
+        ("id", "market_id"),
+        ("base", "base_asset"),
+        ("quote", "quote_asset"),
+    ] {
         let mut row = served_market();
         row.as_object_mut().unwrap().remove(key);
         let err = serde_json::from_value::<nexus_exchange::types::Market>(row).unwrap_err();
         assert!(
-            err.to_string().contains(&format!("missing field `{key}`")),
+            err.to_string()
+                .contains(&format!("missing field `{field}`")),
             "{err}"
         );
     }

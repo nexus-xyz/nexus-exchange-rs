@@ -134,7 +134,11 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
-          args=(--registry crates.io --package nexus-exchange --manifest Cargo.toml)
+          # --surface-file '': the public-API grade against the published tag is off here.
+          # release-plz picks this crate's version with cargo-semver-checks (semver_check in
+          # release-plz.toml), and public-api.txt renders dependency paths that move with no
+          # change for users, which that grade would read as removals.
+          args=(--registry crates.io --package nexus-exchange --manifest Cargo.toml --surface-file '')
           if [[ "$HEAD_REF" != release-plz-* ]]; then
             args+=(--report)
           fi

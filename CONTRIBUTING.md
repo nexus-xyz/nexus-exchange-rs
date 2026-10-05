@@ -104,7 +104,9 @@ the default token, so its runs wait for **Approve and run workflows** on the PR.
 - `prepublish-verdict`: the proposed version fits the spec change since the last
   published version, graded by the monorepo's classifier
   (`scripts/release_gate/VENDORED.md`). Below 1.0 a breaking change needs a minor
-  bump. *Could not classify* fails and needs a person.
+  bump. *Could not classify* fails and needs a person. The crate's own API is
+  graded by release-plz's cargo-semver-checks, which picks the version, so the
+  verdict's public-API grade (on in the other SDK repos) is off here.
 - `spec-drift` and `spec-pin`, as on every PR.
 
 The release PR also does **not** touch the README, so one step is manual:

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.11.1...v0.12.0) - 2026-10-01
+
+### Added
+
+- *(client)* [**breaking**] send REST to the /v1 base with the spec's bare paths (ENG-18324) ([#169](https://github.com/nexus-xyz/nexus-exchange-rs/pull/169))
+- *(rest)* deprecate the bridge deposit-address methods, whose route was cancelled (ENG-18018) ([#166](https://github.com/nexus-xyz/nexus-exchange-rs/pull/166))
+- *(rest)* name methods snake_case(operationId), keep old names as deprecated aliases (ENG-17743) ([#165](https://github.com/nexus-xyz/nexus-exchange-rs/pull/165))
+
+### Fixed
+
+- *(auth)* serialize mutating requests per agent signer so nonces arrive in order (ENG-17010) ([#170](https://github.com/nexus-xyz/nexus-exchange-rs/pull/170))
+- *(ws)* resubscribe after out_of_sync and resume candles from their cursor (ENG-18685) ([#167](https://github.com/nexus-xyz/nexus-exchange-rs/pull/167))
+- *(auth)* [**breaking**] salt the RegisterAgent domain with the network (ENG-17753) ([#162](https://github.com/nexus-xyz/nexus-exchange-rs/pull/162))
+
+### Other
+
+- *(ws)* refetch over REST only once an out_of_sync stream is live again (ENG-18685) ([#168](https://github.com/nexus-xyz/nexus-exchange-rs/pull/168))
+
 ## [0.11.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.11.0...v0.11.1) - 2026-09-23
 
 ### Added

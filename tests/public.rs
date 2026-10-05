@@ -30,6 +30,54 @@ async fn fetch_markets_parses_string_decimals() {
     assert_eq!(markets[0].max_leverage, 20);
 }
 
+/// One `/markets` row verbatim as public testnet served it on 2026-10-05: CCXT
+/// names (`id`/`base`/`quote`), not the pinned spec's `market_id`/`base_asset`/
+/// `quote_asset` (ENG-19677). Same row as nexus-exchange-py's `SERVED_MARKET`.
+fn served_market() -> serde_json::Value {
+    serde_json::json!({
+        "active": true, "base": "BTC", "contractSize": "1", "funding_rate_cap": "0.001",
+        "id": "BTC-USDX-PERP", "initial_margin_rate": "0.02", "lifecycle": "active",
+        "lot_size": "0.001", "maintenance_margin_rate": "0.01", "maker_rebate_bps": -2,
+        "marginModes": {"cross": true, "isolated": true}, "max_leverage": 50,
+        "max_open_interest": "10000", "max_open_interest_notional": null,
+        "max_order_size": "100", "min_order_size": "0.001", "price_band_bps": 500,
+        "quote": "USDX", "settle": "USDX", "taker_fee_bps": 5, "tick_size": "0.5",
+        "type": "swap"
+    })
+}
+
+#[tokio::test]
+async fn fetch_markets_decodes_the_served_shape() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/markets"))
+        .respond_with(ResponseTemplate::new(200).set_body_json([served_market()]))
+        .mount(&server)
+        .await;
+
+    let markets = client(server.uri()).fetch_markets().await.unwrap();
+    let m = &markets[0];
+    assert_eq!(m.market_id, "BTC-USDX-PERP");
+    assert_eq!(m.base_asset, "BTC");
+    assert_eq!(m.quote_asset, "USDX");
+    assert_eq!(m.tick_size.to_string(), "0.5");
+    assert_eq!(m.max_leverage, 50);
+}
+
+#[test]
+fn market_without_an_identifier_fails_to_decode() {
+    // The identifiers stay required: a missing one is a decode error, not "".
+    for key in ["id", "base", "quote"] {
+        let mut row = served_market();
+        row.as_object_mut().unwrap().remove(key);
+        let err = serde_json::from_value::<nexus_exchange::types::Market>(row).unwrap_err();
+        assert!(
+            err.to_string().contains(&format!("missing field `{key}`")),
+            "{err}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn fetch_ticker_parses_numbers_and_nulls() {
     let server = MockServer::start().await;

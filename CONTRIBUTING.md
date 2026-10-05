@@ -83,8 +83,26 @@ would have gone out as a patch.
 
 ## Cutting a release
 
-release-plz opens and maintains the release PR (version bump + changelog). It does
-**not** touch the README, so one step is manual:
+release-plz opens and maintains the release PR (version bump + changelog). Merging
+it is the release: the run on that merge publishes to crates.io. No other push
+publishes (`release_always = false` in `release-plz.toml`), so a publish that
+fails is retried by re-running that run, not by the next merge.
+
+**Before merging, the pre-publish checks have to be green on the release PR**
+(`.github/workflows/pre-publish.yml`, ENG-18798). release-plz opens the PR with
+the default token, so its runs wait for **Approve and run workflows** on the PR.
+
+- `prepublish-surface`: the packed crate's public API equals `public-api.txt`.
+- `prepublish-smoke`: the packed crate, built into a clean consumer, lists markets
+  on the public testnet. *Testnet unreachable* fails under its own name. It is not
+  a pass, so re-run the job once testnet answers.
+- `prepublish-verdict`: the proposed version fits the spec change since the last
+  published version, graded by the monorepo's classifier
+  (`scripts/release_gate/VENDORED.md`). Below 1.0 a breaking change needs a minor
+  bump. *Could not classify* fails and needs a person.
+- `spec-drift` and `spec-pin`, as on every PR.
+
+The release PR also does **not** touch the README, so one step is manual:
 
 - **Append a row to the README SDK↔spec compatibility table** for the series being
   released, recording the spec in `.api-version` at that point. The table is

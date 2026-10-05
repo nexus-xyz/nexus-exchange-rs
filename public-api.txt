@@ -1,0 +1,1926 @@
+pub mod nexus_exchange
+pub use nexus_exchange::ExposeSecret
+pub use nexus_exchange::SecretString
+pub mod nexus_exchange::auth
+#[non_exhaustive] pub enum nexus_exchange::auth::Credentials
+pub nexus_exchange::auth::Credentials::ApiKey
+pub nexus_exchange::auth::Credentials::ApiKey::key_id: alloc::string::String
+pub nexus_exchange::auth::Credentials::ApiKey::secret: secrecy::SecretString
+pub nexus_exchange::auth::Credentials::Session
+pub nexus_exchange::auth::Credentials::Session::token: secrecy::SecretString
+impl nexus_exchange::auth::Credentials
+pub fn nexus_exchange::auth::Credentials::api_key(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn nexus_exchange::auth::Credentials::into_arc(self) -> alloc::rcs::arc::Arc<dyn nexus_exchange::auth::Credential>
+pub fn nexus_exchange::auth::Credentials::session(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::fmt::Debug for nexus_exchange::auth::Credentials
+pub fn nexus_exchange::auth::Credentials::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl nexus_exchange::auth::Credential for nexus_exchange::auth::Credentials
+pub fn nexus_exchange::auth::Credentials::auth_headers(&self, &nexus_exchange::auth::SigningContext<'_>) -> nexus_exchange::Result<alloc::vec::Vec<(&'static str, alloc::string::String)>>
+pub fn nexus_exchange::auth::Credentials::write_queue(&self) -> core::option::Option<&nexus_exchange::auth::WriteQueue>
+pub struct nexus_exchange::auth::AgentRegistration
+pub nexus_exchange::auth::AgentRegistration::agent: alloc::string::String
+pub nexus_exchange::auth::AgentRegistration::expires_at: u64
+pub nexus_exchange::auth::AgentRegistration::label: core::option::Option<alloc::string::String>
+pub nexus_exchange::auth::AgentRegistration::nonce: u64
+pub nexus_exchange::auth::AgentRegistration::signature: alloc::string::String
+pub nexus_exchange::auth::AgentRegistration::wallet: alloc::string::String
+impl core::clone::Clone for nexus_exchange::auth::AgentRegistration
+pub fn nexus_exchange::auth::AgentRegistration::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::auth::AgentRegistration
+pub fn nexus_exchange::auth::AgentRegistration::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for nexus_exchange::auth::AgentRegistration
+pub fn nexus_exchange::auth::AgentRegistration::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct nexus_exchange::auth::AgentSigner
+impl nexus_exchange::AgentSigner
+pub fn nexus_exchange::AgentSigner::address(&self) -> alloc::string::String
+pub fn nexus_exchange::AgentSigner::from_hex(impl core::convert::Into<alloc::string::String>) -> nexus_exchange::Result<Self>
+pub fn nexus_exchange::AgentSigner::into_arc(self) -> alloc::rcs::arc::Arc<dyn nexus_exchange::auth::Credential>
+impl core::fmt::Debug for nexus_exchange::AgentSigner
+pub fn nexus_exchange::AgentSigner::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl nexus_exchange::auth::Credential for nexus_exchange::AgentSigner
+pub fn nexus_exchange::AgentSigner::auth_headers(&self, &nexus_exchange::auth::SigningContext<'_>) -> nexus_exchange::Result<alloc::vec::Vec<(&'static str, alloc::string::String)>>
+pub fn nexus_exchange::AgentSigner::write_queue(&self) -> core::option::Option<&nexus_exchange::auth::WriteQueue>
+pub struct nexus_exchange::auth::EthSigner
+impl nexus_exchange::EthSigner
+pub fn nexus_exchange::EthSigner::address(&self) -> alloc::string::String
+pub fn nexus_exchange::EthSigner::from_hex(impl core::convert::Into<alloc::string::String>) -> nexus_exchange::Result<Self>
+pub fn nexus_exchange::EthSigner::register_agent(&self, &str, u64, u64, u64, &nexus_exchange::Network, core::option::Option<alloc::string::String>) -> nexus_exchange::Result<nexus_exchange::auth::AgentRegistration>
+pub fn nexus_exchange::EthSigner::sign_in(&self) -> nexus_exchange::Result<nexus_exchange::auth::LoginRequest>
+impl core::fmt::Debug for nexus_exchange::EthSigner
+pub fn nexus_exchange::EthSigner::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct nexus_exchange::auth::LoginRequest
+pub nexus_exchange::auth::LoginRequest::message: alloc::string::String
+pub nexus_exchange::auth::LoginRequest::signature: alloc::string::String
+impl core::clone::Clone for nexus_exchange::auth::LoginRequest
+pub fn nexus_exchange::auth::LoginRequest::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::auth::LoginRequest
+pub fn nexus_exchange::auth::LoginRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for nexus_exchange::auth::LoginRequest
+pub fn nexus_exchange::auth::LoginRequest::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub struct nexus_exchange::auth::SigningContext<'a>
+pub nexus_exchange::auth::SigningContext::body: &'a [u8]
+pub nexus_exchange::auth::SigningContext::method: &'a str
+pub nexus_exchange::auth::SigningContext::path: &'a str
+pub nexus_exchange::auth::SigningContext::query: &'a str
+pub nexus_exchange::auth::SigningContext::timestamp_ms: u64
+impl<'a> nexus_exchange::auth::SigningContext<'a>
+pub fn nexus_exchange::auth::SigningContext<'a>::new(&'a str, &'a str, &'a str, &'a [u8], u64) -> Self
+impl<'a> core::clone::Clone for nexus_exchange::auth::SigningContext<'a>
+pub fn nexus_exchange::auth::SigningContext<'a>::clone(&self) -> Self
+impl<'a> core::fmt::Debug for nexus_exchange::auth::SigningContext<'a>
+pub fn nexus_exchange::auth::SigningContext<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for nexus_exchange::auth::SigningContext<'a>
+#[non_exhaustive] pub struct nexus_exchange::auth::SystemTimeNonce
+impl core::clone::Clone for nexus_exchange::auth::SystemTimeNonce
+pub fn nexus_exchange::auth::SystemTimeNonce::clone(&self) -> Self
+impl core::default::Default for nexus_exchange::auth::SystemTimeNonce
+pub fn nexus_exchange::auth::SystemTimeNonce::default() -> Self
+impl core::fmt::Debug for nexus_exchange::auth::SystemTimeNonce
+pub fn nexus_exchange::auth::SystemTimeNonce::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for nexus_exchange::auth::SystemTimeNonce
+impl nexus_exchange::auth::Nonce for nexus_exchange::auth::SystemTimeNonce
+pub fn nexus_exchange::auth::SystemTimeNonce::next(&self) -> u64
+pub struct nexus_exchange::auth::WriteQueue(_)
+impl nexus_exchange::auth::WriteQueue
+pub fn nexus_exchange::auth::WriteQueue::new() -> Self
+impl core::default::Default for nexus_exchange::auth::WriteQueue
+pub fn nexus_exchange::auth::WriteQueue::default() -> Self
+impl core::fmt::Debug for nexus_exchange::auth::WriteQueue
+pub fn nexus_exchange::auth::WriteQueue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::panic::unwind_safe::RefUnwindSafe for nexus_exchange::auth::WriteQueue
+pub const nexus_exchange::auth::SIGN_IN_MESSAGE: &str
+pub trait nexus_exchange::auth::Credential: core::fmt::Debug + core::marker::Send + core::marker::Sync
+pub fn nexus_exchange::auth::Credential::auth_headers(&self, &nexus_exchange::auth::SigningContext<'_>) -> nexus_exchange::Result<alloc::vec::Vec<(&'static str, alloc::string::String)>>
+pub fn nexus_exchange::auth::Credential::write_queue(&self) -> core::option::Option<&nexus_exchange::auth::WriteQueue>
+impl nexus_exchange::auth::Credential for nexus_exchange::AgentSigner
+pub fn nexus_exchange::AgentSigner::auth_headers(&self, &nexus_exchange::auth::SigningContext<'_>) -> nexus_exchange::Result<alloc::vec::Vec<(&'static str, alloc::string::String)>>
+pub fn nexus_exchange::AgentSigner::write_queue(&self) -> core::option::Option<&nexus_exchange::auth::WriteQueue>
+impl nexus_exchange::auth::Credential for nexus_exchange::auth::Credentials
+pub fn nexus_exchange::auth::Credentials::auth_headers(&self, &nexus_exchange::auth::SigningContext<'_>) -> nexus_exchange::Result<alloc::vec::Vec<(&'static str, alloc::string::String)>>
+pub fn nexus_exchange::auth::Credentials::write_queue(&self) -> core::option::Option<&nexus_exchange::auth::WriteQueue>
+pub trait nexus_exchange::auth::Nonce: core::fmt::Debug + core::marker::Send + core::marker::Sync
+pub fn nexus_exchange::auth::Nonce::next(&self) -> u64
+impl nexus_exchange::auth::Nonce for nexus_exchange::auth::SystemTimeNonce
+pub fn nexus_exchange::auth::SystemTimeNonce::next(&self) -> u64
+pub mod nexus_exchange::markets
+#[non_exhaustive] pub enum nexus_exchange::markets::OrderError
+pub nexus_exchange::markets::OrderError::NonPositivePrice(rust_decimal::decimal::Decimal)
+pub nexus_exchange::markets::OrderError::NonPositiveSize(rust_decimal::decimal::Decimal)
+pub nexus_exchange::markets::OrderError::PriceNotOnTick
+pub nexus_exchange::markets::OrderError::PriceNotOnTick::price: rust_decimal::decimal::Decimal
+pub nexus_exchange::markets::OrderError::PriceNotOnTick::tick_size: rust_decimal::decimal::Decimal
+pub nexus_exchange::markets::OrderError::SizeAboveMax
+pub nexus_exchange::markets::OrderError::SizeAboveMax::max: rust_decimal::decimal::Decimal
+pub nexus_exchange::markets::OrderError::SizeAboveMax::size: rust_decimal::decimal::Decimal
+pub nexus_exchange::markets::OrderError::SizeBelowMin
+pub nexus_exchange::markets::OrderError::SizeBelowMin::min: rust_decimal::decimal::Decimal
+pub nexus_exchange::markets::OrderError::SizeBelowMin::size: rust_decimal::decimal::Decimal
+pub nexus_exchange::markets::OrderError::SizeNotOnLot
+pub nexus_exchange::markets::OrderError::SizeNotOnLot::lot_size: rust_decimal::decimal::Decimal
+pub nexus_exchange::markets::OrderError::SizeNotOnLot::size: rust_decimal::decimal::Decimal
+impl core::clone::Clone for nexus_exchange::markets::OrderError
+pub fn nexus_exchange::markets::OrderError::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::markets::OrderError
+impl core::cmp::PartialEq for nexus_exchange::markets::OrderError
+pub fn nexus_exchange::markets::OrderError::eq(&self, &Self) -> bool
+impl core::convert::From<nexus_exchange::markets::OrderError> for nexus_exchange::Error
+pub fn nexus_exchange::Error::from(nexus_exchange::markets::OrderError) -> Self
+impl core::convert::From<nexus_exchange::markets::OrderError> for nexus_exchange::TerminalError
+pub fn nexus_exchange::TerminalError::from(nexus_exchange::markets::OrderError) -> Self
+impl core::error::Error for nexus_exchange::markets::OrderError
+impl core::fmt::Debug for nexus_exchange::markets::OrderError
+pub fn nexus_exchange::markets::OrderError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for nexus_exchange::markets::OrderError
+pub fn nexus_exchange::markets::OrderError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for nexus_exchange::markets::OrderError
+pub enum nexus_exchange::markets::Rounding
+pub nexus_exchange::markets::Rounding::Down
+pub nexus_exchange::markets::Rounding::Nearest
+pub nexus_exchange::markets::Rounding::Up
+impl core::clone::Clone for nexus_exchange::markets::Rounding
+pub fn nexus_exchange::markets::Rounding::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::markets::Rounding
+impl core::cmp::PartialEq for nexus_exchange::markets::Rounding
+pub fn nexus_exchange::markets::Rounding::eq(&self, &Self) -> bool
+impl core::default::Default for nexus_exchange::markets::Rounding
+pub fn nexus_exchange::markets::Rounding::default() -> Self
+impl core::fmt::Debug for nexus_exchange::markets::Rounding
+pub fn nexus_exchange::markets::Rounding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for nexus_exchange::markets::Rounding
+impl core::marker::StructuralPartialEq for nexus_exchange::markets::Rounding
+pub mod nexus_exchange::rest
+pub mod nexus_exchange::rest::pagination
+pub struct nexus_exchange::rest::pagination::Cursor(_)
+impl nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::as_str(&self) -> &str
+pub fn nexus_exchange::rest::pagination::Cursor::into_inner(self) -> alloc::string::String
+pub fn nexus_exchange::rest::pagination::Cursor::new(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::rest::pagination::Cursor
+impl core::cmp::PartialEq for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::eq(&self, &Self) -> bool
+impl core::convert::From<&str> for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::from(&str) -> Self
+impl core::convert::From<alloc::string::String> for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::from(alloc::string::String) -> Self
+impl core::fmt::Debug for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for nexus_exchange::rest::pagination::Cursor
+impl serde_core::ser::Serialize for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct nexus_exchange::rest::pagination::Page<T>
+pub nexus_exchange::rest::pagination::Page::items: alloc::vec::Vec<T>
+pub nexus_exchange::rest::pagination::Page::next_cursor: core::option::Option<nexus_exchange::rest::pagination::Cursor>
+impl<T> nexus_exchange::rest::pagination::Page<T>
+pub fn nexus_exchange::rest::pagination::Page<T>::is_last(&self) -> bool
+pub fn nexus_exchange::rest::pagination::Page<T>::new(alloc::vec::Vec<T>, core::option::Option<nexus_exchange::rest::pagination::Cursor>) -> Self
+impl<T: core::clone::Clone> core::clone::Clone for nexus_exchange::rest::pagination::Page<T>
+pub fn nexus_exchange::rest::pagination::Page<T>::clone(&self) -> Self
+impl<T: core::cmp::Eq> core::cmp::Eq for nexus_exchange::rest::pagination::Page<T>
+impl<T: core::cmp::PartialEq> core::cmp::PartialEq for nexus_exchange::rest::pagination::Page<T>
+pub fn nexus_exchange::rest::pagination::Page<T>::eq(&self, &Self) -> bool
+impl<T: core::cmp::PartialEq> core::marker::StructuralPartialEq for nexus_exchange::rest::pagination::Page<T>
+impl<T: core::fmt::Debug> core::fmt::Debug for nexus_exchange::rest::pagination::Page<T>
+pub fn nexus_exchange::rest::pagination::Page<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct nexus_exchange::rest::pagination::PageRequest
+pub nexus_exchange::rest::pagination::PageRequest::cursor: core::option::Option<nexus_exchange::rest::pagination::Cursor>
+pub nexus_exchange::rest::pagination::PageRequest::limit: core::option::Option<u32>
+impl core::clone::Clone for nexus_exchange::rest::pagination::PageRequest
+pub fn nexus_exchange::rest::pagination::PageRequest::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::rest::pagination::PageRequest
+impl core::cmp::PartialEq for nexus_exchange::rest::pagination::PageRequest
+pub fn nexus_exchange::rest::pagination::PageRequest::eq(&self, &Self) -> bool
+impl core::default::Default for nexus_exchange::rest::pagination::PageRequest
+pub fn nexus_exchange::rest::pagination::PageRequest::default() -> Self
+impl core::fmt::Debug for nexus_exchange::rest::pagination::PageRequest
+pub fn nexus_exchange::rest::pagination::PageRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for nexus_exchange::rest::pagination::PageRequest
+pub struct nexus_exchange::rest::pagination::Paginator<T>
+impl<T> nexus_exchange::rest::pagination::Paginator<T>
+pub async fn nexus_exchange::rest::pagination::Paginator<T>::all(self) -> nexus_exchange::Result<alloc::vec::Vec<T>>
+pub fn nexus_exchange::rest::pagination::Paginator<T>::into_stream(self) -> impl futures_core::stream::Stream<Item = nexus_exchange::Result<T>> + core::marker::Send where T: core::marker::Send + 'static
+pub fn nexus_exchange::rest::pagination::Paginator<T>::max_pages(self, usize) -> Self
+pub fn nexus_exchange::rest::pagination::Paginator<T>::new<F, Fut>(F) -> Self where T: 'static, F: core::ops::function::FnMut(nexus_exchange::rest::pagination::PageRequest) -> Fut + core::marker::Send + 'static, Fut: core::future::future::Future<Output = nexus_exchange::Result<nexus_exchange::rest::pagination::Page<T>>> + core::marker::Send + 'static
+pub async fn nexus_exchange::rest::pagination::Paginator<T>::next_page(&mut self) -> nexus_exchange::Result<core::option::Option<nexus_exchange::rest::pagination::Page<T>>>
+pub fn nexus_exchange::rest::pagination::Paginator<T>::page_size(self, u32) -> Self
+pub fn nexus_exchange::rest::pagination::Paginator<T>::starting_after(self, impl core::convert::Into<nexus_exchange::rest::pagination::Cursor>) -> Self
+impl<T> core::fmt::Debug for nexus_exchange::rest::pagination::Paginator<T>
+pub fn nexus_exchange::rest::pagination::Paginator<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub const nexus_exchange::rest::pagination::NEXT_CURSOR_HEADER: &str
+pub struct nexus_exchange::rest::Cursor(_)
+impl nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::as_str(&self) -> &str
+pub fn nexus_exchange::rest::pagination::Cursor::into_inner(self) -> alloc::string::String
+pub fn nexus_exchange::rest::pagination::Cursor::new(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::rest::pagination::Cursor
+impl core::cmp::PartialEq for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::eq(&self, &Self) -> bool
+impl core::convert::From<&str> for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::from(&str) -> Self
+impl core::convert::From<alloc::string::String> for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::from(alloc::string::String) -> Self
+impl core::fmt::Debug for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for nexus_exchange::rest::pagination::Cursor
+impl serde_core::ser::Serialize for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::rest::pagination::Cursor
+pub fn nexus_exchange::rest::pagination::Cursor::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct nexus_exchange::rest::Page<T>
+pub nexus_exchange::rest::Page::items: alloc::vec::Vec<T>
+pub nexus_exchange::rest::Page::next_cursor: core::option::Option<nexus_exchange::rest::pagination::Cursor>
+impl<T> nexus_exchange::rest::pagination::Page<T>
+pub fn nexus_exchange::rest::pagination::Page<T>::is_last(&self) -> bool
+pub fn nexus_exchange::rest::pagination::Page<T>::new(alloc::vec::Vec<T>, core::option::Option<nexus_exchange::rest::pagination::Cursor>) -> Self
+impl<T: core::clone::Clone> core::clone::Clone for nexus_exchange::rest::pagination::Page<T>
+pub fn nexus_exchange::rest::pagination::Page<T>::clone(&self) -> Self
+impl<T: core::cmp::Eq> core::cmp::Eq for nexus_exchange::rest::pagination::Page<T>
+impl<T: core::cmp::PartialEq> core::cmp::PartialEq for nexus_exchange::rest::pagination::Page<T>
+pub fn nexus_exchange::rest::pagination::Page<T>::eq(&self, &Self) -> bool
+impl<T: core::cmp::PartialEq> core::marker::StructuralPartialEq for nexus_exchange::rest::pagination::Page<T>
+impl<T: core::fmt::Debug> core::fmt::Debug for nexus_exchange::rest::pagination::Page<T>
+pub fn nexus_exchange::rest::pagination::Page<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct nexus_exchange::rest::PageRequest
+pub nexus_exchange::rest::PageRequest::cursor: core::option::Option<nexus_exchange::rest::pagination::Cursor>
+pub nexus_exchange::rest::PageRequest::limit: core::option::Option<u32>
+impl core::clone::Clone for nexus_exchange::rest::pagination::PageRequest
+pub fn nexus_exchange::rest::pagination::PageRequest::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::rest::pagination::PageRequest
+impl core::cmp::PartialEq for nexus_exchange::rest::pagination::PageRequest
+pub fn nexus_exchange::rest::pagination::PageRequest::eq(&self, &Self) -> bool
+impl core::default::Default for nexus_exchange::rest::pagination::PageRequest
+pub fn nexus_exchange::rest::pagination::PageRequest::default() -> Self
+impl core::fmt::Debug for nexus_exchange::rest::pagination::PageRequest
+pub fn nexus_exchange::rest::pagination::PageRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for nexus_exchange::rest::pagination::PageRequest
+pub struct nexus_exchange::rest::Paginator<T>
+impl<T> nexus_exchange::rest::pagination::Paginator<T>
+pub async fn nexus_exchange::rest::pagination::Paginator<T>::all(self) -> nexus_exchange::Result<alloc::vec::Vec<T>>
+pub fn nexus_exchange::rest::pagination::Paginator<T>::into_stream(self) -> impl futures_core::stream::Stream<Item = nexus_exchange::Result<T>> + core::marker::Send where T: core::marker::Send + 'static
+pub fn nexus_exchange::rest::pagination::Paginator<T>::max_pages(self, usize) -> Self
+pub fn nexus_exchange::rest::pagination::Paginator<T>::new<F, Fut>(F) -> Self where T: 'static, F: core::ops::function::FnMut(nexus_exchange::rest::pagination::PageRequest) -> Fut + core::marker::Send + 'static, Fut: core::future::future::Future<Output = nexus_exchange::Result<nexus_exchange::rest::pagination::Page<T>>> + core::marker::Send + 'static
+pub async fn nexus_exchange::rest::pagination::Paginator<T>::next_page(&mut self) -> nexus_exchange::Result<core::option::Option<nexus_exchange::rest::pagination::Page<T>>>
+pub fn nexus_exchange::rest::pagination::Paginator<T>::page_size(self, u32) -> Self
+pub fn nexus_exchange::rest::pagination::Paginator<T>::starting_after(self, impl core::convert::Into<nexus_exchange::rest::pagination::Cursor>) -> Self
+impl<T> core::fmt::Debug for nexus_exchange::rest::pagination::Paginator<T>
+pub fn nexus_exchange::rest::pagination::Paginator<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub const nexus_exchange::rest::LOGIN_MESSAGE: &str
+pub const nexus_exchange::rest::MAX_ACCOUNT_FUNDING_LIMIT: u32
+pub const nexus_exchange::rest::MAX_CLOSED_POSITIONS_LIMIT: u32
+pub const nexus_exchange::rest::MAX_DEPOSITS_LIMIT: u32
+pub const nexus_exchange::rest::MAX_EQUITY_HISTORY_LIMIT: u32
+pub const nexus_exchange::rest::MAX_FILLS_LIMIT: u32
+pub const nexus_exchange::rest::MAX_FUNDING_SAMPLES_LIMIT: u32
+pub const nexus_exchange::rest::MAX_ORDER_HISTORY_LIMIT: u32
+pub const nexus_exchange::rest::MAX_PORTFOLIO_HISTORY_LIMIT: u32
+pub const nexus_exchange::rest::MAX_TRADES_LIMIT: u32
+pub mod nexus_exchange::stream
+#[non_exhaustive] pub enum nexus_exchange::stream::StreamChannel
+pub nexus_exchange::stream::StreamChannel::Book(alloc::string::String)
+pub nexus_exchange::stream::StreamChannel::MarketStatus(alloc::string::String)
+pub nexus_exchange::stream::StreamChannel::Trades(alloc::string::String)
+impl nexus_exchange::stream::StreamChannel
+pub fn nexus_exchange::stream::StreamChannel::all_for(impl core::convert::Into<alloc::string::String>) -> alloc::vec::Vec<Self>
+pub fn nexus_exchange::stream::StreamChannel::book(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn nexus_exchange::stream::StreamChannel::market(&self) -> &str
+pub fn nexus_exchange::stream::StreamChannel::market_status(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn nexus_exchange::stream::StreamChannel::trades(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn nexus_exchange::stream::StreamChannel::wire_name(&self) -> alloc::string::String
+impl core::clone::Clone for nexus_exchange::stream::StreamChannel
+pub fn nexus_exchange::stream::StreamChannel::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::stream::StreamChannel
+impl core::cmp::PartialEq for nexus_exchange::stream::StreamChannel
+pub fn nexus_exchange::stream::StreamChannel::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::stream::StreamChannel
+pub fn nexus_exchange::stream::StreamChannel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for nexus_exchange::stream::StreamChannel
+pub fn nexus_exchange::stream::StreamChannel::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for nexus_exchange::stream::StreamChannel
+#[non_exhaustive] pub enum nexus_exchange::stream::StreamEvent
+pub nexus_exchange::stream::StreamEvent::Book(nexus_exchange::stream::BookSnapshot)
+pub nexus_exchange::stream::StreamEvent::Connected
+pub nexus_exchange::stream::StreamEvent::Disconnected
+pub nexus_exchange::stream::StreamEvent::Disconnected::reason: alloc::string::String
+pub nexus_exchange::stream::StreamEvent::Gap
+pub nexus_exchange::stream::StreamEvent::Gap::missed: u64
+pub nexus_exchange::stream::StreamEvent::Lagged
+pub nexus_exchange::stream::StreamEvent::Lagged::dropped: u64
+pub nexus_exchange::stream::StreamEvent::MarketHalted
+pub nexus_exchange::stream::StreamEvent::MarketHalted::market_id: alloc::string::String
+pub nexus_exchange::stream::StreamEvent::MarketHalted::reason: alloc::string::String
+pub nexus_exchange::stream::StreamEvent::MarketHalted::timestamp: u64
+pub nexus_exchange::stream::StreamEvent::MarketResumed
+pub nexus_exchange::stream::StreamEvent::MarketResumed::market_id: alloc::string::String
+pub nexus_exchange::stream::StreamEvent::MarketResumed::timestamp: u64
+pub nexus_exchange::stream::StreamEvent::Trade
+pub nexus_exchange::stream::StreamEvent::Trade::market_id: alloc::string::String
+pub nexus_exchange::stream::StreamEvent::Trade::trade: nexus_exchange::types::Trade
+pub nexus_exchange::stream::StreamEvent::Unrecognized
+pub nexus_exchange::stream::StreamEvent::Unrecognized::error: alloc::string::String
+pub nexus_exchange::stream::StreamEvent::Unrecognized::frame: serde_json::value::Value
+impl core::clone::Clone for nexus_exchange::stream::StreamEvent
+pub fn nexus_exchange::stream::StreamEvent::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::stream::StreamEvent
+pub fn nexus_exchange::stream::StreamEvent::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct nexus_exchange::stream::BookLevel
+pub nexus_exchange::stream::BookLevel::order_count: u32
+pub nexus_exchange::stream::BookLevel::price: rust_decimal::decimal::Decimal
+pub nexus_exchange::stream::BookLevel::quantity: rust_decimal::decimal::Decimal
+impl core::clone::Clone for nexus_exchange::stream::BookLevel
+pub fn nexus_exchange::stream::BookLevel::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::stream::BookLevel
+impl core::cmp::PartialEq for nexus_exchange::stream::BookLevel
+pub fn nexus_exchange::stream::BookLevel::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::stream::BookLevel
+pub fn nexus_exchange::stream::BookLevel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for nexus_exchange::stream::BookLevel
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::stream::BookLevel
+pub fn nexus_exchange::stream::BookLevel::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::stream::BookSnapshot
+pub nexus_exchange::stream::BookSnapshot::asks: alloc::vec::Vec<nexus_exchange::stream::BookLevel>
+pub nexus_exchange::stream::BookSnapshot::bids: alloc::vec::Vec<nexus_exchange::stream::BookLevel>
+pub nexus_exchange::stream::BookSnapshot::market_id: alloc::string::String
+pub nexus_exchange::stream::BookSnapshot::received_at: std::time::SystemTime
+pub nexus_exchange::stream::BookSnapshot::sequence: u64
+impl core::clone::Clone for nexus_exchange::stream::BookSnapshot
+pub fn nexus_exchange::stream::BookSnapshot::clone(&self) -> Self
+impl core::cmp::PartialEq for nexus_exchange::stream::BookSnapshot
+pub fn nexus_exchange::stream::BookSnapshot::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::stream::BookSnapshot
+pub fn nexus_exchange::stream::BookSnapshot::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for nexus_exchange::stream::BookSnapshot
+pub struct nexus_exchange::stream::MarketStream
+impl nexus_exchange::stream::MarketStream
+pub async fn nexus_exchange::stream::MarketStream::close(self)
+pub async fn nexus_exchange::stream::MarketStream::next(&mut self) -> core::option::Option<nexus_exchange::stream::StreamEvent>
+impl core::fmt::Debug for nexus_exchange::stream::MarketStream
+pub fn nexus_exchange::stream::MarketStream::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::ops::drop::Drop for nexus_exchange::stream::MarketStream
+pub fn nexus_exchange::stream::MarketStream::drop(&mut self)
+impl futures_core::stream::Stream for nexus_exchange::stream::MarketStream
+pub type nexus_exchange::stream::MarketStream::Item = nexus_exchange::stream::StreamEvent
+pub fn nexus_exchange::stream::MarketStream::poll_next(core::pin::Pin<&mut Self>, &mut core::task::wake::Context<'_>) -> core::task::poll::Poll<core::option::Option<Self::Item>>
+pub mod nexus_exchange::types
+pub use nexus_exchange::types::Decimal
+#[non_exhaustive] pub enum nexus_exchange::types::CancellationReason
+pub nexus_exchange::types::CancellationReason::Other(serde_json::value::Value)
+pub nexus_exchange::types::CancellationReason::Simple(alloc::string::String)
+pub nexus_exchange::types::CancellationReason::Tagged(serde_json::map::Map<alloc::string::String, serde_json::value::Value>)
+impl nexus_exchange::types::CancellationReason
+pub fn nexus_exchange::types::CancellationReason::cause(&self) -> core::option::Option<&str>
+pub fn nexus_exchange::types::CancellationReason::payload(&self) -> core::option::Option<&serde_json::value::Value>
+pub fn nexus_exchange::types::CancellationReason::stp_mode(&self) -> core::option::Option<&str>
+impl core::clone::Clone for nexus_exchange::types::CancellationReason
+pub fn nexus_exchange::types::CancellationReason::clone(&self) -> Self
+impl core::cmp::PartialEq for nexus_exchange::types::CancellationReason
+pub fn nexus_exchange::types::CancellationReason::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::types::CancellationReason
+pub fn nexus_exchange::types::CancellationReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for nexus_exchange::types::CancellationReason
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::CancellationReason
+pub fn nexus_exchange::types::CancellationReason::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum nexus_exchange::types::FundingDirection
+pub nexus_exchange::types::FundingDirection::Paid
+pub nexus_exchange::types::FundingDirection::Received
+impl core::clone::Clone for nexus_exchange::types::FundingDirection
+pub fn nexus_exchange::types::FundingDirection::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::types::FundingDirection
+impl core::cmp::PartialEq for nexus_exchange::types::FundingDirection
+pub fn nexus_exchange::types::FundingDirection::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::types::FundingDirection
+pub fn nexus_exchange::types::FundingDirection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for nexus_exchange::types::FundingDirection
+impl core::marker::StructuralPartialEq for nexus_exchange::types::FundingDirection
+impl serde_core::ser::Serialize for nexus_exchange::types::FundingDirection
+pub fn nexus_exchange::types::FundingDirection::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::FundingDirection
+pub fn nexus_exchange::types::FundingDirection::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum nexus_exchange::types::FundsKind
+pub nexus_exchange::types::FundsKind::Deposit
+pub nexus_exchange::types::FundsKind::Faucet
+pub nexus_exchange::types::FundsKind::Withdrawal
+impl core::clone::Clone for nexus_exchange::types::FundsKind
+pub fn nexus_exchange::types::FundsKind::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::types::FundsKind
+impl core::cmp::PartialEq for nexus_exchange::types::FundsKind
+pub fn nexus_exchange::types::FundsKind::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::types::FundsKind
+pub fn nexus_exchange::types::FundsKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for nexus_exchange::types::FundsKind
+impl core::marker::StructuralPartialEq for nexus_exchange::types::FundsKind
+impl serde_core::ser::Serialize for nexus_exchange::types::FundsKind
+pub fn nexus_exchange::types::FundsKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::FundsKind
+pub fn nexus_exchange::types::FundsKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum nexus_exchange::types::FundsStatus
+pub nexus_exchange::types::FundsStatus::Confirmed
+pub nexus_exchange::types::FundsStatus::Failed
+pub nexus_exchange::types::FundsStatus::Pending
+impl core::clone::Clone for nexus_exchange::types::FundsStatus
+pub fn nexus_exchange::types::FundsStatus::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::types::FundsStatus
+impl core::cmp::PartialEq for nexus_exchange::types::FundsStatus
+pub fn nexus_exchange::types::FundsStatus::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::types::FundsStatus
+pub fn nexus_exchange::types::FundsStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for nexus_exchange::types::FundsStatus
+impl core::marker::StructuralPartialEq for nexus_exchange::types::FundsStatus
+impl serde_core::ser::Serialize for nexus_exchange::types::FundsStatus
+pub fn nexus_exchange::types::FundsStatus::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::FundsStatus
+pub fn nexus_exchange::types::FundsStatus::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum nexus_exchange::types::MarginDirection
+pub nexus_exchange::types::MarginDirection::Add
+pub nexus_exchange::types::MarginDirection::Remove
+impl core::clone::Clone for nexus_exchange::types::MarginDirection
+pub fn nexus_exchange::types::MarginDirection::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::types::MarginDirection
+impl core::cmp::PartialEq for nexus_exchange::types::MarginDirection
+pub fn nexus_exchange::types::MarginDirection::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::types::MarginDirection
+pub fn nexus_exchange::types::MarginDirection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for nexus_exchange::types::MarginDirection
+impl core::marker::StructuralPartialEq for nexus_exchange::types::MarginDirection
+impl serde_core::ser::Serialize for nexus_exchange::types::MarginDirection
+pub fn nexus_exchange::types::MarginDirection::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::MarginDirection
+pub fn nexus_exchange::types::MarginDirection::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum nexus_exchange::types::OrderResult
+pub nexus_exchange::types::OrderResult::Placed
+pub nexus_exchange::types::OrderResult::Placed::fills: alloc::vec::Vec<serde_json::value::Value>
+pub nexus_exchange::types::OrderResult::Placed::order: nexus_exchange::types::Order
+pub nexus_exchange::types::OrderResult::Rejected
+pub nexus_exchange::types::OrderResult::Rejected::error: alloc::string::String
+pub nexus_exchange::types::OrderResult::Rejected::message: alloc::string::String
+impl nexus_exchange::types::OrderResult
+pub fn nexus_exchange::types::OrderResult::error(&self) -> core::option::Option<(&str, &str)>
+pub fn nexus_exchange::types::OrderResult::order(&self) -> core::option::Option<&nexus_exchange::types::Order>
+pub fn nexus_exchange::types::OrderResult::succeeded(&self) -> bool
+impl core::clone::Clone for nexus_exchange::types::OrderResult
+pub fn nexus_exchange::types::OrderResult::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::OrderResult
+pub fn nexus_exchange::types::OrderResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::OrderResult
+pub fn nexus_exchange::types::OrderResult::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum nexus_exchange::types::OrderType
+pub nexus_exchange::types::OrderType::Limit
+pub nexus_exchange::types::OrderType::Market
+pub nexus_exchange::types::OrderType::StopLimit
+pub nexus_exchange::types::OrderType::StopMarket
+pub nexus_exchange::types::OrderType::TakeProfitLimit
+pub nexus_exchange::types::OrderType::TakeProfitMarket
+pub nexus_exchange::types::OrderType::TrailingLimit
+pub nexus_exchange::types::OrderType::TrailingStop
+impl core::clone::Clone for nexus_exchange::types::OrderType
+pub fn nexus_exchange::types::OrderType::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::types::OrderType
+impl core::cmp::PartialEq for nexus_exchange::types::OrderType
+pub fn nexus_exchange::types::OrderType::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::types::OrderType
+pub fn nexus_exchange::types::OrderType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for nexus_exchange::types::OrderType
+impl core::marker::StructuralPartialEq for nexus_exchange::types::OrderType
+impl serde_core::ser::Serialize for nexus_exchange::types::OrderType
+pub fn nexus_exchange::types::OrderType::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::OrderType
+pub fn nexus_exchange::types::OrderType::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum nexus_exchange::types::PortfolioWindow
+pub nexus_exchange::types::PortfolioWindow::All
+pub nexus_exchange::types::PortfolioWindow::Day
+pub nexus_exchange::types::PortfolioWindow::Month
+pub nexus_exchange::types::PortfolioWindow::Week
+impl nexus_exchange::types::PortfolioWindow
+pub fn nexus_exchange::types::PortfolioWindow::as_str(self) -> &'static str
+pub fn nexus_exchange::types::PortfolioWindow::from_wire(&str) -> core::option::Option<Self>
+impl core::clone::Clone for nexus_exchange::types::PortfolioWindow
+pub fn nexus_exchange::types::PortfolioWindow::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::types::PortfolioWindow
+impl core::cmp::PartialEq for nexus_exchange::types::PortfolioWindow
+pub fn nexus_exchange::types::PortfolioWindow::eq(&self, &Self) -> bool
+impl core::default::Default for nexus_exchange::types::PortfolioWindow
+pub fn nexus_exchange::types::PortfolioWindow::default() -> Self
+impl core::fmt::Debug for nexus_exchange::types::PortfolioWindow
+pub fn nexus_exchange::types::PortfolioWindow::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for nexus_exchange::types::PortfolioWindow
+pub fn nexus_exchange::types::PortfolioWindow::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for nexus_exchange::types::PortfolioWindow
+impl core::marker::StructuralPartialEq for nexus_exchange::types::PortfolioWindow
+impl serde_core::ser::Serialize for nexus_exchange::types::PortfolioWindow
+pub fn nexus_exchange::types::PortfolioWindow::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::PortfolioWindow
+pub fn nexus_exchange::types::PortfolioWindow::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum nexus_exchange::types::SelfTradePrevention
+pub nexus_exchange::types::SelfTradePrevention::CancelNewest
+pub nexus_exchange::types::SelfTradePrevention::CancelOldest
+pub nexus_exchange::types::SelfTradePrevention::DecrementAndCancel
+impl core::clone::Clone for nexus_exchange::types::SelfTradePrevention
+pub fn nexus_exchange::types::SelfTradePrevention::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::types::SelfTradePrevention
+impl core::cmp::PartialEq for nexus_exchange::types::SelfTradePrevention
+pub fn nexus_exchange::types::SelfTradePrevention::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::types::SelfTradePrevention
+pub fn nexus_exchange::types::SelfTradePrevention::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for nexus_exchange::types::SelfTradePrevention
+impl core::marker::StructuralPartialEq for nexus_exchange::types::SelfTradePrevention
+impl serde_core::ser::Serialize for nexus_exchange::types::SelfTradePrevention
+pub fn nexus_exchange::types::SelfTradePrevention::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::SelfTradePrevention
+pub fn nexus_exchange::types::SelfTradePrevention::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum nexus_exchange::types::Side
+pub nexus_exchange::types::Side::Buy
+pub nexus_exchange::types::Side::Sell
+impl core::clone::Clone for nexus_exchange::types::Side
+pub fn nexus_exchange::types::Side::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::types::Side
+impl core::cmp::PartialEq for nexus_exchange::types::Side
+pub fn nexus_exchange::types::Side::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::types::Side
+pub fn nexus_exchange::types::Side::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for nexus_exchange::types::Side
+impl core::marker::StructuralPartialEq for nexus_exchange::types::Side
+impl serde_core::ser::Serialize for nexus_exchange::types::Side
+pub fn nexus_exchange::types::Side::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::Side
+pub fn nexus_exchange::types::Side::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum nexus_exchange::types::TimeInForce
+pub nexus_exchange::types::TimeInForce::Fok
+pub nexus_exchange::types::TimeInForce::Gtc
+pub nexus_exchange::types::TimeInForce::Ioc
+pub nexus_exchange::types::TimeInForce::PostOnly
+impl core::clone::Clone for nexus_exchange::types::TimeInForce
+pub fn nexus_exchange::types::TimeInForce::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::types::TimeInForce
+impl core::cmp::PartialEq for nexus_exchange::types::TimeInForce
+pub fn nexus_exchange::types::TimeInForce::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::types::TimeInForce
+pub fn nexus_exchange::types::TimeInForce::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for nexus_exchange::types::TimeInForce
+impl core::marker::StructuralPartialEq for nexus_exchange::types::TimeInForce
+impl serde_core::ser::Serialize for nexus_exchange::types::TimeInForce
+pub fn nexus_exchange::types::TimeInForce::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::TimeInForce
+pub fn nexus_exchange::types::TimeInForce::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct nexus_exchange::types::AccountFees
+pub nexus_exchange::types::AccountFees::discounts: alloc::vec::Vec<nexus_exchange::types::FeeDiscount>
+pub nexus_exchange::types::AccountFees::maker_fee_bps: i32
+pub nexus_exchange::types::AccountFees::schedule: alloc::string::String
+pub nexus_exchange::types::AccountFees::taker_fee_bps: i32
+pub nexus_exchange::types::AccountFees::tier: alloc::string::String
+pub nexus_exchange::types::AccountFees::volume_30d: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::AccountFees::volume_30d_estimated: bool
+impl core::clone::Clone for nexus_exchange::types::AccountFees
+pub fn nexus_exchange::types::AccountFees::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::AccountFees
+pub fn nexus_exchange::types::AccountFees::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::AccountFees
+pub fn nexus_exchange::types::AccountFees::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::AccountFunding
+pub nexus_exchange::types::AccountFunding::amount: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::AccountFunding::direction: nexus_exchange::types::FundingDirection
+pub nexus_exchange::types::AccountFunding::funding_rate: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::AccountFunding::market_id: alloc::string::String
+pub nexus_exchange::types::AccountFunding::position_size: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::AccountFunding::timestamp: i64
+impl core::clone::Clone for nexus_exchange::types::AccountFunding
+pub fn nexus_exchange::types::AccountFunding::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::AccountFunding
+pub fn nexus_exchange::types::AccountFunding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::AccountFunding
+pub fn nexus_exchange::types::AccountFunding::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct nexus_exchange::types::AccountPortfolioSummary
+pub nexus_exchange::types::AccountPortfolioSummary::available_margin: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::AccountPortfolioSummary::collateral: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::AccountPortfolioSummary::early_access_allowed: core::option::Option<bool>
+pub nexus_exchange::types::AccountPortfolioSummary::margin_used: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::AccountPortfolioSummary::open_orders_count: core::option::Option<u32>
+pub nexus_exchange::types::AccountPortfolioSummary::open_positions_count: core::option::Option<u32>
+pub nexus_exchange::types::AccountPortfolioSummary::total_equity: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::AccountPortfolioSummary::total_realized_pnl_24h: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::AccountPortfolioSummary::total_unrealized_pnl: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::AccountPortfolioSummary::total_volume_24h: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::AccountPortfolioSummary::withdrawable: core::option::Option<rust_decimal::decimal::Decimal>
+impl core::clone::Clone for nexus_exchange::types::AccountPortfolioSummary
+pub fn nexus_exchange::types::AccountPortfolioSummary::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::AccountPortfolioSummary
+pub fn nexus_exchange::types::AccountPortfolioSummary::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::AccountPortfolioSummary
+pub fn nexus_exchange::types::AccountPortfolioSummary::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct nexus_exchange::types::AccountState
+pub nexus_exchange::types::AccountState::positions: alloc::vec::Vec<nexus_exchange::types::Position>
+pub nexus_exchange::types::AccountState::summary: nexus_exchange::types::AccountPortfolioSummary
+impl core::clone::Clone for nexus_exchange::types::AccountState
+pub fn nexus_exchange::types::AccountState::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::AccountState
+pub fn nexus_exchange::types::AccountState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::AccountState
+pub fn nexus_exchange::types::AccountState::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::AccountSummary
+pub nexus_exchange::types::AccountSummary::available_margin: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::AccountSummary::balance: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::AccountSummary::collateral: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::AccountSummary::equity: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::AccountSummary::positions: alloc::vec::Vec<nexus_exchange::types::Position>
+impl core::clone::Clone for nexus_exchange::types::AccountSummary
+pub fn nexus_exchange::types::AccountSummary::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::AccountSummary
+pub fn nexus_exchange::types::AccountSummary::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::AccountSummary
+pub fn nexus_exchange::types::AccountSummary::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::AdlClosure
+pub nexus_exchange::types::AdlClosure::account_id: alloc::string::String
+pub nexus_exchange::types::AdlClosure::position_closed: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::AdlClosure::settlement_amount: rust_decimal::decimal::Decimal
+impl core::clone::Clone for nexus_exchange::types::AdlClosure
+pub fn nexus_exchange::types::AdlClosure::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::AdlClosure
+pub fn nexus_exchange::types::AdlClosure::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::AdlClosure
+pub fn nexus_exchange::types::AdlClosure::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::AdlEvent
+pub nexus_exchange::types::AdlEvent::bad_debt_absorbed_by_fund: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::AdlEvent::bankruptcy_price: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::AdlEvent::counterparty_closures: alloc::vec::Vec<nexus_exchange::types::AdlClosure>
+pub nexus_exchange::types::AdlEvent::market_id: alloc::string::String
+pub nexus_exchange::types::AdlEvent::sequence: u64
+pub nexus_exchange::types::AdlEvent::target_account: alloc::string::String
+pub nexus_exchange::types::AdlEvent::timestamp: i64
+impl core::clone::Clone for nexus_exchange::types::AdlEvent
+pub fn nexus_exchange::types::AdlEvent::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::AdlEvent
+pub fn nexus_exchange::types::AdlEvent::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::AdlEvent
+pub fn nexus_exchange::types::AdlEvent::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::AgentInfo
+pub nexus_exchange::types::AgentInfo::address: alloc::string::String
+pub nexus_exchange::types::AgentInfo::expires_at: i64
+pub nexus_exchange::types::AgentInfo::label: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::AgentInfo::registered_at: i64
+impl core::clone::Clone for nexus_exchange::types::AgentInfo
+pub fn nexus_exchange::types::AgentInfo::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::AgentInfo
+pub fn nexus_exchange::types::AgentInfo::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::AgentInfo
+pub fn nexus_exchange::types::AgentInfo::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::AgentRegistered
+pub nexus_exchange::types::AgentRegistered::agent_address: alloc::string::String
+pub nexus_exchange::types::AgentRegistered::expires_at: u64
+impl core::clone::Clone for nexus_exchange::types::AgentRegistered
+pub fn nexus_exchange::types::AgentRegistered::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::AgentRegistered
+pub fn nexus_exchange::types::AgentRegistered::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::AgentRegistered
+pub fn nexus_exchange::types::AgentRegistered::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::AmendOrder
+pub nexus_exchange::types::AmendOrder::client_order_id: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::AmendOrder::price: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::AmendOrder::quantity: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::AmendOrder::time_in_force: core::option::Option<nexus_exchange::types::TimeInForce>
+impl nexus_exchange::types::AmendOrder
+pub fn nexus_exchange::types::AmendOrder::client_order_id(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn nexus_exchange::types::AmendOrder::new() -> Self
+pub fn nexus_exchange::types::AmendOrder::price(self, rust_decimal::decimal::Decimal) -> Self
+pub fn nexus_exchange::types::AmendOrder::quantity(self, rust_decimal::decimal::Decimal) -> Self
+pub fn nexus_exchange::types::AmendOrder::time_in_force(self, nexus_exchange::types::TimeInForce) -> Self
+impl core::clone::Clone for nexus_exchange::types::AmendOrder
+pub fn nexus_exchange::types::AmendOrder::clone(&self) -> Self
+impl core::default::Default for nexus_exchange::types::AmendOrder
+pub fn nexus_exchange::types::AmendOrder::default() -> Self
+impl core::fmt::Debug for nexus_exchange::types::AmendOrder
+pub fn nexus_exchange::types::AmendOrder::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for nexus_exchange::types::AmendOrder
+pub fn nexus_exchange::types::AmendOrder::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct nexus_exchange::types::ApiKeyInfo
+pub nexus_exchange::types::ApiKeyInfo::key_id: alloc::string::String
+pub nexus_exchange::types::ApiKeyInfo::tier: alloc::string::String
+impl core::clone::Clone for nexus_exchange::types::ApiKeyInfo
+pub fn nexus_exchange::types::ApiKeyInfo::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::ApiKeyInfo
+pub fn nexus_exchange::types::ApiKeyInfo::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::ApiKeyInfo
+pub fn nexus_exchange::types::ApiKeyInfo::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::BridgeAsset
+pub nexus_exchange::types::BridgeAsset::confirmations: u32
+pub nexus_exchange::types::BridgeAsset::contract_address: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::BridgeAsset::decimals: u32
+pub nexus_exchange::types::BridgeAsset::fee: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::BridgeAsset::min_amount: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::BridgeAsset::symbol: alloc::string::String
+impl core::clone::Clone for nexus_exchange::types::BridgeAsset
+pub fn nexus_exchange::types::BridgeAsset::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::BridgeAsset
+pub fn nexus_exchange::types::BridgeAsset::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::BridgeAsset
+pub fn nexus_exchange::types::BridgeAsset::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::BridgeAssetsResponse
+pub nexus_exchange::types::BridgeAssetsResponse::chains: alloc::vec::Vec<nexus_exchange::types::BridgeChainAssets>
+impl core::clone::Clone for nexus_exchange::types::BridgeAssetsResponse
+pub fn nexus_exchange::types::BridgeAssetsResponse::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::BridgeAssetsResponse
+pub fn nexus_exchange::types::BridgeAssetsResponse::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::BridgeAssetsResponse
+pub fn nexus_exchange::types::BridgeAssetsResponse::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::BridgeChainAssets
+pub nexus_exchange::types::BridgeChainAssets::chain: alloc::string::String
+pub nexus_exchange::types::BridgeChainAssets::chain_id: core::option::Option<i64>
+pub nexus_exchange::types::BridgeChainAssets::deposit_assets: alloc::vec::Vec<nexus_exchange::types::BridgeAsset>
+pub nexus_exchange::types::BridgeChainAssets::withdraw_assets: alloc::vec::Vec<nexus_exchange::types::BridgeAsset>
+impl core::clone::Clone for nexus_exchange::types::BridgeChainAssets
+pub fn nexus_exchange::types::BridgeChainAssets::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::BridgeChainAssets
+pub fn nexus_exchange::types::BridgeChainAssets::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::BridgeChainAssets
+pub fn nexus_exchange::types::BridgeChainAssets::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::BridgeDeposit
+pub nexus_exchange::types::BridgeDeposit::account_id: alloc::string::String
+pub nexus_exchange::types::BridgeDeposit::address: alloc::string::String
+pub nexus_exchange::types::BridgeDeposit::amount: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::BridgeDeposit::asset: alloc::string::String
+pub nexus_exchange::types::BridgeDeposit::chain: alloc::string::String
+pub nexus_exchange::types::BridgeDeposit::confirmations: core::option::Option<u32>
+pub nexus_exchange::types::BridgeDeposit::created_at: i64
+pub nexus_exchange::types::BridgeDeposit::credited_at: core::option::Option<i64>
+pub nexus_exchange::types::BridgeDeposit::id: alloc::string::String
+pub nexus_exchange::types::BridgeDeposit::required_confirmations: core::option::Option<u32>
+pub nexus_exchange::types::BridgeDeposit::status: alloc::string::String
+pub nexus_exchange::types::BridgeDeposit::tx_hash: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::BridgeDeposit::updated_at: i64
+impl core::clone::Clone for nexus_exchange::types::BridgeDeposit
+pub fn nexus_exchange::types::BridgeDeposit::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::BridgeDeposit
+pub fn nexus_exchange::types::BridgeDeposit::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::BridgeDeposit
+pub fn nexus_exchange::types::BridgeDeposit::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::BridgeDepositAddress
+pub nexus_exchange::types::BridgeDepositAddress::accepts: alloc::vec::Vec<alloc::string::String>
+pub nexus_exchange::types::BridgeDepositAddress::account_id: alloc::string::String
+pub nexus_exchange::types::BridgeDepositAddress::address: alloc::string::String
+pub nexus_exchange::types::BridgeDepositAddress::chain: alloc::string::String
+pub nexus_exchange::types::BridgeDepositAddress::created_at: i64
+impl core::clone::Clone for nexus_exchange::types::BridgeDepositAddress
+pub fn nexus_exchange::types::BridgeDepositAddress::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::BridgeDepositAddress
+pub fn nexus_exchange::types::BridgeDepositAddress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::BridgeDepositAddress
+pub fn nexus_exchange::types::BridgeDepositAddress::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::CancelOnDisconnectStatus
+pub nexus_exchange::types::CancelOnDisconnectStatus::active: bool
+pub nexus_exchange::types::CancelOnDisconnectStatus::enabled: bool
+pub nexus_exchange::types::CancelOnDisconnectStatus::grace_secs: core::option::Option<i64>
+impl core::clone::Clone for nexus_exchange::types::CancelOnDisconnectStatus
+pub fn nexus_exchange::types::CancelOnDisconnectStatus::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::CancelOnDisconnectStatus
+pub fn nexus_exchange::types::CancelOnDisconnectStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::CancelOnDisconnectStatus
+pub fn nexus_exchange::types::CancelOnDisconnectStatus::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct nexus_exchange::types::ClosedPosition
+pub nexus_exchange::types::ClosedPosition::closed_at_ms: core::option::Option<i64>
+pub nexus_exchange::types::ClosedPosition::entry_price: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::ClosedPosition::exit_price: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::ClosedPosition::market_id: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::ClosedPosition::realized_pnl: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::ClosedPosition::side: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::ClosedPosition::size: core::option::Option<rust_decimal::decimal::Decimal>
+impl core::clone::Clone for nexus_exchange::types::ClosedPosition
+pub fn nexus_exchange::types::ClosedPosition::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::ClosedPosition
+pub fn nexus_exchange::types::ClosedPosition::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::ClosedPosition
+pub fn nexus_exchange::types::ClosedPosition::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::CreatedApiKey
+pub nexus_exchange::types::CreatedApiKey::key_id: alloc::string::String
+pub nexus_exchange::types::CreatedApiKey::secret: secrecy::SecretString
+pub nexus_exchange::types::CreatedApiKey::tier: core::option::Option<alloc::string::String>
+impl core::fmt::Debug for nexus_exchange::types::CreatedApiKey
+pub fn nexus_exchange::types::CreatedApiKey::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::CreatedApiKey
+pub fn nexus_exchange::types::CreatedApiKey::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::CreditResult
+pub nexus_exchange::types::CreditResult::amount: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::CreditResult::credited_today: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::CreditResult::daily_limit: rust_decimal::decimal::Decimal
+impl core::clone::Clone for nexus_exchange::types::CreditResult
+pub fn nexus_exchange::types::CreditResult::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::CreditResult
+pub fn nexus_exchange::types::CreditResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::CreditResult
+pub fn nexus_exchange::types::CreditResult::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::DepositResponse
+pub nexus_exchange::types::DepositResponse::balance: rust_decimal::decimal::Decimal
+impl core::clone::Clone for nexus_exchange::types::DepositResponse
+pub fn nexus_exchange::types::DepositResponse::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::DepositResponse
+pub fn nexus_exchange::types::DepositResponse::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::DepositResponse
+pub fn nexus_exchange::types::DepositResponse::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::DepositResult
+pub nexus_exchange::types::DepositResult::balance: rust_decimal::decimal::Decimal
+impl core::clone::Clone for nexus_exchange::types::DepositResult
+pub fn nexus_exchange::types::DepositResult::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::DepositResult
+pub fn nexus_exchange::types::DepositResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::DepositResult
+pub fn nexus_exchange::types::DepositResult::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct nexus_exchange::types::EquityPoint
+pub nexus_exchange::types::EquityPoint::equity: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::EquityPoint::timestamp_ms: core::option::Option<i64>
+impl core::clone::Clone for nexus_exchange::types::EquityPoint
+pub fn nexus_exchange::types::EquityPoint::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::EquityPoint
+pub fn nexus_exchange::types::EquityPoint::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::EquityPoint
+pub fn nexus_exchange::types::EquityPoint::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::FaucetResponse
+pub nexus_exchange::types::FaucetResponse::amount: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::FaucetResponse::available_at_ms: i64
+impl core::clone::Clone for nexus_exchange::types::FaucetResponse
+pub fn nexus_exchange::types::FaucetResponse::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::FaucetResponse
+pub fn nexus_exchange::types::FaucetResponse::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::FaucetResponse
+pub fn nexus_exchange::types::FaucetResponse::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::FeeDiscount
+pub nexus_exchange::types::FeeDiscount::fields: serde_json::map::Map<alloc::string::String, serde_json::value::Value>
+impl core::clone::Clone for nexus_exchange::types::FeeDiscount
+pub fn nexus_exchange::types::FeeDiscount::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::FeeDiscount
+pub fn nexus_exchange::types::FeeDiscount::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::FeeDiscount
+pub fn nexus_exchange::types::FeeDiscount::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::Fill
+pub nexus_exchange::types::Fill::fee: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Fill::id: alloc::string::String
+pub nexus_exchange::types::Fill::is_liquidation: bool
+pub nexus_exchange::types::Fill::market_id: alloc::string::String
+pub nexus_exchange::types::Fill::order_id: alloc::string::String
+pub nexus_exchange::types::Fill::price: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Fill::side: nexus_exchange::types::Side
+pub nexus_exchange::types::Fill::size: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Fill::taker_or_maker: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::Fill::timestamp: i64
+impl core::clone::Clone for nexus_exchange::types::Fill
+pub fn nexus_exchange::types::Fill::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::Fill
+pub fn nexus_exchange::types::Fill::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::Fill
+pub fn nexus_exchange::types::Fill::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::FundingPremiumSample
+pub nexus_exchange::types::FundingPremiumSample::premium_index: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::FundingPremiumSample::timestamp: i64
+impl core::clone::Clone for nexus_exchange::types::FundingPremiumSample
+pub fn nexus_exchange::types::FundingPremiumSample::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::FundingPremiumSample
+pub fn nexus_exchange::types::FundingPremiumSample::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::FundingPremiumSample
+pub fn nexus_exchange::types::FundingPremiumSample::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::FundingSample
+pub nexus_exchange::types::FundingSample::funding_rate: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::FundingSample::mark_price: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::FundingSample::oracle_price: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::FundingSample::premium_index: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::FundingSample::timestamp: i64
+impl core::clone::Clone for nexus_exchange::types::FundingSample
+pub fn nexus_exchange::types::FundingSample::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::FundingSample
+pub fn nexus_exchange::types::FundingSample::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::FundingSample
+pub fn nexus_exchange::types::FundingSample::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::FundsEntry
+pub nexus_exchange::types::FundsEntry::account: alloc::string::String
+pub nexus_exchange::types::FundsEntry::amount: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::FundsEntry::asset: alloc::string::String
+pub nexus_exchange::types::FundsEntry::id: i64
+pub nexus_exchange::types::FundsEntry::kind: nexus_exchange::types::FundsKind
+pub nexus_exchange::types::FundsEntry::status: nexus_exchange::types::FundsStatus
+pub nexus_exchange::types::FundsEntry::timestamp: i64
+pub nexus_exchange::types::FundsEntry::tx_hash: core::option::Option<alloc::string::String>
+impl core::clone::Clone for nexus_exchange::types::FundsEntry
+pub fn nexus_exchange::types::FundsEntry::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::FundsEntry
+pub fn nexus_exchange::types::FundsEntry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::FundsEntry
+pub fn nexus_exchange::types::FundsEntry::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::HealthStatus
+pub nexus_exchange::types::HealthStatus::services: serde_json::value::Value
+pub nexus_exchange::types::HealthStatus::status: alloc::string::String
+pub nexus_exchange::types::HealthStatus::timestamp_ms: i64
+impl core::clone::Clone for nexus_exchange::types::HealthStatus
+pub fn nexus_exchange::types::HealthStatus::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::HealthStatus
+pub fn nexus_exchange::types::HealthStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::HealthStatus
+pub fn nexus_exchange::types::HealthStatus::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::LoginResponse
+pub nexus_exchange::types::LoginResponse::address: alloc::string::String
+pub nexus_exchange::types::LoginResponse::token: secrecy::SecretString
+impl core::fmt::Debug for nexus_exchange::types::LoginResponse
+pub fn nexus_exchange::types::LoginResponse::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::LoginResponse
+pub fn nexus_exchange::types::LoginResponse::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::MarginAdjustment
+pub nexus_exchange::types::MarginAdjustment::allocated_margin: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::MarginAdjustment::collateral: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::MarginAdjustment::market_id: alloc::string::String
+impl core::clone::Clone for nexus_exchange::types::MarginAdjustment
+pub fn nexus_exchange::types::MarginAdjustment::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::MarginAdjustment
+pub fn nexus_exchange::types::MarginAdjustment::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::MarginAdjustment
+pub fn nexus_exchange::types::MarginAdjustment::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::MarkPrice
+pub nexus_exchange::types::MarkPrice::mark_price: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::MarkPrice::market_id: alloc::string::String
+impl core::clone::Clone for nexus_exchange::types::MarkPrice
+pub fn nexus_exchange::types::MarkPrice::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::MarkPrice
+pub fn nexus_exchange::types::MarkPrice::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::MarkPrice
+pub fn nexus_exchange::types::MarkPrice::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::Market
+pub nexus_exchange::types::Market::base_asset: alloc::string::String
+pub nexus_exchange::types::Market::initial_margin_rate: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Market::lot_size: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Market::maintenance_margin_rate: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Market::market_id: alloc::string::String
+pub nexus_exchange::types::Market::max_leverage: u32
+pub nexus_exchange::types::Market::max_order_size: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Market::min_order_size: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Market::quote_asset: alloc::string::String
+pub nexus_exchange::types::Market::tick_size: rust_decimal::decimal::Decimal
+impl nexus_exchange::types::Market
+pub fn nexus_exchange::types::Market::normalize_order(&self, rust_decimal::decimal::Decimal, rust_decimal::decimal::Decimal, nexus_exchange::markets::Rounding) -> core::result::Result<(rust_decimal::decimal::Decimal, rust_decimal::decimal::Decimal), nexus_exchange::markets::OrderError>
+pub fn nexus_exchange::types::Market::round_price(&self, rust_decimal::decimal::Decimal, nexus_exchange::markets::Rounding) -> rust_decimal::decimal::Decimal
+pub fn nexus_exchange::types::Market::round_size(&self, rust_decimal::decimal::Decimal, nexus_exchange::markets::Rounding) -> rust_decimal::decimal::Decimal
+pub fn nexus_exchange::types::Market::validate_order(&self, rust_decimal::decimal::Decimal, rust_decimal::decimal::Decimal) -> core::result::Result<(), nexus_exchange::markets::OrderError>
+impl core::clone::Clone for nexus_exchange::types::Market
+pub fn nexus_exchange::types::Market::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::Market
+pub fn nexus_exchange::types::Market::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::Market
+pub fn nexus_exchange::types::Market::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::MarketRiskParams
+pub nexus_exchange::types::MarketRiskParams::initial_margin_rate: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::MarketRiskParams::maintenance_margin_rate: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::MarketRiskParams::market_id: alloc::string::String
+pub nexus_exchange::types::MarketRiskParams::max_leverage: u32
+impl core::clone::Clone for nexus_exchange::types::MarketRiskParams
+pub fn nexus_exchange::types::MarketRiskParams::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::MarketRiskParams
+pub fn nexus_exchange::types::MarketRiskParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::MarketRiskParams
+pub fn nexus_exchange::types::MarketRiskParams::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::MarketStatus
+pub nexus_exchange::types::MarketStatus::adl_event_count: u64
+pub nexus_exchange::types::MarketStatus::halt_reason: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::MarketStatus::halted_at: core::option::Option<i64>
+pub nexus_exchange::types::MarketStatus::market_id: alloc::string::String
+pub nexus_exchange::types::MarketStatus::status: alloc::string::String
+impl core::clone::Clone for nexus_exchange::types::MarketStatus
+pub fn nexus_exchange::types::MarketStatus::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::MarketStatus
+pub fn nexus_exchange::types::MarketStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::MarketStatus
+pub fn nexus_exchange::types::MarketStatus::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::MarketSummary
+pub nexus_exchange::types::MarketSummary::adl_event_count: u64
+pub nexus_exchange::types::MarketSummary::halt_reason: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::MarketSummary::halted_at: core::option::Option<i64>
+pub nexus_exchange::types::MarketSummary::last_trade_price: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::MarketSummary::market_id: alloc::string::String
+pub nexus_exchange::types::MarketSummary::status: alloc::string::String
+pub nexus_exchange::types::MarketSummary::trade_count: u64
+pub nexus_exchange::types::MarketSummary::volume_24h: rust_decimal::decimal::Decimal
+impl core::clone::Clone for nexus_exchange::types::MarketSummary
+pub fn nexus_exchange::types::MarketSummary::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::MarketSummary
+pub fn nexus_exchange::types::MarketSummary::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::MarketSummary
+pub fn nexus_exchange::types::MarketSummary::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::Ohlcv(pub i64, pub rust_decimal::decimal::Decimal, pub rust_decimal::decimal::Decimal, pub rust_decimal::decimal::Decimal, pub rust_decimal::decimal::Decimal, pub rust_decimal::decimal::Decimal)
+impl nexus_exchange::types::Ohlcv
+pub fn nexus_exchange::types::Ohlcv::close(&self) -> rust_decimal::decimal::Decimal
+pub fn nexus_exchange::types::Ohlcv::high(&self) -> rust_decimal::decimal::Decimal
+pub fn nexus_exchange::types::Ohlcv::low(&self) -> rust_decimal::decimal::Decimal
+pub fn nexus_exchange::types::Ohlcv::open(&self) -> rust_decimal::decimal::Decimal
+pub fn nexus_exchange::types::Ohlcv::timestamp(&self) -> i64
+pub fn nexus_exchange::types::Ohlcv::volume(&self) -> rust_decimal::decimal::Decimal
+impl core::clone::Clone for nexus_exchange::types::Ohlcv
+pub fn nexus_exchange::types::Ohlcv::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::Ohlcv
+pub fn nexus_exchange::types::Ohlcv::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for nexus_exchange::types::Ohlcv
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::Ohlcv
+pub fn nexus_exchange::types::Ohlcv::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct nexus_exchange::types::Order
+pub nexus_exchange::types::Order::account_id: alloc::string::String
+pub nexus_exchange::types::Order::cancellation_reason: core::option::Option<nexus_exchange::types::CancellationReason>
+pub nexus_exchange::types::Order::client_order_id: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::Order::created_at: i64
+pub nexus_exchange::types::Order::filled_qty: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Order::id: alloc::string::String
+pub nexus_exchange::types::Order::limit_offset_bps: core::option::Option<u32>
+pub nexus_exchange::types::Order::market_id: alloc::string::String
+pub nexus_exchange::types::Order::max_slippage_bps: core::option::Option<u32>
+pub nexus_exchange::types::Order::order_type: nexus_exchange::types::OrderType
+pub nexus_exchange::types::Order::price: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Order::quantity: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Order::side: nexus_exchange::types::Side
+pub nexus_exchange::types::Order::status: alloc::string::String
+pub nexus_exchange::types::Order::stp: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::Order::time_in_force: nexus_exchange::types::TimeInForce
+pub nexus_exchange::types::Order::updated_at: i64
+impl core::clone::Clone for nexus_exchange::types::Order
+pub fn nexus_exchange::types::Order::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::Order
+pub fn nexus_exchange::types::Order::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::Order
+pub fn nexus_exchange::types::Order::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::OrderBook
+pub nexus_exchange::types::OrderBook::asks: alloc::vec::Vec<nexus_exchange::types::PriceLevel>
+pub nexus_exchange::types::OrderBook::bids: alloc::vec::Vec<nexus_exchange::types::PriceLevel>
+pub nexus_exchange::types::OrderBook::datetime: alloc::string::String
+pub nexus_exchange::types::OrderBook::nonce: i64
+pub nexus_exchange::types::OrderBook::symbol: alloc::string::String
+pub nexus_exchange::types::OrderBook::timestamp: i64
+impl core::clone::Clone for nexus_exchange::types::OrderBook
+pub fn nexus_exchange::types::OrderBook::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::OrderBook
+pub fn nexus_exchange::types::OrderBook::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::OrderBook
+pub fn nexus_exchange::types::OrderBook::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct nexus_exchange::types::OrderHistoryEntry
+pub nexus_exchange::types::OrderHistoryEntry::cancellation_reason: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::OrderHistoryEntry::completed_at_ms: core::option::Option<i64>
+pub nexus_exchange::types::OrderHistoryEntry::created_at_ms: core::option::Option<i64>
+pub nexus_exchange::types::OrderHistoryEntry::filled_qty: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::OrderHistoryEntry::id: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::OrderHistoryEntry::market_id: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::OrderHistoryEntry::order_type: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::OrderHistoryEntry::price: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::OrderHistoryEntry::side: core::option::Option<nexus_exchange::types::Side>
+pub nexus_exchange::types::OrderHistoryEntry::size: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::OrderHistoryEntry::status: core::option::Option<alloc::string::String>
+impl core::clone::Clone for nexus_exchange::types::OrderHistoryEntry
+pub fn nexus_exchange::types::OrderHistoryEntry::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::OrderHistoryEntry
+pub fn nexus_exchange::types::OrderHistoryEntry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::OrderHistoryEntry
+pub fn nexus_exchange::types::OrderHistoryEntry::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct nexus_exchange::types::OrderPreview
+pub nexus_exchange::types::OrderPreview::accepted: core::option::Option<bool>
+pub nexus_exchange::types::OrderPreview::expected_fill_vwap: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::OrderPreview::projected_fees: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::OrderPreview::projected_post_trade_equity: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::OrderPreview::projected_post_trade_leverage: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::OrderPreview::projected_post_trade_liquidation_price: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::OrderPreview::reject_reason: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::OrderPreview::required_initial_margin: core::option::Option<rust_decimal::decimal::Decimal>
+impl nexus_exchange::types::OrderPreview
+pub fn nexus_exchange::types::OrderPreview::is_accepted(&self) -> bool
+impl core::clone::Clone for nexus_exchange::types::OrderPreview
+pub fn nexus_exchange::types::OrderPreview::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::OrderPreview
+pub fn nexus_exchange::types::OrderPreview::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::OrderPreview
+pub fn nexus_exchange::types::OrderPreview::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct nexus_exchange::types::OrderRequest
+pub nexus_exchange::types::OrderRequest::client_order_id: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::OrderRequest::limit_offset_bps: core::option::Option<u32>
+pub nexus_exchange::types::OrderRequest::market_id: alloc::string::String
+pub nexus_exchange::types::OrderRequest::max_slippage_bps: core::option::Option<u32>
+pub nexus_exchange::types::OrderRequest::order_type: nexus_exchange::types::OrderType
+pub nexus_exchange::types::OrderRequest::price: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::OrderRequest::quantity: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::OrderRequest::reduce_only: core::option::Option<bool>
+pub nexus_exchange::types::OrderRequest::side: nexus_exchange::types::Side
+pub nexus_exchange::types::OrderRequest::stp: core::option::Option<nexus_exchange::types::SelfTradePrevention>
+pub nexus_exchange::types::OrderRequest::time_in_force: nexus_exchange::types::TimeInForce
+pub nexus_exchange::types::OrderRequest::trailing_offset_bps: core::option::Option<u32>
+pub nexus_exchange::types::OrderRequest::trigger_price: core::option::Option<rust_decimal::decimal::Decimal>
+impl nexus_exchange::types::OrderRequest
+pub fn nexus_exchange::types::OrderRequest::limit(impl core::convert::Into<alloc::string::String>, nexus_exchange::types::Side, rust_decimal::decimal::Decimal, rust_decimal::decimal::Decimal, nexus_exchange::types::TimeInForce) -> Self
+pub fn nexus_exchange::types::OrderRequest::market(impl core::convert::Into<alloc::string::String>, nexus_exchange::types::Side, rust_decimal::decimal::Decimal) -> Self
+pub fn nexus_exchange::types::OrderRequest::trailing_limit(impl core::convert::Into<alloc::string::String>, nexus_exchange::types::Side, rust_decimal::decimal::Decimal, u32, u32, nexus_exchange::types::TimeInForce) -> Self
+pub fn nexus_exchange::types::OrderRequest::with_client_order_id(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn nexus_exchange::types::OrderRequest::with_limit_offset_bps(self, u32) -> Self
+pub fn nexus_exchange::types::OrderRequest::with_max_slippage_bps(self, u32) -> Self
+pub fn nexus_exchange::types::OrderRequest::with_stp(self, nexus_exchange::types::SelfTradePrevention) -> Self
+pub fn nexus_exchange::types::OrderRequest::with_trailing_offset_bps(self, u32) -> Self
+pub fn nexus_exchange::types::OrderRequest::with_trigger_price(self, rust_decimal::decimal::Decimal) -> Self
+impl core::clone::Clone for nexus_exchange::types::OrderRequest
+pub fn nexus_exchange::types::OrderRequest::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::OrderRequest
+pub fn nexus_exchange::types::OrderRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for nexus_exchange::types::OrderRequest
+pub fn nexus_exchange::types::OrderRequest::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct nexus_exchange::types::OrderResponse
+pub nexus_exchange::types::OrderResponse::fills: alloc::vec::Vec<serde_json::value::Value>
+pub nexus_exchange::types::OrderResponse::order: nexus_exchange::types::Order
+impl core::clone::Clone for nexus_exchange::types::OrderResponse
+pub fn nexus_exchange::types::OrderResponse::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::OrderResponse
+pub fn nexus_exchange::types::OrderResponse::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::OrderResponse
+pub fn nexus_exchange::types::OrderResponse::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct nexus_exchange::types::PortfolioHistory
+pub nexus_exchange::types::PortfolioHistory::cadence_ms: i64
+pub nexus_exchange::types::PortfolioHistory::points: alloc::vec::Vec<nexus_exchange::types::PortfolioPoint>
+pub nexus_exchange::types::PortfolioHistory::window: alloc::string::String
+impl nexus_exchange::types::PortfolioHistory
+pub fn nexus_exchange::types::PortfolioHistory::window_parsed(&self) -> core::option::Option<nexus_exchange::types::PortfolioWindow>
+impl core::clone::Clone for nexus_exchange::types::PortfolioHistory
+pub fn nexus_exchange::types::PortfolioHistory::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::PortfolioHistory
+pub fn nexus_exchange::types::PortfolioHistory::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::PortfolioHistory
+pub fn nexus_exchange::types::PortfolioHistory::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct nexus_exchange::types::PortfolioPoint
+pub nexus_exchange::types::PortfolioPoint::equity: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::PortfolioPoint::pnl: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::PortfolioPoint::timestamp_ms: i64
+pub nexus_exchange::types::PortfolioPoint::volume: rust_decimal::decimal::Decimal
+impl core::clone::Clone for nexus_exchange::types::PortfolioPoint
+pub fn nexus_exchange::types::PortfolioPoint::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::PortfolioPoint
+pub fn nexus_exchange::types::PortfolioPoint::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::PortfolioPoint
+pub fn nexus_exchange::types::PortfolioPoint::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct nexus_exchange::types::Position
+pub nexus_exchange::types::Position::entry_price: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Position::funding_paid: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Position::leverage: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Position::leverage_error: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::Position::liquidation_price: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Position::margin_used: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Position::margin_used_error: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::Position::market_id: alloc::string::String
+pub nexus_exchange::types::Position::max_leverage: core::option::Option<u32>
+pub nexus_exchange::types::Position::max_leverage_error: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::Position::notional_value: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Position::notional_value_error: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::Position::realized_pnl: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Position::roe: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Position::roe_error: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::Position::side: alloc::string::String
+pub nexus_exchange::types::Position::size: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Position::unrealized_pnl: rust_decimal::decimal::Decimal
+impl core::clone::Clone for nexus_exchange::types::Position
+pub fn nexus_exchange::types::Position::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::Position
+pub fn nexus_exchange::types::Position::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::Position
+pub fn nexus_exchange::types::Position::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::PriceLevel(pub rust_decimal::decimal::Decimal, pub rust_decimal::decimal::Decimal)
+impl nexus_exchange::types::PriceLevel
+pub fn nexus_exchange::types::PriceLevel::amount(&self) -> rust_decimal::decimal::Decimal
+pub fn nexus_exchange::types::PriceLevel::price(&self) -> rust_decimal::decimal::Decimal
+impl core::clone::Clone for nexus_exchange::types::PriceLevel
+pub fn nexus_exchange::types::PriceLevel::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::PriceLevel
+pub fn nexus_exchange::types::PriceLevel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for nexus_exchange::types::PriceLevel
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::PriceLevel
+pub fn nexus_exchange::types::PriceLevel::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::RateLimitStatus
+pub nexus_exchange::types::RateLimitStatus::limit: core::option::Option<u32>
+pub nexus_exchange::types::RateLimitStatus::remaining: core::option::Option<u32>
+pub nexus_exchange::types::RateLimitStatus::reset_at_ms: core::option::Option<i64>
+pub nexus_exchange::types::RateLimitStatus::tier: alloc::string::String
+impl core::clone::Clone for nexus_exchange::types::RateLimitStatus
+pub fn nexus_exchange::types::RateLimitStatus::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::RateLimitStatus
+pub fn nexus_exchange::types::RateLimitStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::RateLimitStatus
+pub fn nexus_exchange::types::RateLimitStatus::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::StatsSnapshot
+pub nexus_exchange::types::StatsSnapshot::connected: bool
+pub nexus_exchange::types::StatsSnapshot::events_per_sec: f64
+pub nexus_exchange::types::StatsSnapshot::events_received: u64
+pub nexus_exchange::types::StatsSnapshot::fills_total: u64
+pub nexus_exchange::types::StatsSnapshot::gap_count: u64
+pub nexus_exchange::types::StatsSnapshot::health: alloc::string::String
+pub nexus_exchange::types::StatsSnapshot::highest_sequence_seen: u64
+pub nexus_exchange::types::StatsSnapshot::last_event_ms: core::option::Option<i64>
+pub nexus_exchange::types::StatsSnapshot::liquidations_total: u64
+pub nexus_exchange::types::StatsSnapshot::unique_traders_24h: core::option::Option<u64>
+pub nexus_exchange::types::StatsSnapshot::unique_traders_30d: core::option::Option<u64>
+pub nexus_exchange::types::StatsSnapshot::unique_traders_7d: core::option::Option<u64>
+pub nexus_exchange::types::StatsSnapshot::uptime_seconds: u64
+impl core::clone::Clone for nexus_exchange::types::StatsSnapshot
+pub fn nexus_exchange::types::StatsSnapshot::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::StatsSnapshot
+pub fn nexus_exchange::types::StatsSnapshot::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::StatsSnapshot
+pub fn nexus_exchange::types::StatsSnapshot::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::ThroughputSample
+pub nexus_exchange::types::ThroughputSample::fills: u64
+pub nexus_exchange::types::ThroughputSample::timestamp: i64
+impl core::clone::Clone for nexus_exchange::types::ThroughputSample
+pub fn nexus_exchange::types::ThroughputSample::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::ThroughputSample
+pub fn nexus_exchange::types::ThroughputSample::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::ThroughputSample
+pub fn nexus_exchange::types::ThroughputSample::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::Ticker
+pub nexus_exchange::types::Ticker::ask: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Ticker::ask_volume: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Ticker::base_volume: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Ticker::bid: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Ticker::bid_volume: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Ticker::change: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Ticker::close: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Ticker::datetime: alloc::string::String
+pub nexus_exchange::types::Ticker::high: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Ticker::index_price: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Ticker::info: serde_json::value::Value
+pub nexus_exchange::types::Ticker::last: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Ticker::low: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Ticker::mark_price: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Ticker::open: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Ticker::percentage: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Ticker::quote_volume: core::option::Option<rust_decimal::decimal::Decimal>
+pub nexus_exchange::types::Ticker::symbol: alloc::string::String
+pub nexus_exchange::types::Ticker::timestamp: i64
+impl core::clone::Clone for nexus_exchange::types::Ticker
+pub fn nexus_exchange::types::Ticker::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::Ticker
+pub fn nexus_exchange::types::Ticker::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::Ticker
+pub fn nexus_exchange::types::Ticker::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::TierOverride
+pub nexus_exchange::types::TierOverride::address: alloc::string::String
+pub nexus_exchange::types::TierOverride::tier: alloc::string::String
+impl core::clone::Clone for nexus_exchange::types::TierOverride
+pub fn nexus_exchange::types::TierOverride::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::TierOverride
+pub fn nexus_exchange::types::TierOverride::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::TierOverride
+pub fn nexus_exchange::types::TierOverride::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::Trade
+pub nexus_exchange::types::Trade::amount: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Trade::cost: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Trade::datetime: alloc::string::String
+pub nexus_exchange::types::Trade::id: alloc::string::String
+pub nexus_exchange::types::Trade::info: serde_json::value::Value
+pub nexus_exchange::types::Trade::is_liquidation: bool
+pub nexus_exchange::types::Trade::price: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Trade::side: nexus_exchange::types::Side
+pub nexus_exchange::types::Trade::symbol: alloc::string::String
+pub nexus_exchange::types::Trade::taker_or_maker: core::option::Option<alloc::string::String>
+pub nexus_exchange::types::Trade::timestamp: i64
+impl core::clone::Clone for nexus_exchange::types::Trade
+pub fn nexus_exchange::types::Trade::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::Trade
+pub fn nexus_exchange::types::Trade::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::Trade
+pub fn nexus_exchange::types::Trade::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::Withdrawal
+pub nexus_exchange::types::Withdrawal::amount: rust_decimal::decimal::Decimal
+pub nexus_exchange::types::Withdrawal::id: alloc::string::String
+pub nexus_exchange::types::Withdrawal::status: alloc::string::String
+pub nexus_exchange::types::Withdrawal::timestamp: i64
+impl core::clone::Clone for nexus_exchange::types::Withdrawal
+pub fn nexus_exchange::types::Withdrawal::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::Withdrawal
+pub fn nexus_exchange::types::Withdrawal::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::Withdrawal
+pub fn nexus_exchange::types::Withdrawal::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::types::WsToken
+pub nexus_exchange::types::WsToken::token: alloc::string::String
+impl core::clone::Clone for nexus_exchange::types::WsToken
+pub fn nexus_exchange::types::WsToken::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::types::WsToken
+pub fn nexus_exchange::types::WsToken::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::WsToken
+pub fn nexus_exchange::types::WsToken::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub mod nexus_exchange::ws
+pub mod nexus_exchange::ws::protocol
+#[non_exhaustive] pub enum nexus_exchange::ws::protocol::Channel
+pub nexus_exchange::ws::protocol::Channel::Balances
+pub nexus_exchange::ws::protocol::Channel::Book
+pub nexus_exchange::ws::protocol::Channel::Book::market: alloc::string::String
+pub nexus_exchange::ws::protocol::Channel::Candles
+pub nexus_exchange::ws::protocol::Channel::Candles::interval: alloc::string::String
+pub nexus_exchange::ws::protocol::Channel::Candles::market: alloc::string::String
+pub nexus_exchange::ws::protocol::Channel::Fills
+pub nexus_exchange::ws::protocol::Channel::Liquidations
+pub nexus_exchange::ws::protocol::Channel::Orders
+pub nexus_exchange::ws::protocol::Channel::Positions
+pub nexus_exchange::ws::protocol::Channel::Trades
+pub nexus_exchange::ws::protocol::Channel::Trades::market: alloc::string::String
+impl nexus_exchange::ws::protocol::Channel
+pub fn nexus_exchange::ws::protocol::Channel::book(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn nexus_exchange::ws::protocol::Channel::candles(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn nexus_exchange::ws::protocol::Channel::is_private(&self) -> bool
+pub fn nexus_exchange::ws::protocol::Channel::trades(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for nexus_exchange::ws::protocol::Channel
+pub fn nexus_exchange::ws::protocol::Channel::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::ws::protocol::Channel
+impl core::cmp::PartialEq for nexus_exchange::ws::protocol::Channel
+pub fn nexus_exchange::ws::protocol::Channel::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::ws::protocol::Channel
+pub fn nexus_exchange::ws::protocol::Channel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for nexus_exchange::ws::protocol::Channel
+pub fn nexus_exchange::ws::protocol::Channel::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for nexus_exchange::ws::protocol::Channel
+#[non_exhaustive] pub enum nexus_exchange::ws::protocol::ServerMessage
+pub nexus_exchange::ws::protocol::ServerMessage::Error
+pub nexus_exchange::ws::protocol::ServerMessage::Error::message: core::option::Option<alloc::string::String>
+pub nexus_exchange::ws::protocol::ServerMessage::Event
+pub nexus_exchange::ws::protocol::ServerMessage::Event::channel: alloc::string::String
+pub nexus_exchange::ws::protocol::ServerMessage::Event::engine_envelope: core::option::Option<nexus_exchange::ws::protocol::EngineEnvelope>
+pub nexus_exchange::ws::protocol::ServerMessage::Event::interval: core::option::Option<alloc::string::String>
+pub nexus_exchange::ws::protocol::ServerMessage::Event::market: core::option::Option<alloc::string::String>
+pub nexus_exchange::ws::protocol::ServerMessage::Event::payload: serde_json::value::Value
+pub nexus_exchange::ws::protocol::ServerMessage::Event::seq: u64
+pub nexus_exchange::ws::protocol::ServerMessage::OutOfSync
+pub nexus_exchange::ws::protocol::ServerMessage::OutOfSync::channel: alloc::string::String
+pub nexus_exchange::ws::protocol::ServerMessage::OutOfSync::market: core::option::Option<alloc::string::String>
+pub nexus_exchange::ws::protocol::ServerMessage::OutOfSync::oldest_seq: core::option::Option<u64>
+pub nexus_exchange::ws::protocol::ServerMessage::Subscribed
+pub nexus_exchange::ws::protocol::ServerMessage::Subscribed::channel: alloc::string::String
+pub nexus_exchange::ws::protocol::ServerMessage::Subscribed::interval: core::option::Option<alloc::string::String>
+pub nexus_exchange::ws::protocol::ServerMessage::Subscribed::market: core::option::Option<alloc::string::String>
+pub nexus_exchange::ws::protocol::ServerMessage::Subscribed::seq_at_join: u64
+pub nexus_exchange::ws::protocol::ServerMessage::Unsubscribed
+pub nexus_exchange::ws::protocol::ServerMessage::Unsubscribed::channel: alloc::string::String
+pub nexus_exchange::ws::protocol::ServerMessage::Unsubscribed::interval: core::option::Option<alloc::string::String>
+pub nexus_exchange::ws::protocol::ServerMessage::Unsubscribed::market: core::option::Option<alloc::string::String>
+impl core::clone::Clone for nexus_exchange::ws::protocol::ServerMessage
+pub fn nexus_exchange::ws::protocol::ServerMessage::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::ws::protocol::ServerMessage
+pub fn nexus_exchange::ws::protocol::ServerMessage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::ws::protocol::ServerMessage
+pub fn nexus_exchange::ws::protocol::ServerMessage::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct nexus_exchange::ws::protocol::EngineEnvelope
+pub nexus_exchange::ws::protocol::EngineEnvelope::emitted_at: i64
+pub nexus_exchange::ws::protocol::EngineEnvelope::epoch: u64
+pub nexus_exchange::ws::protocol::EngineEnvelope::sequence: u64
+impl core::clone::Clone for nexus_exchange::ws::protocol::EngineEnvelope
+pub fn nexus_exchange::ws::protocol::EngineEnvelope::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::ws::protocol::EngineEnvelope
+pub fn nexus_exchange::ws::protocol::EngineEnvelope::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::ws::protocol::EngineEnvelope
+pub fn nexus_exchange::ws::protocol::EngineEnvelope::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum nexus_exchange::ws::Channel
+pub nexus_exchange::ws::Channel::Balances
+pub nexus_exchange::ws::Channel::Book
+pub nexus_exchange::ws::Channel::Book::market: alloc::string::String
+pub nexus_exchange::ws::Channel::Candles
+pub nexus_exchange::ws::Channel::Candles::interval: alloc::string::String
+pub nexus_exchange::ws::Channel::Candles::market: alloc::string::String
+pub nexus_exchange::ws::Channel::Fills
+pub nexus_exchange::ws::Channel::Liquidations
+pub nexus_exchange::ws::Channel::Orders
+pub nexus_exchange::ws::Channel::Positions
+pub nexus_exchange::ws::Channel::Trades
+pub nexus_exchange::ws::Channel::Trades::market: alloc::string::String
+impl nexus_exchange::ws::protocol::Channel
+pub fn nexus_exchange::ws::protocol::Channel::book(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn nexus_exchange::ws::protocol::Channel::candles(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn nexus_exchange::ws::protocol::Channel::is_private(&self) -> bool
+pub fn nexus_exchange::ws::protocol::Channel::trades(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for nexus_exchange::ws::protocol::Channel
+pub fn nexus_exchange::ws::protocol::Channel::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::ws::protocol::Channel
+impl core::cmp::PartialEq for nexus_exchange::ws::protocol::Channel
+pub fn nexus_exchange::ws::protocol::Channel::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::ws::protocol::Channel
+pub fn nexus_exchange::ws::protocol::Channel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for nexus_exchange::ws::protocol::Channel
+pub fn nexus_exchange::ws::protocol::Channel::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for nexus_exchange::ws::protocol::Channel
+#[non_exhaustive] pub enum nexus_exchange::ws::Event
+pub nexus_exchange::ws::Event::Connected
+pub nexus_exchange::ws::Event::Disconnected(alloc::string::String)
+pub nexus_exchange::ws::Event::Lagged
+pub nexus_exchange::ws::Event::Lagged::dropped: u64
+pub nexus_exchange::ws::Event::Message(serde_json::value::Value)
+pub nexus_exchange::ws::Event::Rejected(nexus_exchange::ws::Rejection)
+impl core::clone::Clone for nexus_exchange::ws::Event
+pub fn nexus_exchange::ws::Event::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::ws::Event
+pub fn nexus_exchange::ws::Event::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum nexus_exchange::ws::ServerMessage
+pub nexus_exchange::ws::ServerMessage::Error
+pub nexus_exchange::ws::ServerMessage::Error::message: core::option::Option<alloc::string::String>
+pub nexus_exchange::ws::ServerMessage::Event
+pub nexus_exchange::ws::ServerMessage::Event::channel: alloc::string::String
+pub nexus_exchange::ws::ServerMessage::Event::engine_envelope: core::option::Option<nexus_exchange::ws::protocol::EngineEnvelope>
+pub nexus_exchange::ws::ServerMessage::Event::interval: core::option::Option<alloc::string::String>
+pub nexus_exchange::ws::ServerMessage::Event::market: core::option::Option<alloc::string::String>
+pub nexus_exchange::ws::ServerMessage::Event::payload: serde_json::value::Value
+pub nexus_exchange::ws::ServerMessage::Event::seq: u64
+pub nexus_exchange::ws::ServerMessage::OutOfSync
+pub nexus_exchange::ws::ServerMessage::OutOfSync::channel: alloc::string::String
+pub nexus_exchange::ws::ServerMessage::OutOfSync::market: core::option::Option<alloc::string::String>
+pub nexus_exchange::ws::ServerMessage::OutOfSync::oldest_seq: core::option::Option<u64>
+pub nexus_exchange::ws::ServerMessage::Subscribed
+pub nexus_exchange::ws::ServerMessage::Subscribed::channel: alloc::string::String
+pub nexus_exchange::ws::ServerMessage::Subscribed::interval: core::option::Option<alloc::string::String>
+pub nexus_exchange::ws::ServerMessage::Subscribed::market: core::option::Option<alloc::string::String>
+pub nexus_exchange::ws::ServerMessage::Subscribed::seq_at_join: u64
+pub nexus_exchange::ws::ServerMessage::Unsubscribed
+pub nexus_exchange::ws::ServerMessage::Unsubscribed::channel: alloc::string::String
+pub nexus_exchange::ws::ServerMessage::Unsubscribed::interval: core::option::Option<alloc::string::String>
+pub nexus_exchange::ws::ServerMessage::Unsubscribed::market: core::option::Option<alloc::string::String>
+impl core::clone::Clone for nexus_exchange::ws::protocol::ServerMessage
+pub fn nexus_exchange::ws::protocol::ServerMessage::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::ws::protocol::ServerMessage
+pub fn nexus_exchange::ws::protocol::ServerMessage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::ws::protocol::ServerMessage
+pub fn nexus_exchange::ws::protocol::ServerMessage::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::ws::Backoff
+impl nexus_exchange::ws::Backoff
+pub fn nexus_exchange::ws::Backoff::iter(&self) -> nexus_exchange::ws::BackoffIter
+pub fn nexus_exchange::ws::Backoff::new() -> Self
+pub fn nexus_exchange::ws::Backoff::with_initial(self, core::time::Duration) -> Self
+pub fn nexus_exchange::ws::Backoff::with_jitter(self, bool) -> Self
+pub fn nexus_exchange::ws::Backoff::with_max(self, core::time::Duration) -> Self
+pub fn nexus_exchange::ws::Backoff::with_multiplier(self, f64) -> Self
+impl core::clone::Clone for nexus_exchange::ws::Backoff
+pub fn nexus_exchange::ws::Backoff::clone(&self) -> Self
+impl core::default::Default for nexus_exchange::ws::Backoff
+pub fn nexus_exchange::ws::Backoff::default() -> Self
+impl core::fmt::Debug for nexus_exchange::ws::Backoff
+pub fn nexus_exchange::ws::Backoff::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct nexus_exchange::ws::BackoffIter
+impl nexus_exchange::ws::BackoffIter
+pub fn nexus_exchange::ws::BackoffIter::next_delay(&mut self) -> core::time::Duration
+pub fn nexus_exchange::ws::BackoffIter::reset(&mut self)
+impl core::fmt::Debug for nexus_exchange::ws::BackoffIter
+pub fn nexus_exchange::ws::BackoffIter::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct nexus_exchange::ws::EngineEnvelope
+pub nexus_exchange::ws::EngineEnvelope::emitted_at: i64
+pub nexus_exchange::ws::EngineEnvelope::epoch: u64
+pub nexus_exchange::ws::EngineEnvelope::sequence: u64
+impl core::clone::Clone for nexus_exchange::ws::protocol::EngineEnvelope
+pub fn nexus_exchange::ws::protocol::EngineEnvelope::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::ws::protocol::EngineEnvelope
+pub fn nexus_exchange::ws::protocol::EngineEnvelope::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::ws::protocol::EngineEnvelope
+pub fn nexus_exchange::ws::protocol::EngineEnvelope::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct nexus_exchange::ws::MessageStream
+impl nexus_exchange::ws::MessageStream
+pub async fn nexus_exchange::ws::MessageStream::close(self)
+pub async fn nexus_exchange::ws::MessageStream::subscribe(&self, nexus_exchange::ws::protocol::Channel) -> nexus_exchange::Result<()>
+pub async fn nexus_exchange::ws::MessageStream::unsubscribe(&self, nexus_exchange::ws::protocol::Channel) -> nexus_exchange::Result<()>
+impl core::fmt::Debug for nexus_exchange::ws::MessageStream
+pub fn nexus_exchange::ws::MessageStream::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::ops::drop::Drop for nexus_exchange::ws::MessageStream
+pub fn nexus_exchange::ws::MessageStream::drop(&mut self)
+impl futures_core::stream::Stream for nexus_exchange::ws::MessageStream
+pub type nexus_exchange::ws::MessageStream::Item = core::result::Result<nexus_exchange::ws::protocol::ServerMessage, nexus_exchange::Error>
+pub fn nexus_exchange::ws::MessageStream::poll_next(core::pin::Pin<&mut Self>, &mut core::task::wake::Context<'_>) -> core::task::poll::Poll<core::option::Option<Self::Item>>
+#[non_exhaustive] pub struct nexus_exchange::ws::Rejection
+pub nexus_exchange::ws::Rejection::code: alloc::string::String
+pub nexus_exchange::ws::Rejection::message: alloc::string::String
+pub nexus_exchange::ws::Rejection::status: u16
+impl nexus_exchange::ws::Rejection
+pub fn nexus_exchange::ws::Rejection::to_error(&self) -> nexus_exchange::Error
+impl core::clone::Clone for nexus_exchange::ws::Rejection
+pub fn nexus_exchange::ws::Rejection::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::ws::Rejection
+impl core::cmp::PartialEq for nexus_exchange::ws::Rejection
+pub fn nexus_exchange::ws::Rejection::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::ws::Rejection
+pub fn nexus_exchange::ws::Rejection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for nexus_exchange::ws::Rejection
+pub fn nexus_exchange::ws::Rejection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for nexus_exchange::ws::Rejection
+pub struct nexus_exchange::ws::Subscription
+impl nexus_exchange::ws::Subscription
+pub async fn nexus_exchange::ws::Subscription::close(self)
+pub async fn nexus_exchange::ws::Subscription::next(&mut self) -> core::option::Option<nexus_exchange::ws::Event>
+pub async fn nexus_exchange::ws::Subscription::subscribe(&self, serde_json::value::Value) -> nexus_exchange::Result<()>
+impl core::fmt::Debug for nexus_exchange::ws::Subscription
+pub fn nexus_exchange::ws::Subscription::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum nexus_exchange::Credentials
+pub nexus_exchange::Credentials::ApiKey
+pub nexus_exchange::Credentials::ApiKey::key_id: alloc::string::String
+pub nexus_exchange::Credentials::ApiKey::secret: secrecy::SecretString
+pub nexus_exchange::Credentials::Session
+pub nexus_exchange::Credentials::Session::token: secrecy::SecretString
+impl nexus_exchange::auth::Credentials
+pub fn nexus_exchange::auth::Credentials::api_key(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn nexus_exchange::auth::Credentials::into_arc(self) -> alloc::rcs::arc::Arc<dyn nexus_exchange::auth::Credential>
+pub fn nexus_exchange::auth::Credentials::session(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::fmt::Debug for nexus_exchange::auth::Credentials
+pub fn nexus_exchange::auth::Credentials::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl nexus_exchange::auth::Credential for nexus_exchange::auth::Credentials
+pub fn nexus_exchange::auth::Credentials::auth_headers(&self, &nexus_exchange::auth::SigningContext<'_>) -> nexus_exchange::Result<alloc::vec::Vec<(&'static str, alloc::string::String)>>
+pub fn nexus_exchange::auth::Credentials::write_queue(&self) -> core::option::Option<&nexus_exchange::auth::WriteQueue>
+#[non_exhaustive] pub enum nexus_exchange::Error
+pub nexus_exchange::Error::Terminal(nexus_exchange::TerminalError)
+pub nexus_exchange::Error::Transient(nexus_exchange::TransientError)
+impl nexus_exchange::Error
+pub fn nexus_exchange::Error::code(&self) -> core::option::Option<&str>
+pub fn nexus_exchange::Error::exit_code(&self) -> i32
+pub fn nexus_exchange::Error::is_retryable(&self) -> bool
+pub fn nexus_exchange::Error::retry_after(&self) -> core::option::Option<core::time::Duration>
+impl core::convert::From<nexus_exchange::TerminalError> for nexus_exchange::Error
+pub fn nexus_exchange::Error::from(nexus_exchange::TerminalError) -> Self
+impl core::convert::From<nexus_exchange::TransientError> for nexus_exchange::Error
+pub fn nexus_exchange::Error::from(nexus_exchange::TransientError) -> Self
+impl core::convert::From<nexus_exchange::markets::OrderError> for nexus_exchange::Error
+pub fn nexus_exchange::Error::from(nexus_exchange::markets::OrderError) -> Self
+impl core::convert::From<reqwest::error::Error> for nexus_exchange::Error
+pub fn nexus_exchange::Error::from(reqwest::error::Error) -> Self
+impl core::convert::From<serde_json::error::Error> for nexus_exchange::Error
+pub fn nexus_exchange::Error::from(serde_json::error::Error) -> Self
+impl core::convert::From<tungstenite::error::Error> for nexus_exchange::Error
+pub fn nexus_exchange::Error::from(tungstenite::error::Error) -> Self
+impl core::error::Error for nexus_exchange::Error
+pub fn nexus_exchange::Error::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for nexus_exchange::Error
+pub fn nexus_exchange::Error::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for nexus_exchange::Error
+pub fn nexus_exchange::Error::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum nexus_exchange::Funds
+pub nexus_exchange::Funds::Play
+pub nexus_exchange::Funds::Real
+pub nexus_exchange::Funds::Unknown
+impl nexus_exchange::Funds
+pub fn nexus_exchange::Funds::is_known_play(self) -> bool
+impl core::clone::Clone for nexus_exchange::Funds
+pub fn nexus_exchange::Funds::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::Funds
+impl core::cmp::PartialEq for nexus_exchange::Funds
+pub fn nexus_exchange::Funds::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::Funds
+pub fn nexus_exchange::Funds::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for nexus_exchange::Funds
+pub fn nexus_exchange::Funds::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for nexus_exchange::Funds
+impl core::marker::StructuralPartialEq for nexus_exchange::Funds
+#[non_exhaustive] pub enum nexus_exchange::Network
+pub nexus_exchange::Network::Custom(nexus_exchange::CustomNetwork)
+pub nexus_exchange::Network::Local
+pub nexus_exchange::Network::Mainnet
+pub nexus_exchange::Network::Testnet
+impl nexus_exchange::Network
+pub fn nexus_exchange::Network::base_url(&self) -> &str
+pub fn nexus_exchange::Network::funds(&self) -> nexus_exchange::Funds
+pub fn nexus_exchange::Network::has_faucet(&self) -> bool
+pub fn nexus_exchange::Network::label(&self) -> &str
+pub fn nexus_exchange::Network::signing_domain(&self) -> core::option::Option<nexus_exchange::SigningDomain>
+pub fn nexus_exchange::Network::ws_base(&self) -> core::option::Option<&str>
+impl nexus_exchange::Network
+pub fn nexus_exchange::Network::stream_url(&self) -> core::option::Option<&'static str>
+impl core::clone::Clone for nexus_exchange::Network
+pub fn nexus_exchange::Network::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::Network
+impl core::cmp::PartialEq for nexus_exchange::Network
+pub fn nexus_exchange::Network::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::Network
+pub fn nexus_exchange::Network::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for nexus_exchange::Network
+#[non_exhaustive] pub enum nexus_exchange::OrderError
+pub nexus_exchange::OrderError::NonPositivePrice(rust_decimal::decimal::Decimal)
+pub nexus_exchange::OrderError::NonPositiveSize(rust_decimal::decimal::Decimal)
+pub nexus_exchange::OrderError::PriceNotOnTick
+pub nexus_exchange::OrderError::PriceNotOnTick::price: rust_decimal::decimal::Decimal
+pub nexus_exchange::OrderError::PriceNotOnTick::tick_size: rust_decimal::decimal::Decimal
+pub nexus_exchange::OrderError::SizeAboveMax
+pub nexus_exchange::OrderError::SizeAboveMax::max: rust_decimal::decimal::Decimal
+pub nexus_exchange::OrderError::SizeAboveMax::size: rust_decimal::decimal::Decimal
+pub nexus_exchange::OrderError::SizeBelowMin
+pub nexus_exchange::OrderError::SizeBelowMin::min: rust_decimal::decimal::Decimal
+pub nexus_exchange::OrderError::SizeBelowMin::size: rust_decimal::decimal::Decimal
+pub nexus_exchange::OrderError::SizeNotOnLot
+pub nexus_exchange::OrderError::SizeNotOnLot::lot_size: rust_decimal::decimal::Decimal
+pub nexus_exchange::OrderError::SizeNotOnLot::size: rust_decimal::decimal::Decimal
+impl core::clone::Clone for nexus_exchange::markets::OrderError
+pub fn nexus_exchange::markets::OrderError::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::markets::OrderError
+impl core::cmp::PartialEq for nexus_exchange::markets::OrderError
+pub fn nexus_exchange::markets::OrderError::eq(&self, &Self) -> bool
+impl core::convert::From<nexus_exchange::markets::OrderError> for nexus_exchange::Error
+pub fn nexus_exchange::Error::from(nexus_exchange::markets::OrderError) -> Self
+impl core::convert::From<nexus_exchange::markets::OrderError> for nexus_exchange::TerminalError
+pub fn nexus_exchange::TerminalError::from(nexus_exchange::markets::OrderError) -> Self
+impl core::error::Error for nexus_exchange::markets::OrderError
+impl core::fmt::Debug for nexus_exchange::markets::OrderError
+pub fn nexus_exchange::markets::OrderError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for nexus_exchange::markets::OrderError
+pub fn nexus_exchange::markets::OrderError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for nexus_exchange::markets::OrderError
+pub enum nexus_exchange::Rounding
+pub nexus_exchange::Rounding::Down
+pub nexus_exchange::Rounding::Nearest
+pub nexus_exchange::Rounding::Up
+impl core::clone::Clone for nexus_exchange::markets::Rounding
+pub fn nexus_exchange::markets::Rounding::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::markets::Rounding
+impl core::cmp::PartialEq for nexus_exchange::markets::Rounding
+pub fn nexus_exchange::markets::Rounding::eq(&self, &Self) -> bool
+impl core::default::Default for nexus_exchange::markets::Rounding
+pub fn nexus_exchange::markets::Rounding::default() -> Self
+impl core::fmt::Debug for nexus_exchange::markets::Rounding
+pub fn nexus_exchange::markets::Rounding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for nexus_exchange::markets::Rounding
+impl core::marker::StructuralPartialEq for nexus_exchange::markets::Rounding
+#[non_exhaustive] pub enum nexus_exchange::TerminalError
+pub nexus_exchange::TerminalError::Auth
+pub nexus_exchange::TerminalError::Auth::code: alloc::string::String
+pub nexus_exchange::TerminalError::Auth::message: alloc::string::String
+pub nexus_exchange::TerminalError::BadRequest
+pub nexus_exchange::TerminalError::BadRequest::code: alloc::string::String
+pub nexus_exchange::TerminalError::BadRequest::message: alloc::string::String
+pub nexus_exchange::TerminalError::Credentials(alloc::string::String)
+pub nexus_exchange::TerminalError::Decode(serde_json::error::Error)
+pub nexus_exchange::TerminalError::InsufficientFunds
+pub nexus_exchange::TerminalError::InsufficientFunds::message: alloc::string::String
+pub nexus_exchange::TerminalError::InvalidOrder
+pub nexus_exchange::TerminalError::InvalidOrder::code: alloc::string::String
+pub nexus_exchange::TerminalError::InvalidOrder::message: alloc::string::String
+pub nexus_exchange::TerminalError::InvalidRequest(alloc::string::String)
+pub nexus_exchange::TerminalError::OrderValidation(nexus_exchange::markets::OrderError)
+impl core::convert::From<nexus_exchange::TerminalError> for nexus_exchange::Error
+pub fn nexus_exchange::Error::from(nexus_exchange::TerminalError) -> Self
+impl core::convert::From<nexus_exchange::markets::OrderError> for nexus_exchange::TerminalError
+pub fn nexus_exchange::TerminalError::from(nexus_exchange::markets::OrderError) -> Self
+impl core::error::Error for nexus_exchange::TerminalError
+pub fn nexus_exchange::TerminalError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for nexus_exchange::TerminalError
+pub fn nexus_exchange::TerminalError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for nexus_exchange::TerminalError
+pub fn nexus_exchange::TerminalError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum nexus_exchange::TransientError
+pub nexus_exchange::TransientError::Lagged
+pub nexus_exchange::TransientError::Lagged::dropped: u64
+pub nexus_exchange::TransientError::Network(reqwest::error::Error)
+pub nexus_exchange::TransientError::RateLimited
+pub nexus_exchange::TransientError::RateLimited::retry_after: core::option::Option<core::time::Duration>
+pub nexus_exchange::TransientError::StreamClosed
+pub nexus_exchange::TransientError::Timeout
+pub nexus_exchange::TransientError::Unavailable
+pub nexus_exchange::TransientError::Unavailable::code: alloc::string::String
+pub nexus_exchange::TransientError::Unavailable::message: alloc::string::String
+pub nexus_exchange::TransientError::Unavailable::status: u16
+pub nexus_exchange::TransientError::Ws(tungstenite::error::Error)
+impl core::convert::From<nexus_exchange::TransientError> for nexus_exchange::Error
+pub fn nexus_exchange::Error::from(nexus_exchange::TransientError) -> Self
+impl core::convert::From<tungstenite::error::Error> for nexus_exchange::TransientError
+pub fn nexus_exchange::TransientError::from(tungstenite::error::Error) -> Self
+impl core::error::Error for nexus_exchange::TransientError
+pub fn nexus_exchange::TransientError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for nexus_exchange::TransientError
+pub fn nexus_exchange::TransientError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for nexus_exchange::TransientError
+pub fn nexus_exchange::TransientError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct nexus_exchange::AgentSigner
+impl nexus_exchange::AgentSigner
+pub fn nexus_exchange::AgentSigner::address(&self) -> alloc::string::String
+pub fn nexus_exchange::AgentSigner::from_hex(impl core::convert::Into<alloc::string::String>) -> nexus_exchange::Result<Self>
+pub fn nexus_exchange::AgentSigner::into_arc(self) -> alloc::rcs::arc::Arc<dyn nexus_exchange::auth::Credential>
+impl core::fmt::Debug for nexus_exchange::AgentSigner
+pub fn nexus_exchange::AgentSigner::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl nexus_exchange::auth::Credential for nexus_exchange::AgentSigner
+pub fn nexus_exchange::AgentSigner::auth_headers(&self, &nexus_exchange::auth::SigningContext<'_>) -> nexus_exchange::Result<alloc::vec::Vec<(&'static str, alloc::string::String)>>
+pub fn nexus_exchange::AgentSigner::write_queue(&self) -> core::option::Option<&nexus_exchange::auth::WriteQueue>
+pub struct nexus_exchange::Client
+impl nexus_exchange::Client
+pub async fn nexus_exchange::Client::add_margin(&self, &str, rust_decimal::decimal::Decimal) -> nexus_exchange::Result<nexus_exchange::types::MarginAdjustment>
+pub async fn nexus_exchange::Client::adjust_margin(&self, &str, nexus_exchange::types::MarginDirection, rust_decimal::decimal::Decimal) -> nexus_exchange::Result<nexus_exchange::types::MarginAdjustment>
+pub async fn nexus_exchange::Client::amend_order(&self, &str, &str, &nexus_exchange::types::AmendOrder) -> nexus_exchange::Result<nexus_exchange::types::Order>
+pub async fn nexus_exchange::Client::cancel_all_orders(&self) -> nexus_exchange::Result<serde_json::value::Value>
+pub async fn nexus_exchange::Client::cancel_order(&self, &str, &str) -> nexus_exchange::Result<serde_json::value::Value>
+pub async fn nexus_exchange::Client::cancel_orders_for_market(&self, &str) -> nexus_exchange::Result<serde_json::value::Value>
+pub async fn nexus_exchange::Client::claim_credit(&self, core::option::Option<rust_decimal::decimal::Decimal>) -> nexus_exchange::Result<nexus_exchange::types::CreditResult>
+pub async fn nexus_exchange::Client::claim_faucet(&self) -> nexus_exchange::Result<nexus_exchange::types::FaucetResponse>
+pub async fn nexus_exchange::Client::create_api_key(&self) -> nexus_exchange::Result<nexus_exchange::types::CreatedApiKey>
+pub async fn nexus_exchange::Client::create_bridge_deposit_address(&self, &str) -> nexus_exchange::Result<nexus_exchange::types::BridgeDepositAddress>
+pub async fn nexus_exchange::Client::create_deposit(&self, rust_decimal::decimal::Decimal, core::option::Option<&str>) -> nexus_exchange::Result<nexus_exchange::types::DepositResponse>
+pub async fn nexus_exchange::Client::create_order(&self, &nexus_exchange::types::OrderRequest) -> nexus_exchange::Result<nexus_exchange::types::OrderResponse>
+pub async fn nexus_exchange::Client::create_orders(&self, &[nexus_exchange::types::OrderRequest]) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::OrderResult>>
+pub async fn nexus_exchange::Client::create_ws_token(&self) -> nexus_exchange::Result<nexus_exchange::types::WsToken>
+pub async fn nexus_exchange::Client::delete_api_key(&self, &str) -> nexus_exchange::Result<serde_json::value::Value>
+pub async fn nexus_exchange::Client::delete_tier(&self, &str) -> nexus_exchange::Result<serde_json::value::Value>
+pub async fn nexus_exchange::Client::deposit(&self, rust_decimal::decimal::Decimal) -> nexus_exchange::Result<nexus_exchange::types::DepositResult>
+pub async fn nexus_exchange::Client::edit_order(&self, &str, &str, &nexus_exchange::types::AmendOrder) -> nexus_exchange::Result<nexus_exchange::types::Order>
+pub async fn nexus_exchange::Client::fetch_account_adl_history(&self, &str, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::AdlEvent>>
+pub async fn nexus_exchange::Client::fetch_account_fees(&self) -> nexus_exchange::Result<nexus_exchange::types::AccountFees>
+pub async fn nexus_exchange::Client::fetch_account_funding(&self, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::AccountFunding>>
+pub async fn nexus_exchange::Client::fetch_account_state(&self) -> nexus_exchange::Result<nexus_exchange::types::AccountState>
+pub async fn nexus_exchange::Client::fetch_account_summary(&self) -> nexus_exchange::Result<nexus_exchange::types::AccountPortfolioSummary>
+pub async fn nexus_exchange::Client::fetch_adl_events(&self, &str, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::AdlEvent>>
+pub async fn nexus_exchange::Client::fetch_adl_history(&self, &str, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::AdlEvent>>
+pub async fn nexus_exchange::Client::fetch_agents(&self) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::AgentInfo>>
+pub async fn nexus_exchange::Client::fetch_api_keys(&self) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::ApiKeyInfo>>
+pub async fn nexus_exchange::Client::fetch_balance(&self) -> nexus_exchange::Result<nexus_exchange::types::AccountSummary>
+pub async fn nexus_exchange::Client::fetch_bridge_assets(&self) -> nexus_exchange::Result<nexus_exchange::types::BridgeAssetsResponse>
+pub async fn nexus_exchange::Client::fetch_bridge_deposit(&self, &str) -> nexus_exchange::Result<nexus_exchange::types::BridgeDeposit>
+pub async fn nexus_exchange::Client::fetch_bridge_deposit_addresses(&self) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::BridgeDepositAddress>>
+pub async fn nexus_exchange::Client::fetch_bridge_deposits(&self) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::BridgeDeposit>>
+pub async fn nexus_exchange::Client::fetch_cancel_on_disconnect(&self) -> nexus_exchange::Result<nexus_exchange::types::CancelOnDisconnectStatus>
+pub async fn nexus_exchange::Client::fetch_closed_positions(&self, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::ClosedPosition>>
+pub fn nexus_exchange::Client::fetch_closed_positions_paginated(&self) -> nexus_exchange::rest::pagination::Paginator<nexus_exchange::types::ClosedPosition>
+pub async fn nexus_exchange::Client::fetch_deposits(&self, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::FundsEntry>>
+pub async fn nexus_exchange::Client::fetch_equity_history(&self, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::EquityPoint>>
+pub fn nexus_exchange::Client::fetch_equity_history_paginated(&self) -> nexus_exchange::rest::pagination::Paginator<nexus_exchange::types::EquityPoint>
+pub async fn nexus_exchange::Client::fetch_funding_history(&self, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::AccountFunding>>
+pub async fn nexus_exchange::Client::fetch_funding_premium_samples(&self, &str, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::FundingPremiumSample>>
+pub async fn nexus_exchange::Client::fetch_funding_rate_history(&self, &str, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::FundingSample>>
+pub async fn nexus_exchange::Client::fetch_funding_samples(&self, &str, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::FundingPremiumSample>>
+pub async fn nexus_exchange::Client::fetch_mark_price(&self, &str) -> nexus_exchange::Result<nexus_exchange::types::MarkPrice>
+pub async fn nexus_exchange::Client::fetch_market_adl_events(&self, &str, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::AdlEvent>>
+pub async fn nexus_exchange::Client::fetch_market_risk_params(&self, &str) -> nexus_exchange::Result<nexus_exchange::types::MarketRiskParams>
+pub async fn nexus_exchange::Client::fetch_market_status(&self, &str) -> nexus_exchange::Result<nexus_exchange::types::MarketStatus>
+pub async fn nexus_exchange::Client::fetch_market_summaries(&self) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::MarketSummary>>
+pub async fn nexus_exchange::Client::fetch_markets(&self) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::Market>>
+pub async fn nexus_exchange::Client::fetch_markets_summary(&self) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::MarketSummary>>
+pub async fn nexus_exchange::Client::fetch_my_trades(&self, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::Fill>>
+pub fn nexus_exchange::Client::fetch_my_trades_paginated(&self) -> nexus_exchange::rest::pagination::Paginator<nexus_exchange::types::Fill>
+pub async fn nexus_exchange::Client::fetch_ohlcv(&self, &str, core::option::Option<&str>, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::Ohlcv>>
+pub async fn nexus_exchange::Client::fetch_open_orders(&self) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::Order>>
+pub async fn nexus_exchange::Client::fetch_order(&self, &str, &str) -> nexus_exchange::Result<nexus_exchange::types::Order>
+pub async fn nexus_exchange::Client::fetch_order_book(&self, &str) -> nexus_exchange::Result<nexus_exchange::types::OrderBook>
+pub async fn nexus_exchange::Client::fetch_order_history(&self, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::OrderHistoryEntry>>
+pub fn nexus_exchange::Client::fetch_order_history_paginated(&self) -> nexus_exchange::rest::pagination::Paginator<nexus_exchange::types::OrderHistoryEntry>
+pub async fn nexus_exchange::Client::fetch_orders(&self, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::OrderHistoryEntry>>
+pub fn nexus_exchange::Client::fetch_orders_paginated(&self) -> nexus_exchange::rest::pagination::Paginator<nexus_exchange::types::OrderHistoryEntry>
+pub async fn nexus_exchange::Client::fetch_portfolio_history(&self, core::option::Option<nexus_exchange::types::PortfolioWindow>, core::option::Option<u32>) -> nexus_exchange::Result<nexus_exchange::types::PortfolioHistory>
+pub async fn nexus_exchange::Client::fetch_positions(&self) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::Position>>
+pub async fn nexus_exchange::Client::fetch_positions_history(&self, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::ClosedPosition>>
+pub fn nexus_exchange::Client::fetch_positions_history_paginated(&self) -> nexus_exchange::rest::pagination::Paginator<nexus_exchange::types::ClosedPosition>
+pub async fn nexus_exchange::Client::fetch_rate_limit_status(&self) -> nexus_exchange::Result<nexus_exchange::types::RateLimitStatus>
+pub async fn nexus_exchange::Client::fetch_stats(&self) -> nexus_exchange::Result<nexus_exchange::types::StatsSnapshot>
+pub async fn nexus_exchange::Client::fetch_stats_history(&self) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::ThroughputSample>>
+pub async fn nexus_exchange::Client::fetch_status(&self) -> nexus_exchange::Result<nexus_exchange::types::HealthStatus>
+pub async fn nexus_exchange::Client::fetch_ticker(&self, &str) -> nexus_exchange::Result<nexus_exchange::types::Ticker>
+pub async fn nexus_exchange::Client::fetch_tickers(&self) -> nexus_exchange::Result<std::collections::hash::map::HashMap<alloc::string::String, nexus_exchange::types::Ticker>>
+pub async fn nexus_exchange::Client::fetch_tier_overrides(&self) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::TierOverride>>
+pub async fn nexus_exchange::Client::fetch_tiers(&self) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::TierOverride>>
+pub async fn nexus_exchange::Client::fetch_trades(&self, &str, core::option::Option<u32>) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::Trade>>
+pub fn nexus_exchange::Client::fetch_trades_paginated(&self, &str) -> nexus_exchange::Result<nexus_exchange::rest::pagination::Paginator<nexus_exchange::types::Trade>>
+pub async fn nexus_exchange::Client::fetch_trading_fees(&self) -> nexus_exchange::Result<nexus_exchange::types::AccountFees>
+pub async fn nexus_exchange::Client::fetch_withdrawals(&self) -> nexus_exchange::Result<alloc::vec::Vec<nexus_exchange::types::Withdrawal>>
+pub async fn nexus_exchange::Client::fund(&self, rust_decimal::decimal::Decimal) -> nexus_exchange::Result<nexus_exchange::types::CreditResult>
+pub async fn nexus_exchange::Client::health_check(&self) -> nexus_exchange::Result<nexus_exchange::types::HealthStatus>
+pub async fn nexus_exchange::Client::login(&self, &str) -> nexus_exchange::Result<nexus_exchange::types::LoginResponse>
+pub async fn nexus_exchange::Client::mint_web_socket_token(&self) -> nexus_exchange::Result<nexus_exchange::types::WsToken>
+pub async fn nexus_exchange::Client::preview_order(&self, &nexus_exchange::types::OrderRequest) -> nexus_exchange::Result<nexus_exchange::types::OrderPreview>
+pub async fn nexus_exchange::Client::register_agent(&self, &nexus_exchange::auth::AgentRegistration) -> nexus_exchange::Result<nexus_exchange::types::AgentRegistered>
+pub async fn nexus_exchange::Client::remove_margin(&self, &str, rust_decimal::decimal::Decimal) -> nexus_exchange::Result<nexus_exchange::types::MarginAdjustment>
+pub async fn nexus_exchange::Client::reset_account_tier(&self, &str) -> nexus_exchange::Result<serde_json::value::Value>
+pub async fn nexus_exchange::Client::revoke_agent(&self, &str) -> nexus_exchange::Result<serde_json::value::Value>
+pub async fn nexus_exchange::Client::set_account_tier(&self, &str, &str) -> nexus_exchange::Result<nexus_exchange::types::TierOverride>
+pub async fn nexus_exchange::Client::set_cancel_on_disconnect(&self, bool) -> nexus_exchange::Result<nexus_exchange::types::CancelOnDisconnectStatus>
+pub async fn nexus_exchange::Client::set_tier(&self, &str, &str) -> nexus_exchange::Result<nexus_exchange::types::TierOverride>
+pub async fn nexus_exchange::Client::sign_in(&self, &nexus_exchange::EthSigner) -> nexus_exchange::Result<nexus_exchange::types::LoginResponse>
+impl nexus_exchange::Client
+pub fn nexus_exchange::Client::base_url(&self) -> &str
+pub fn nexus_exchange::Client::new(nexus_exchange::Config) -> Self
+impl nexus_exchange::Client
+pub fn nexus_exchange::Client::connect(&self, alloc::vec::Vec<serde_json::value::Value>) -> nexus_exchange::ws::Subscription
+pub async fn nexus_exchange::Client::connect_ws(&self, alloc::vec::Vec<serde_json::value::Value>) -> nexus_exchange::Result<nexus_exchange::ws::Subscription>
+impl nexus_exchange::Client
+pub fn nexus_exchange::Client::market_stream(&self, alloc::vec::Vec<nexus_exchange::stream::StreamChannel>) -> nexus_exchange::Result<nexus_exchange::stream::MarketStream>
+pub fn nexus_exchange::Client::market_stream_at(&self, impl core::convert::Into<alloc::string::String>, alloc::vec::Vec<nexus_exchange::stream::StreamChannel>) -> nexus_exchange::Result<nexus_exchange::stream::MarketStream>
+impl nexus_exchange::Client
+pub fn nexus_exchange::Client::subscribe(&self, alloc::vec::Vec<nexus_exchange::ws::protocol::Channel>) -> nexus_exchange::Result<nexus_exchange::ws::MessageStream>
+impl core::clone::Clone for nexus_exchange::Client
+pub fn nexus_exchange::Client::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::Client
+pub fn nexus_exchange::Client::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct nexus_exchange::Config
+impl nexus_exchange::Config
+pub fn nexus_exchange::Config::agent_key(self, nexus_exchange::AgentSigner) -> Self
+pub fn nexus_exchange::Config::api_key(self, impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn nexus_exchange::Config::base_url(&self) -> &str
+pub fn nexus_exchange::Config::network(&self) -> &nexus_exchange::Network
+pub fn nexus_exchange::Config::new(nexus_exchange::Network) -> Self
+pub fn nexus_exchange::Config::session_token(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn nexus_exchange::Config::user_agent(&self) -> &str
+pub fn nexus_exchange::Config::with_base_url(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn nexus_exchange::Config::with_channel_capacity(self, usize) -> Self
+pub fn nexus_exchange::Config::with_credential(self, alloc::rcs::arc::Arc<dyn nexus_exchange::auth::Credential>) -> Self
+pub fn nexus_exchange::Config::with_nonce(self, alloc::rcs::arc::Arc<dyn nexus_exchange::auth::Nonce>) -> Self
+pub fn nexus_exchange::Config::with_rate_limit(self, nexus_exchange::RateLimit) -> Self
+pub fn nexus_exchange::Config::with_reconnect_backoff(self, nexus_exchange::ws::Backoff) -> Self
+pub fn nexus_exchange::Config::with_retry(self, nexus_exchange::RetryConfig) -> Self
+pub fn nexus_exchange::Config::with_timeout(self, core::time::Duration) -> Self
+pub fn nexus_exchange::Config::with_user_agent(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn nexus_exchange::Config::with_ws_url(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn nexus_exchange::Config::without_rate_limiter(self) -> Self
+pub fn nexus_exchange::Config::ws_url(&self) -> core::option::Option<&str>
+impl core::clone::Clone for nexus_exchange::Config
+pub fn nexus_exchange::Config::clone(&self) -> Self
+impl core::default::Default for nexus_exchange::Config
+pub fn nexus_exchange::Config::default() -> Self
+impl core::fmt::Debug for nexus_exchange::Config
+pub fn nexus_exchange::Config::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct nexus_exchange::CustomNetwork
+impl nexus_exchange::CustomNetwork
+pub fn nexus_exchange::CustomNetwork::label(&self) -> &str
+pub fn nexus_exchange::CustomNetwork::new(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>, nexus_exchange::Funds) -> nexus_exchange::Result<Self>
+pub fn nexus_exchange::CustomNetwork::with_faucet(self, bool) -> Self
+pub fn nexus_exchange::CustomNetwork::with_signing_domain(self, nexus_exchange::SigningDomain) -> Self
+pub fn nexus_exchange::CustomNetwork::with_ws_url(self, impl core::convert::Into<alloc::string::String>) -> nexus_exchange::Result<Self>
+impl core::clone::Clone for nexus_exchange::CustomNetwork
+pub fn nexus_exchange::CustomNetwork::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::CustomNetwork
+impl core::cmp::PartialEq for nexus_exchange::CustomNetwork
+pub fn nexus_exchange::CustomNetwork::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::CustomNetwork
+pub fn nexus_exchange::CustomNetwork::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for nexus_exchange::CustomNetwork
+pub struct nexus_exchange::EthSigner
+impl nexus_exchange::EthSigner
+pub fn nexus_exchange::EthSigner::address(&self) -> alloc::string::String
+pub fn nexus_exchange::EthSigner::from_hex(impl core::convert::Into<alloc::string::String>) -> nexus_exchange::Result<Self>
+pub fn nexus_exchange::EthSigner::register_agent(&self, &str, u64, u64, u64, &nexus_exchange::Network, core::option::Option<alloc::string::String>) -> nexus_exchange::Result<nexus_exchange::auth::AgentRegistration>
+pub fn nexus_exchange::EthSigner::sign_in(&self) -> nexus_exchange::Result<nexus_exchange::auth::LoginRequest>
+impl core::fmt::Debug for nexus_exchange::EthSigner
+pub fn nexus_exchange::EthSigner::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct nexus_exchange::RateLimit
+pub nexus_exchange::RateLimit::limiter_enabled: bool
+pub nexus_exchange::RateLimit::max_retries: u32
+pub nexus_exchange::RateLimit::requests_per_second: f64
+impl nexus_exchange::RateLimit
+pub fn nexus_exchange::RateLimit::new(f64) -> Self
+pub fn nexus_exchange::RateLimit::with_limiter_enabled(self, bool) -> Self
+pub fn nexus_exchange::RateLimit::with_max_retries(self, u32) -> Self
+pub fn nexus_exchange::RateLimit::with_requests_per_second(self, f64) -> Self
+impl core::clone::Clone for nexus_exchange::RateLimit
+pub fn nexus_exchange::RateLimit::clone(&self) -> Self
+impl core::default::Default for nexus_exchange::RateLimit
+pub fn nexus_exchange::RateLimit::default() -> Self
+impl core::fmt::Debug for nexus_exchange::RateLimit
+pub fn nexus_exchange::RateLimit::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct nexus_exchange::RetryConfig
+pub nexus_exchange::RetryConfig::factor: f32
+pub nexus_exchange::RetryConfig::jitter: bool
+pub nexus_exchange::RetryConfig::max_delay: core::time::Duration
+pub nexus_exchange::RetryConfig::max_retries: usize
+pub nexus_exchange::RetryConfig::max_total_delay: core::option::Option<core::time::Duration>
+pub nexus_exchange::RetryConfig::min_delay: core::time::Duration
+impl nexus_exchange::RetryConfig
+pub fn nexus_exchange::RetryConfig::disabled() -> Self
+impl core::clone::Clone for nexus_exchange::RetryConfig
+pub fn nexus_exchange::RetryConfig::clone(&self) -> Self
+impl core::default::Default for nexus_exchange::RetryConfig
+pub fn nexus_exchange::RetryConfig::default() -> Self
+impl core::fmt::Debug for nexus_exchange::RetryConfig
+pub fn nexus_exchange::RetryConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct nexus_exchange::SigningDomain
+pub nexus_exchange::SigningDomain::chain_id: core::option::Option<u64>
+pub nexus_exchange::SigningDomain::name: &'static str
+pub nexus_exchange::SigningDomain::salt: core::option::Option<[u8; 32]>
+pub nexus_exchange::SigningDomain::version: &'static str
+impl nexus_exchange::SigningDomain
+pub fn nexus_exchange::SigningDomain::new(u64) -> Self
+impl core::clone::Clone for nexus_exchange::SigningDomain
+pub fn nexus_exchange::SigningDomain::clone(&self) -> Self
+impl core::cmp::Eq for nexus_exchange::SigningDomain
+impl core::cmp::PartialEq for nexus_exchange::SigningDomain
+pub fn nexus_exchange::SigningDomain::eq(&self, &Self) -> bool
+impl core::fmt::Debug for nexus_exchange::SigningDomain
+pub fn nexus_exchange::SigningDomain::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for nexus_exchange::SigningDomain
+impl core::marker::StructuralPartialEq for nexus_exchange::SigningDomain
+#[non_exhaustive] pub struct nexus_exchange::SystemTimeNonce
+impl core::clone::Clone for nexus_exchange::auth::SystemTimeNonce
+pub fn nexus_exchange::auth::SystemTimeNonce::clone(&self) -> Self
+impl core::default::Default for nexus_exchange::auth::SystemTimeNonce
+pub fn nexus_exchange::auth::SystemTimeNonce::default() -> Self
+impl core::fmt::Debug for nexus_exchange::auth::SystemTimeNonce
+pub fn nexus_exchange::auth::SystemTimeNonce::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for nexus_exchange::auth::SystemTimeNonce
+impl nexus_exchange::auth::Nonce for nexus_exchange::auth::SystemTimeNonce
+pub fn nexus_exchange::auth::SystemTimeNonce::next(&self) -> u64
+pub struct nexus_exchange::WriteQueue(_)
+impl nexus_exchange::auth::WriteQueue
+pub fn nexus_exchange::auth::WriteQueue::new() -> Self
+impl core::default::Default for nexus_exchange::auth::WriteQueue
+pub fn nexus_exchange::auth::WriteQueue::default() -> Self
+impl core::fmt::Debug for nexus_exchange::auth::WriteQueue
+pub fn nexus_exchange::auth::WriteQueue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::panic::unwind_safe::RefUnwindSafe for nexus_exchange::auth::WriteQueue
+pub trait nexus_exchange::Credential: core::fmt::Debug + core::marker::Send + core::marker::Sync
+pub fn nexus_exchange::Credential::auth_headers(&self, &nexus_exchange::auth::SigningContext<'_>) -> nexus_exchange::Result<alloc::vec::Vec<(&'static str, alloc::string::String)>>
+pub fn nexus_exchange::Credential::write_queue(&self) -> core::option::Option<&nexus_exchange::auth::WriteQueue>
+impl nexus_exchange::auth::Credential for nexus_exchange::AgentSigner
+pub fn nexus_exchange::AgentSigner::auth_headers(&self, &nexus_exchange::auth::SigningContext<'_>) -> nexus_exchange::Result<alloc::vec::Vec<(&'static str, alloc::string::String)>>
+pub fn nexus_exchange::AgentSigner::write_queue(&self) -> core::option::Option<&nexus_exchange::auth::WriteQueue>
+impl nexus_exchange::auth::Credential for nexus_exchange::auth::Credentials
+pub fn nexus_exchange::auth::Credentials::auth_headers(&self, &nexus_exchange::auth::SigningContext<'_>) -> nexus_exchange::Result<alloc::vec::Vec<(&'static str, alloc::string::String)>>
+pub fn nexus_exchange::auth::Credentials::write_queue(&self) -> core::option::Option<&nexus_exchange::auth::WriteQueue>
+pub trait nexus_exchange::Nonce: core::fmt::Debug + core::marker::Send + core::marker::Sync
+pub fn nexus_exchange::Nonce::next(&self) -> u64
+impl nexus_exchange::auth::Nonce for nexus_exchange::auth::SystemTimeNonce
+pub fn nexus_exchange::auth::SystemTimeNonce::next(&self) -> u64
+pub type nexus_exchange::Result<T> = core::result::Result<T, nexus_exchange::Error>

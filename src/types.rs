@@ -1661,9 +1661,12 @@ pub struct OrderRequest {
     /// flip one. Omitted from the wire payload when `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reduce_only: Option<bool>,
-    /// Caller-assigned client order id, echoed back on the resulting order.
-    /// Omitted from the wire payload when `None`.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Caller-assigned idempotency key, sent as `client_id` (at most 128 bytes).
+    /// Retrying a submit with a key already used returns the order the first
+    /// request created instead of placing a second one. The venue keeps recent
+    /// keys only for a retry window, so it is not a durable uniqueness
+    /// constraint. Omitted from the wire payload when `None`.
+    #[serde(rename = "client_id", skip_serializing_if = "Option::is_none")]
     pub client_order_id: Option<String>,
     /// Trigger threshold for the triggerable, non-trailing order types
     /// ([`StopLimit`](OrderType::StopLimit), [`StopMarket`](OrderType::StopMarket),
@@ -1805,8 +1808,9 @@ impl OrderRequest {
         }
     }
 
-    /// Attach a caller-assigned client order id, consuming and returning `self`
-    /// so it chains off [`limit`](Self::limit) / [`market`](Self::market).
+    /// Attach an idempotency key (see [`client_order_id`](Self::client_order_id)),
+    /// consuming and returning `self` so it chains off [`limit`](Self::limit) /
+    /// [`market`](Self::market).
     pub fn with_client_order_id(mut self, client_order_id: impl Into<String>) -> Self {
         self.client_order_id = Some(client_order_id.into());
         self
@@ -2271,13 +2275,16 @@ pub struct MarginAdjustment {
     pub collateral: Decimal,
 }
 
-/// Fields to change on an existing order (`PUT /orders/{id}`), an atomic
+/// Fields to change on an existing order (`PATCH /orders/{id}`), an atomic
 /// server-side cancel-replace.
 ///
 /// Build one with [`AmendOrder::new`] and set only the fields you want to
 /// change; unset (`None`) fields are omitted from the request and left
 /// untouched on the order. [`Client::edit_order`](crate::Client::edit_order)
 /// rejects an amend with no changes before it leaves the client.
+///
+/// The venue amends only the price and the size. Time-in-force and the
+/// client id carry over from the original order to the replacement.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct AmendOrder {
     /// New limit price, if changing it.
@@ -2286,18 +2293,15 @@ pub struct AmendOrder {
         with = "rust_decimal::serde::str_option"
     )]
     pub price: Option<Decimal>,
-    /// New order size, if changing it.
+    /// New TOTAL order size, fills included, if changing it; sent as `size`.
+    /// It must exceed what the order has already filled, or the venue rejects
+    /// the amend with `InvalidAmend`.
     #[serde(
+        rename = "size",
         skip_serializing_if = "Option::is_none",
         with = "rust_decimal::serde::str_option"
     )]
     pub quantity: Option<Decimal>,
-    /// New time-in-force policy, if changing it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub time_in_force: Option<TimeInForce>,
-    /// New client order id to assign to the replacement order, if changing it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_order_id: Option<String>,
 }
 
 impl AmendOrder {
@@ -2312,31 +2316,16 @@ impl AmendOrder {
         self
     }
 
-    /// Set a new order size.
+    /// Set a new total order size, fills included.
     pub fn quantity(mut self, quantity: Decimal) -> Self {
         self.quantity = Some(quantity);
-        self
-    }
-
-    /// Set a new time-in-force policy.
-    pub fn time_in_force(mut self, time_in_force: TimeInForce) -> Self {
-        self.time_in_force = Some(time_in_force);
-        self
-    }
-
-    /// Assign a new client order id to the replacement order.
-    pub fn client_order_id(mut self, client_order_id: impl Into<String>) -> Self {
-        self.client_order_id = Some(client_order_id.into());
         self
     }
 
     /// Whether any field would actually change. Used to reject a no-op amend
     /// before sending it.
     pub(crate) fn has_changes(&self) -> bool {
-        self.price.is_some()
-            || self.quantity.is_some()
-            || self.time_in_force.is_some()
-            || self.client_order_id.is_some()
+        self.price.is_some() || self.quantity.is_some()
     }
 }
 

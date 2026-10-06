@@ -27,7 +27,7 @@ use nexus_exchange::{AgentSigner, Credential, Credentials};
 const METHOD: &str = "POST";
 const PATH: &str = "/orders";
 const QUERY: &str = "";
-const BODY: &[u8] = br#"{"market_id":"BTC-USDX-PERP","side":"Buy","order_type":"Limit","price":"50000","quantity":"0.1","time_in_force":"GTC","client_order_id":"bench-0000000001"}"#;
+const BODY: &[u8] = br#"{"market_id":"BTC-USDX-PERP","side":"Buy","order_type":"Limit","price":"50000","quantity":"0.1","time_in_force":"GTC","client_id":"bench-0000000001"}"#;
 const TIMESTAMP_MS: u64 = 1_776_033_900_000;
 const HMAC_KEY_ID: &str = "nx_bench";
 const HMAC_SECRET: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";

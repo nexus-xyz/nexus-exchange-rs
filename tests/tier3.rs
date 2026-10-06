@@ -101,9 +101,11 @@ async fn amend_order_puts_only_changed_fields() {
             "BTC-USDX-PERP",
         ))
         .and(header_exists("x-signature"))
-        // Only `price` and `quantity` were set: the unset fields must be absent.
+        // The engine's AmendRequest reads exactly `price` and `size` (ENG-20051:
+        // `quantity` was dropped, so the amend kept the old size). `body_json`
+        // is an exact match, so nothing else may ride along.
         .and(body_json(
-            serde_json::json!({ "price": "50500", "quantity": "0.2" }),
+            serde_json::json!({ "price": "50500", "size": "0.2" }),
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "o2", "market_id": "BTC-USDX-PERP", "side": "Buy", "order_type": "Limit",
@@ -122,7 +124,7 @@ async fn amend_order_puts_only_changed_fields() {
 }
 
 #[tokio::test]
-async fn amend_order_serializes_tif_and_client_order_id() {
+async fn amend_order_quantity_only_sends_size() {
     let server = MockServer::start().await;
     Mock::given(method("PATCH"))
         .and(path("/orders/o1"))
@@ -131,27 +133,23 @@ async fn amend_order_serializes_tif_and_client_order_id() {
             "BTC-USDX-PERP",
         ))
         .and(header_exists("x-signature"))
-        // Exercises the `time_in_force` and `client_order_id` setters: TIF
-        // serializes UPPERCASE, and only the two set fields appear in the body.
-        .and(body_json(
-            serde_json::json!({ "time_in_force": "IOC", "client_order_id": "replacement-1" }),
-        ))
+        // A size-only amend passes the no-op guard and reaches the wire as a
+        // non-empty body. Under the old `quantity` name the engine saw `{}` and
+        // answered 400 InvalidAmend.
+        .and(body_json(serde_json::json!({ "size": "0.05" })))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "o2", "market_id": "BTC-USDX-PERP", "side": "Buy", "order_type": "Limit",
-            "time_in_force": "IOC", "status": "Open", "client_order_id": "replacement-1"
+            "price": "50000", "quantity": "0.05", "time_in_force": "GTC", "status": "Open"
         })))
+        .expect(1)
         .mount(&server)
         .await;
-    let amend = AmendOrder::new()
-        .time_in_force(TimeInForce::Ioc)
-        .client_order_id("replacement-1");
+    let amend = AmendOrder::new().quantity(dec("0.05"));
     let resp = authed(server.uri())
         .edit_order("o1", "BTC-USDX-PERP", &amend)
         .await
         .unwrap();
-    assert_eq!(resp.id, "o2");
-    assert_eq!(resp.time_in_force, TimeInForce::Ioc);
-    assert_eq!(resp.client_order_id.as_deref(), Some("replacement-1"));
+    assert_eq!(resp.quantity, dec("0.05"));
 }
 
 #[tokio::test]
@@ -179,7 +177,9 @@ async fn create_orders_posts_batch_and_parses_typed_results() {
         .and(body_json(serde_json::json!([
             {
                 "market_id": "BTC-USDX-PERP", "side": "Buy", "order_type": "Limit",
-                "price": "50000", "quantity": "0.1", "time_in_force": "GTC"
+                "price": "50000", "quantity": "0.1", "time_in_force": "GTC",
+                // The batch honours the idempotency key per entry, as `client_id`.
+                "client_id": "batch-id-1"
             },
             {
                 "market_id": "ETH-USDX-PERP", "side": "Sell", "order_type": "Market",
@@ -212,7 +212,8 @@ async fn create_orders_posts_batch_and_parses_typed_results() {
             dec("50000"),
             dec("0.1"),
             TimeInForce::Gtc,
-        ),
+        )
+        .with_client_order_id("batch-id-1"),
         OrderRequest::market("ETH-USDX-PERP", Side::Sell, dec("999")),
     ];
     let results: Vec<OrderResult> = authed(server.uri()).create_orders(&orders).await.unwrap();
@@ -237,13 +238,15 @@ async fn create_orders_posts_batch_and_parses_typed_results() {
 }
 
 #[tokio::test]
-async fn create_order_with_client_order_id_serializes_field() {
+async fn create_order_with_client_order_id_sends_client_id() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/orders"))
+        // The engine reads the idempotency key as `client_id` (ENG-20051: the
+        // old `client_order_id` was dropped, so a retry placed a second order).
         .and(body_json(serde_json::json!({
             "market_id": "BTC-USDX-PERP", "side": "Buy", "order_type": "Market",
-            "quantity": "0.1", "time_in_force": "IOC", "client_order_id": "my-id-1"
+            "quantity": "0.1", "time_in_force": "IOC", "client_id": "my-id-1"
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "order": {

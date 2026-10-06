@@ -2286,6 +2286,7 @@ pub struct MarginAdjustment {
 /// The venue amends only the price and the size. Time-in-force and the
 /// client id carry over from the original order to the replacement.
 #[derive(Debug, Clone, Default, Serialize)]
+#[non_exhaustive]
 pub struct AmendOrder {
     /// New limit price, if changing it.
     #[serde(

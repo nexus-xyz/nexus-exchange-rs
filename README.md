@@ -5,9 +5,14 @@
 Official Rust SDK for the [Nexus Exchange](https://exchange.nexus.xyz) API — a
 thin, idiomatic wrapper over the public REST + WebSocket API.
 
-> **Status: in production use.** The SDK covers the public REST + WebSocket
-> surface and is what Nexus's own market-making bots trade through. The API is
-> pre-1.0 and evolves with the [spec](#api-version).
+> **Status: beta.** Pre-1.0: the API may change between minor versions. Built
+> and tested against testnet; mainnet is not live yet.
+>
+> Covers **64 of the 68 operations** in the pinned spec (`.api-version`),
+> listed in [`endpoints.txt`](./endpoints.txt) and checked against the
+> spec in CI. The four it does not wrap: the three `/bridge/wallets` operations
+> and the legacy `POST /ws-tokens`. It is what Nexus's own market-making bots
+> trade through, and it evolves with the [spec](#api-version).
 
 ## Design
 

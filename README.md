@@ -11,8 +11,9 @@ thin, idiomatic wrapper over the public REST + WebSocket API.
 > Covers **64 of the 68 operations** in the pinned spec (`.api-version`),
 > listed in [`endpoints.txt`](./endpoints.txt) and checked against the
 > spec in CI. The four it does not wrap: the three `/bridge/wallets` operations
-> and the legacy `POST /ws-tokens`. It is what Nexus's own market-making bots
-> trade through, and it evolves with the [spec](#api-version).
+> and the legacy `POST /ws-tokens`. The Nexus CLI
+> ([`nexus-exchange-cli`](https://github.com/nexus-xyz/nexus-exchange-cli)) is
+> built on it, and it evolves with the [spec](#api-version).
 
 ## Design
 

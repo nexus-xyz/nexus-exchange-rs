@@ -177,23 +177,37 @@ def published_version(registry, package):
     raise CannotDecide(f"unknown registry {registry!r}")
 
 
+def read_text(path, what):
+    """A file the verdict needs. One that cannot be read stops the verdict; it is not a crash."""
+    try:
+        return Path(path).read_text()
+    except OSError as err:
+        raise CannotDecide(f"cannot read {what} {path}: {err}") from None
+
+
 def manifest_version(path):
     path = Path(path)
-    if path.name == "package.json":
-        return json.loads(path.read_text())["version"]
+    text = read_text(path, "the manifest")
     try:
-        import tomllib  # 3.11+; the gate runs on the runner's python3, not the SDK's test matrix
-    except ImportError:
-        raise CannotDecide(
-            f"reading {path.name} needs Python 3.11+ (tomllib); this is {sys.version.split()[0]}. "
-            "Run the gate with python3.11 or newer"
-        ) from None
+        if path.name == "package.json":
+            return json.loads(text)["version"]
+        try:
+            import tomllib  # 3.11+; the gate runs on the runner's python3, not the SDK's test matrix
+        except ImportError:
+            raise CannotDecide(
+                f"reading {path.name} needs Python 3.11+ (tomllib); this is {sys.version.split()[0]}. "
+                "Run the gate with python3.11 or newer"
+            ) from None
 
-    data = tomllib.loads(path.read_text())
-    if path.name == "Cargo.toml":
-        return data["package"]["version"]
-    if path.name == "pyproject.toml":
-        return data["project"]["version"]
+        data = tomllib.loads(text)
+        if path.name == "Cargo.toml":
+            return data["package"]["version"]
+        if path.name == "pyproject.toml":
+            return data["project"]["version"]
+    except (KeyError, TypeError, ValueError) as err:
+        # Not parseable, or no literal version (a Cargo.toml with `version.workspace = true` lands
+        # in parse_version as a table and stops there). Either way a person has to look.
+        raise CannotDecide(f"{path} has no readable version: {err!r}") from None
     raise CannotDecide(f"no version reader for {path.name}")
 
 
@@ -306,20 +320,22 @@ def run(args):
 
         tag = f"{args.tag_prefix}{fmt(published)}"
         old_pin = args.published_pin or pin_at_tag(tag, args.pin_file)
-        new_pin = args.proposed_pin or read_pin(Path(args.pin_file).read_text(), args.pin_file)
+        new_pin = args.proposed_pin or read_pin(read_text(args.pin_file, "the spec pin"), args.pin_file)
         result.update(published_pin=old_pin, proposed_pin=new_pin)
 
         if not args.surface_file:
             result["surface_verdict"] = "not-graded"
         else:
             if args.published_surface is not None:
-                published_text = Path(args.published_surface).read_text() if args.published_surface else None
+                published_text = (read_text(args.published_surface, "the published snapshot")
+                                  if args.published_surface else None)
             else:
                 published_text = surface_at_tag(tag, args.surface_file)
             branch = Path(args.surface_file)
             if not branch.is_file():
-                raise CannotDecide(f"{args.surface_file} is missing on this branch; prepublish-surface writes it")
-            verdict, removed, added = grade_surface(published_text, branch.read_text())
+                raise CannotDecide(f"{args.surface_file} is missing on this branch; "
+                                   "scripts/release_gate/public_api.sh --write writes it")
+            verdict, removed, added = grade_surface(published_text, read_text(branch, "the snapshot"))
             result.update(surface_verdict=verdict, surface_removed=removed, surface_added=added)
 
         if old_pin == new_pin and not (args.old_spec or args.new_spec):

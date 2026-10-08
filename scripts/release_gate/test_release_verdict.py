@@ -225,6 +225,48 @@ class WithoutOasdiff(unittest.TestCase):
         code, r = gate(*SAME_PIN, "--proposed-version", "0.11.2", "--surface-file", "/nonexistent/public-api.txt")
         self.assertEqual((code, r["outcome"]), (2, "could-not-classify"))
 
+    # A file the verdict needs and cannot read is could-not-classify, with its reason, and never
+    # a traceback: a crash exits 1, which is the code for "the version does not fit".
+    def test_a_missing_manifest_cannot_decide(self):
+        code, r = gate(*SAME_PIN, "--manifest", "/nonexistent/Cargo.toml")
+        self.assertEqual((code, r["outcome"]), (2, "could-not-classify"))
+        self.assertIn("/nonexistent/Cargo.toml", r["reason"])
+
+    def test_a_manifest_without_a_literal_version_cannot_decide(self):
+        cases = {
+            "Cargo.toml": '[package]\nname = "x"\nversion.workspace = true\n',
+            "pyproject.toml": '[tool.x]\ny = 1\n',
+            "package.json": '{"name": "x"}',
+        }
+        for name, text in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as d:
+                manifest = Path(d, name)
+                manifest.write_text(text)
+                code, r = gate(*SAME_PIN, "--manifest", str(manifest))
+                self.assertEqual((code, r["outcome"]), (2, "could-not-classify"))
+
+    def test_a_manifest_that_does_not_parse_cannot_decide(self):
+        for name in ("Cargo.toml", "package.json"):
+            with self.subTest(name), tempfile.TemporaryDirectory() as d:
+                manifest = Path(d, name)
+                manifest.write_text("not = [valid")
+                code, r = gate(*SAME_PIN, "--manifest", str(manifest))
+                self.assertEqual((code, r["outcome"]), (2, "could-not-classify"))
+
+    def test_a_missing_pin_file_cannot_decide(self):
+        code, r = gate("--published-version", "0.11.1", "--proposed-version", "0.11.2",
+                       "--published-pin", "v0.8.1", "--pin-file", "/nonexistent/.api-version")
+        self.assertEqual((code, r["outcome"]), (2, "could-not-classify"))
+        self.assertIn("/nonexistent/.api-version", r["reason"])
+
+    def test_a_missing_published_snapshot_file_cannot_decide(self):
+        code, r = gate(*SAME_PIN, "--proposed-version", "0.11.2", "--published-surface", "/nonexistent/old.txt")
+        self.assertEqual((code, r["outcome"]), (2, "could-not-classify"))
+
+    def test_report_mode_exits_zero_on_an_unreadable_input_and_still_says_so(self):
+        code, r = gate(*SAME_PIN, "--report", "--manifest", "/nonexistent/Cargo.toml")
+        self.assertEqual((code, r["outcome"]), (0, "could-not-classify"))
+
     def test_a_package_never_published_passes(self):
         code, r = gate("--published-version", "", "--proposed-version", "0.1.0")
         self.assertEqual((code, r["outcome"]), (0, "pass"))

@@ -126,7 +126,9 @@ jobs:
           tar -xz -C "$RUNNER_TEMP" -f "$RUNNER_TEMP/oasdiff.tar.gz" oasdiff
           echo "OASDIFF=$RUNNER_TEMP/oasdiff" >> "$GITHUB_ENV"
       # The gate's own tests first, against the binary just installed: a broken gate fails as a
-      # broken gate, and a vendored file that drifted from the monorepo fails here.
+      # broken gate, and a vendored file edited in this repo fails here, because its sha256 no
+      # longer matches the one recorded in release_verdict.py. A change to the monorepo's copy is
+      # not seen from here: VENDORED.md says how to refresh.
       - name: Self-test the gate
         run: python3 scripts/release_gate/test_release_verdict.py
       - name: Version proposed vs the spec change since the last publish

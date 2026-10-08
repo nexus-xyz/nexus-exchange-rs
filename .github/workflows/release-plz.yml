@@ -100,7 +100,7 @@ jobs:
         with:
           fetch-depth: 0
           # Prefer a real PAT / GitHub App token so release-plz's release PRs are
-          # authored by that identity and natively trigger the required CI checks.
+          # authored by that identity and their checks start without a click.
           # Falls back to the default GITHUB_TOKEN so this workflow is safe to
           # merge BEFORE the RELEASE_PLZ_TOKEN secret exists.
           token: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
@@ -112,10 +112,13 @@ jobs:
         env:
           # Once a RELEASE_PLZ_TOKEN (a fine-grained PAT or GitHub App token with
           # contents + pull-requests write) is added as a repo secret, release-plz's
-          # PRs will be opened as that identity and trigger required CI natively —
-          # eliminating the manual empty-commit hack used to kick CI today. Until
-          # then this falls back to the default token (release PRs open, but do not
-          # trigger required checks on their own).
+          # PRs will be opened as that identity and their checks will start on
+          # their own. Until then this falls back to the default token. In this
+          # repo that does create the release PR's runs, but every one is parked
+          # in `action_required` until someone clicks "Approve and run workflows"
+          # on the PR, after each refresh of the PR (seen on #175: CI, Security
+          # and Spec drift at 2026-10-08T01:11Z). The pre-publish checks wait on
+          # the same click; pre-publish.yml and CONTRIBUTING.md say so.
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
           # As in release-plz's quickstart. `release-pr` never publishes.
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

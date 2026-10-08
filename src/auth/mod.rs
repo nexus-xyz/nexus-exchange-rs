@@ -19,8 +19,8 @@
 //!   request. Defaults to [`SystemTimeNonce`]; pluggable for clock-skew
 //!   correction or deterministic tests.
 //! - [`EthSigner`] — an EVM wallet key that produces the EIP-191 `signIn` and
-//!   EIP-712 `registerAgent` payloads. The agent key registered this way then
-//!   signs requests through [`AgentSigner`].
+//!   EIP-712 `registerAgent` / `revokeAgent` payloads. The agent key registered
+//!   this way then signs requests through [`AgentSigner`].
 //!
 //! Every secret lives in a [`secrecy::SecretString`], and this module signs —
 //! it never stores sessions, refreshes tokens, or otherwise manages state.
@@ -33,7 +33,7 @@ pub(crate) mod eth;
 mod agent;
 
 pub use agent::AgentSigner;
-pub use eth::{AgentRegistration, EthSigner, LoginRequest, SIGN_IN_MESSAGE};
+pub use eth::{AgentRegistration, AgentRevocation, EthSigner, LoginRequest, SIGN_IN_MESSAGE};
 
 use std::fmt;
 use std::sync::Arc;

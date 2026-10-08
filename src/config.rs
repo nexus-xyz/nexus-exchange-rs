@@ -55,14 +55,15 @@ const DEFAULT_WS_CHANNEL_CAPACITY: usize = 1024;
 /// takes `chain_id` as an explicit argument and has no default — there is no
 /// safe value for the SDK to supply on the caller's behalf.
 ///
-/// # `salt` binds `RegisterAgent` to its network
+/// # `salt` binds agent management to its network
 ///
 /// [`salt`](Self::salt) is `keccak256(network name)` on each built-in network,
 /// as published in the spec's `x-nexus-networks[*].signing_domain`. The server
-/// salts only the `RegisterAgent` domain with it (ENG-15643), so a registration
-/// signed for testnet does not verify on mainnet; `RevokeAgent` and
-/// `WithdrawIntent` stay unsalted server-side. A [`CustomNetwork`] names no
-/// network and so has no salt, and agent registration refuses to sign there.
+/// salts the agent-management domain with it (`RegisterAgent`, `ListAgents`,
+/// `RenameAgent`, `RevokeAgentKey`; ENG-15643), so a registration or
+/// revocation signed for testnet does not verify on mainnet; `WithdrawIntent`
+/// stays unsalted server-side. A [`CustomNetwork`] names no network and so has
+/// no salt, and agent registration and revocation refuse to sign there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SigningDomain {
@@ -74,7 +75,7 @@ pub struct SigningDomain {
     /// built-in network; a [`CustomNetwork`] may supply one. See the type-level
     /// note: do not substitute a default.
     pub chain_id: Option<u64>,
-    /// EIP-712 domain `salt` for `RegisterAgent`: `keccak256(network name)` on
+    /// EIP-712 domain `salt` for agent management: `keccak256(network name)` on
     /// a built-in network, `None` on a [`CustomNetwork`]. See the type-level
     /// note.
     pub salt: Option<[u8; 32]>,

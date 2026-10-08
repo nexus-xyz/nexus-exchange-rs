@@ -2,12 +2,13 @@
 //!
 //! `POST /auth/login` is unauthenticated and yields the session token. `/keys`
 //! create/delete use that session bearer token (spec `bearerAuth`); `/agents`
-//! list/revoke use HMAC API-key signing (`hmacAuth`). The tests assert the
-//! right credential lands on the wire and that caller-supplied path ids are
-//! confined to a single, encoded segment.
+//! list uses HMAC API-key signing (`hmacAuth`), and revoke only the owner
+//! wallet's signature (`walletSignature`). The tests assert the right credential
+//! lands on the wire and that caller-supplied path ids are confined to a single,
+//! encoded segment.
 
 use nexus_exchange::rest::LOGIN_MESSAGE;
-use nexus_exchange::{Client, Config, Error, ExposeSecret};
+use nexus_exchange::{Client, Config, Error, EthSigner, ExposeSecret, Network};
 use wiremock::matchers::{body_json, body_string, header, header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -132,17 +133,43 @@ async fn fetch_agents_is_hmac_signed_and_parses_camel_case() {
 }
 
 #[tokio::test]
-async fn revoke_agent_is_hmac_signed_delete_with_no_body() {
+async fn revoke_agent_sends_only_the_wallet_headers() {
     let server = MockServer::start().await;
+    let revocation =
+        EthSigner::from_hex("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+            .unwrap()
+            .revoke_agent(
+                "0xABABABABABABABABABABABABABABABABABABABAB",
+                1_790_000_000_000,
+                20_056,
+                &Network::Testnet,
+            )
+            .unwrap();
     Mock::given(method("DELETE"))
-        .and(path("/agents/0xagent"))
-        .and(header_exists("x-signature"))
+        .and(path("/agents/0xabababababababababababababababababababab"))
+        .and(header(
+            "x-wallet-account",
+            "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        ))
+        .and(header("x-wallet-nonce", "1790000000000"))
+        .and(header("x-wallet-signature", revocation.signature.as_str()))
+        .and(header("x-wallet-chain-id", "20056"))
         .and(body_string(""))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "ok": true })))
+        .expect(2)
         .mount(&server)
         .await;
 
-    hmac(server.uri()).revoke_agent("0xagent").await.unwrap();
+    // No credential is needed, and a configured one is not attached: the
+    // server takes only the wallet signature on a revoke.
+    anon(server.uri()).revoke_agent(&revocation).await.unwrap();
+    hmac(server.uri()).revoke_agent(&revocation).await.unwrap();
+
+    for request in server.received_requests().await.unwrap() {
+        for name in ["x-api-key", "x-signature", "x-timestamp", "authorization"] {
+            assert!(!request.headers.contains_key(name), "{name} sent on revoke");
+        }
+    }
 }
 
 #[tokio::test]
@@ -161,10 +188,6 @@ async fn key_and_agent_endpoints_require_credentials() {
     ));
     assert!(matches!(
         client.fetch_agents().await.unwrap_err(),
-        Error::Terminal(nexus_exchange::TerminalError::Credentials(_))
-    ));
-    assert!(matches!(
-        client.revoke_agent("0xagent").await.unwrap_err(),
         Error::Terminal(nexus_exchange::TerminalError::Credentials(_))
     ));
 }

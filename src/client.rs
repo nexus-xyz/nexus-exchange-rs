@@ -299,6 +299,26 @@ impl Client {
         self.handle(req.send().await?).await
     }
 
+    /// Unauthenticated `DELETE` carrying caller-built headers: the wallet-signed
+    /// agent revoke, whose authorization travels in `x-wallet-*` headers rather
+    /// than HMAC ones. No configured credential is attached, the rate-limit
+    /// bucket is not charged, and it is not auto-retried (the wallet nonce is
+    /// single use), just like [`post_unsigned`](Self::post_unsigned).
+    pub(crate) async fn delete_unsigned<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        headers: &[(&str, String)],
+    ) -> Result<T> {
+        let mut req = self
+            .http
+            .delete(format!("{}{}", self.base()?, path))
+            .timeout(self.config.timeout);
+        for (name, value) in headers {
+            req = req.header(*name, value);
+        }
+        self.handle(req.send().await?).await
+    }
+
     /// Signed `GET` — signs the exact path + query string that is sent.
     pub(crate) async fn signed_get<T: DeserializeOwned>(
         &self,

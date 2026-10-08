@@ -20,7 +20,7 @@ pub use pagination::{Cursor, Page, PageRequest, Paginator};
 
 use std::collections::HashMap;
 
-use crate::auth::{AgentRegistration, EthSigner};
+use crate::auth::{AgentRegistration, AgentRevocation, EthSigner};
 use crate::types::{
     AccountFees, AccountFunding, AccountPortfolioSummary, AccountState, AccountSummary, AdlEvent,
     AgentInfo, AgentRegistered, AmendOrder, ApiKeyInfo, BridgeAssetsResponse, BridgeDeposit,
@@ -586,14 +586,25 @@ impl Client {
         self.signed_get("/agents", &[]).await
     }
 
-    /// Revoke an agent key by `address` (`DELETE /agents/{address}`). After this
-    /// returns, in-flight requests signed by the agent are rejected. Requires
-    /// API-key credentials (see [`Config::api_key`](crate::Config::api_key)). As
-    /// with [`Client::fetch_agents`], the SDK signs with whatever credential is
-    /// configured and does not enforce the scheme per endpoint.
-    pub async fn revoke_agent(&self, address: &str) -> Result<serde_json::Value> {
-        let addr = encoded_segment(address, "address")?;
-        self.signed_delete(&format!("/agents/{addr}")).await
+    /// Revoke an agent key (`DELETE /agents/{address}`). After this returns,
+    /// in-flight requests signed by the agent are rejected.
+    ///
+    /// Build the signed [`AgentRevocation`] with [`EthSigner::revoke_agent`].
+    /// The owner wallet's signature, sent as the four `x-wallet-*` headers, is
+    /// the only credential the server accepts here: no configured credential is
+    /// attached, so a client with none, or with only an agent key, can revoke.
+    pub async fn revoke_agent(&self, revocation: &AgentRevocation) -> Result<serde_json::Value> {
+        let addr = encoded_segment(&revocation.agent, "address")?;
+        self.delete_unsigned(
+            &format!("/agents/{addr}"),
+            &[
+                ("x-wallet-account", revocation.account.clone()),
+                ("x-wallet-nonce", revocation.nonce.to_string()),
+                ("x-wallet-signature", revocation.signature.clone()),
+                ("x-wallet-chain-id", revocation.chain_id.to_string()),
+            ],
+        )
+        .await
     }
 
     /// Account balance and collateral summary. Requires credentials.

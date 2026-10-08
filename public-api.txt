@@ -683,17 +683,13 @@ impl core::fmt::Debug for nexus_exchange::types::AgentRegistered
 pub fn nexus_exchange::types::AgentRegistered::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::AgentRegistered
 pub fn nexus_exchange::types::AgentRegistered::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-pub struct nexus_exchange::types::AmendOrder
-pub nexus_exchange::types::AmendOrder::client_order_id: core::option::Option<alloc::string::String>
+#[non_exhaustive] pub struct nexus_exchange::types::AmendOrder
 pub nexus_exchange::types::AmendOrder::price: core::option::Option<rust_decimal::decimal::Decimal>
 pub nexus_exchange::types::AmendOrder::quantity: core::option::Option<rust_decimal::decimal::Decimal>
-pub nexus_exchange::types::AmendOrder::time_in_force: core::option::Option<nexus_exchange::types::TimeInForce>
 impl nexus_exchange::types::AmendOrder
-pub fn nexus_exchange::types::AmendOrder::client_order_id(self, impl core::convert::Into<alloc::string::String>) -> Self
 pub fn nexus_exchange::types::AmendOrder::new() -> Self
 pub fn nexus_exchange::types::AmendOrder::price(self, rust_decimal::decimal::Decimal) -> Self
 pub fn nexus_exchange::types::AmendOrder::quantity(self, rust_decimal::decimal::Decimal) -> Self
-pub fn nexus_exchange::types::AmendOrder::time_in_force(self, nexus_exchange::types::TimeInForce) -> Self
 impl core::clone::Clone for nexus_exchange::types::AmendOrder
 pub fn nexus_exchange::types::AmendOrder::clone(&self) -> Self
 impl core::default::Default for nexus_exchange::types::AmendOrder

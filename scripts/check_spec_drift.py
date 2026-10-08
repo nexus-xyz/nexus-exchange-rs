@@ -349,14 +349,18 @@ MODEL_SCHEMA = {
 # operation the contract DOES define is ignored by the server, so the call still
 # works; an operation the contract does not define fails every time it is called.
 #
-#   client_order_id — the SDK lets a caller assign an order id on `POST /orders`
-#     (and on an amend) and echoes it back, ahead of the pinned spec pinning the
-#     field on the Order/OrderRequest schemas. The by-client-id LOOKUP and CANCEL
-#     routes were phantom ops and are gone (ENG-8617); the field rides on
-#     contracted operations, which is why it keeps its exemption.
+#   client_id (OrderRequest) — the idempotency key on `POST /orders` and
+#     `/orders/batch`. The monorepo spec defines it; the pinned tag predates it.
+#     It was sent as `client_order_id` until ENG-20051, a name the engine never
+#     read, so the key was dropped silently: that "ignored, so the call still
+#     works" is exactly why an entry here must use the spec's spelling.
+#   client_order_id (Order) — the id echoed back on the order, ahead of the
+#     pinned spec. The by-client-id LOOKUP and CANCEL routes were phantom ops and
+#     are gone (ENG-8617); the field rides on contracted operations, which is why
+#     it keeps its exemption.
 MODEL_FIELDS_AHEAD_OF_SPEC = {
     ("Order", "client_order_id"),
-    ("OrderRequest", "client_order_id"),
+    ("OrderRequest", "client_id"),
 }
 
 

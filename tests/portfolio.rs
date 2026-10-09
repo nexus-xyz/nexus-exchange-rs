@@ -5,6 +5,7 @@
 use nexus_exchange::rest::MAX_PORTFOLIO_HISTORY_LIMIT;
 use nexus_exchange::types::PortfolioWindow;
 use nexus_exchange::{Client, Config, RetryConfig};
+use rust_decimal_macros::dec;
 use wiremock::matchers::{header, method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -665,13 +666,48 @@ async fn fetch_account_fees_parses() {
 
     let fees = authed(server.uri()).fetch_trading_fees().await.unwrap();
     // Signed: a negative maker fee is a rebate, so this must not be unsigned.
-    assert_eq!(fees.maker_fee_bps, -2);
-    assert_eq!(fees.taker_fee_bps, 5);
+    assert_eq!(fees.maker_fee_bps, dec!(-2));
+    assert_eq!(fees.taker_fee_bps, dec!(5));
     assert_eq!(fees.tier, "base");
     assert_eq!(fees.schedule, "standard");
     assert_eq!(fees.volume_30d.to_string(), "1250000.50");
     assert!(!fees.volume_30d_estimated);
     assert!(fees.discounts.is_empty());
+}
+
+/// From spec 0.9.123 a rate can be a tenth of a bps (ENG-21111). The body is
+/// raw JSON text, so the test pins the digits on the wire. Each case is
+/// `(maker, taker)` exactly as sent.
+#[tokio::test]
+async fn fetch_account_fees_decodes_whole_and_fractional_rates_exactly() {
+    for (maker, taker) in [
+        // A whole rate is served as an integer.
+        ("-2", "5"),
+        // A fractional rebate and a fractional taker fee.
+        ("-0.4", "2.8"),
+        // A positive maker rate is a fee the maker pays.
+        ("0.4", "2.8"),
+    ] {
+        let server = MockServer::start().await;
+        let body = format!(
+            r#"{{"maker_fee_bps": {maker}, "taker_fee_bps": {taker}, "tier": "base",
+                "schedule": "standard", "markets": [], "volume_30d": "1",
+                "volume_30d_estimated": false, "discounts": []}}"#
+        );
+        Mock::given(method("GET"))
+            .and(path("/account/fees"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+
+        let fees = authed(server.uri()).fetch_trading_fees().await.unwrap();
+        // to_string pins the digits, so float noise such as 2.8000000000000003
+        // fails here.
+        assert_eq!(fees.maker_fee_bps.to_string(), maker);
+        assert_eq!(fees.taker_fee_bps.to_string(), taker);
+        assert_eq!(fees.maker_fee_bps, maker.parse().unwrap());
+        assert_eq!(fees.taker_fee_bps, taker.parse().unwrap());
+    }
 }
 
 #[tokio::test]

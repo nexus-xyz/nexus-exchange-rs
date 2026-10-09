@@ -263,6 +263,7 @@ pub struct FundsEntry {
     /// Which operation produced this row — **not** always `Deposit`.
     pub kind: FundsKind,
     /// 0x-prefixed account address.
+    #[serde(alias = "address")]
     pub account: String,
     /// Amount moved, as a lossless decimal. **Always a positive magnitude —
     /// direction lives in [`kind`](Self::kind), never in this sign.**
@@ -292,6 +293,7 @@ pub struct FundsEntry {
     #[serde(with = "rust_decimal::serde::str")]
     pub amount: Decimal,
     /// Asset symbol, e.g. `USDX`.
+    #[serde(alias = "currency")]
     pub asset: String,
     /// Unix ms.
     pub timestamp: i64,
@@ -301,6 +303,7 @@ pub struct FundsEntry {
     /// grant, or a deposit that has not been broadcast yet) — the spec models it
     /// as `["string", "null"]`.
     #[serde(default)]
+    #[serde(alias = "txid")]
     pub tx_hash: Option<String>,
 }
 
@@ -438,6 +441,7 @@ pub enum FundingDirection {
 #[derive(Debug, Clone, Deserialize)]
 pub struct AccountFunding {
     /// Market the settlement relates to, e.g. `BTC-USDX-PERP`.
+    #[serde(alias = "symbol")]
     pub market_id: String,
     /// Signed funding amount in the quote asset: negative when paid, positive
     /// when received.
@@ -799,6 +803,7 @@ pub struct FundingSample {
     pub timestamp: i64,
     /// Funding rate at this sample (fraction of notional).
     #[serde(with = "rust_decimal::serde::str")]
+    #[serde(alias = "fundingRate")]
     pub funding_rate: Decimal,
     /// Premium index (mark vs. oracle) at this sample.
     #[serde(with = "rust_decimal::serde::str")]
@@ -1060,6 +1065,7 @@ pub struct AccountSummary {
 #[non_exhaustive]
 pub struct Position {
     /// Market identifier, e.g. `BTC-USDX-PERP`.
+    #[serde(alias = "symbol")]
     pub market_id: String,
     /// Position direction (e.g. `long`/`short`).
     pub side: String,
@@ -1068,17 +1074,21 @@ pub struct Position {
     pub size: Decimal,
     /// Average entry price.
     #[serde(with = "rust_decimal::serde::str")]
+    #[serde(alias = "entryPrice")]
     pub entry_price: Decimal,
     /// Unrealized profit and loss at the current mark price.
     #[serde(with = "rust_decimal::serde::str")]
+    #[serde(alias = "unrealizedPnl")]
     pub unrealized_pnl: Decimal,
     /// Realized profit and loss booked so far.
     #[serde(with = "rust_decimal::serde::str")]
+    #[serde(alias = "realizedPnl")]
     pub realized_pnl: Decimal,
     /// Liquidation price. The spec does not mark it required (it can be absent
     /// in flat / cross-margin states), so it's optional rather than hard-failing
     /// the whole balance/positions decode when omitted.
     #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[serde(alias = "liquidationPrice")]
     pub liquidation_price: Option<Decimal>,
     /// Position leverage (the account's leverage multiplier for this position).
     ///
@@ -1100,10 +1110,12 @@ pub struct Position {
     /// price is unavailable — see
     /// [`notional_value_error`](Self::notional_value_error).
     #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[serde(alias = "notional")]
     pub notional_value: Option<Decimal>,
     /// Why [`notional_value`](Self::notional_value) is `None` (e.g.
     /// `mark_price_unavailable`), or `None` when it is populated.
     #[serde(default)]
+    #[serde(alias = "notional_error")]
     pub notional_value_error: Option<String>,
     /// Return on equity: `unrealized_pnl / margin_used` (return on initial
     /// margin). `None` when an input is unavailable or margin is zero — see
@@ -1121,11 +1133,13 @@ pub struct Position {
     /// indexer. `None` when an input is unavailable — see
     /// [`margin_used_error`](Self::margin_used_error).
     #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[serde(alias = "initialMargin")]
     pub margin_used: Option<Decimal>,
     /// Why [`margin_used`](Self::margin_used) is `None` (e.g.
     /// `mark_price_unavailable`, `margin_rate_unavailable`), or `None` when it
     /// is populated.
     #[serde(default)]
+    #[serde(alias = "initialMargin_error")]
     pub margin_used_error: Option<String>,
     /// Maximum leverage allowed for this market, from the market's risk
     /// parameters. `None` when those params are unavailable — see
@@ -1209,6 +1223,7 @@ pub struct ClosedPosition {
         alias = "entryPrice",
         with = "rust_decimal::serde::str_option"
     )]
+    #[serde(alias = "entryPrice")]
     pub entry_price: Option<Decimal>,
     /// Price the position closed at. Served as `lastPrice` from spec `0.9.74` —
     /// the CLOSED reading of that name, not the open position's last traded
@@ -1222,6 +1237,7 @@ pub struct ClosedPosition {
         alias = "realizedPnl",
         with = "rust_decimal::serde::str_option"
     )]
+    #[serde(alias = "realizedPnl")]
     pub realized_pnl: Option<Decimal>,
     /// Unix timestamp (ms) the position closed at. `None` when unreported —
     /// **not** `0`, which would date every such close to the Unix epoch. Served
@@ -1870,6 +1886,7 @@ pub struct Order {
     /// Exchange-assigned order identifier.
     pub id: String,
     /// Market identifier, e.g. `BTC-USDX-PERP`.
+    #[serde(alias = "symbol")]
     pub market_id: String,
     // The spec marks every Order field optional, so the non-identity, non-enum
     // fields default rather than fail deserialization if the API omits them.
@@ -1879,24 +1896,29 @@ pub struct Order {
     /// Order side.
     pub side: Side,
     /// Order type.
+    #[serde(alias = "type")]
     pub order_type: OrderType,
     /// Limit price; `None` for market orders.
     #[serde(default, with = "rust_decimal::serde::str_option")]
     pub price: Option<Decimal>,
     /// Original order size, in the base asset.
     #[serde(default, with = "rust_decimal::serde::str")]
+    #[serde(alias = "amount")]
     pub quantity: Decimal,
     /// Quantity filled so far, in the base asset.
     #[serde(default, with = "rust_decimal::serde::str")]
+    #[serde(alias = "filled")]
     pub filled_qty: Decimal,
     /// `Open`, `PartiallyFilled`, `Filled`, `Cancelled`, `Expired`, `Rejected`.
     #[serde(default)]
     pub status: String,
     /// Time-in-force policy.
+    #[serde(alias = "timeInForce")]
     pub time_in_force: TimeInForce,
     /// Caller-assigned client order id, if one was supplied when the order was
     /// placed. The spec marks it optional, so it defaults to `None` when absent.
     #[serde(default)]
+    #[serde(alias = "clientOrderId")]
     pub client_order_id: Option<String>,
     /// Fired-limit-price offset in basis points for a
     /// [`TrailingLimit`](OrderType::TrailingLimit) order (mirrors
@@ -1931,9 +1953,11 @@ pub struct Order {
     pub cancellation_reason: Option<CancellationReason>,
     /// Unix timestamp (ms) when the order was created.
     #[serde(default)]
+    #[serde(alias = "timestamp")]
     pub created_at: i64,
     /// Unix timestamp (ms) when the order was last updated.
     #[serde(default)]
+    #[serde(alias = "lastUpdateTimestamp")]
     pub updated_at: i64,
 }
 
@@ -1973,6 +1997,7 @@ pub struct OrderHistoryEntry {
     pub id: Option<String>,
     /// Market identifier, e.g. `BTC-USDX-PERP`.
     #[serde(default)]
+    #[serde(alias = "symbol")]
     pub market_id: Option<String>,
     /// Order side.
     #[serde(default)]
@@ -1985,6 +2010,7 @@ pub struct OrderHistoryEntry {
     /// (`stop_limit`), not the `PascalCase` enum [`OrderType`] serializes, and
     /// keeping it open means an order type added upstream still decodes.
     #[serde(default)]
+    #[serde(alias = "type")]
     pub order_type: Option<String>,
     /// Limit price. The spec types this **nullable** — a market order carries no
     /// limit price — so an explicit `null` decodes to `None` rather than a
@@ -1993,10 +2019,12 @@ pub struct OrderHistoryEntry {
     pub price: Option<Decimal>,
     /// **Original** order quantity, in the base asset (not the remaining one).
     #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[serde(alias = "amount")]
     pub size: Option<Decimal>,
     /// Quantity filled before the order reached its terminal status, in the base
     /// asset. `None` is *not reported*, distinct from a real `0` (nothing filled).
     #[serde(default, with = "rust_decimal::serde::str_option")]
+    #[serde(alias = "filled")]
     pub filled_qty: Option<Decimal>,
     /// Terminal status: `Filled`, `Cancelled`, `Rejected`, or `Expired`.
     ///
@@ -2012,10 +2040,12 @@ pub struct OrderHistoryEntry {
     /// Unix timestamp (ms) the order was created. `None` when unreported —
     /// **not** `0`.
     #[serde(default)]
+    #[serde(alias = "timestamp")]
     pub created_at_ms: Option<i64>,
     /// Unix timestamp (ms) the order reached its terminal status. `None` when
     /// unreported — **not** `0`.
     #[serde(default)]
+    #[serde(alias = "lastUpdateTimestamp")]
     pub completed_at_ms: Option<i64>,
 }
 
@@ -2535,6 +2565,91 @@ mod tests {
     use secrecy::ExposeSecret;
 
     use super::*;
+
+    /// Rows as the server serves them since the CCXT renames (ENG-13314,
+    /// ENG-13528, ENG-14207, ENG-15117, ENG-15258), which the pinned v0.8.1
+    /// spec predates. Values from the spec's own examples (ENG-20916).
+    #[test]
+    fn decodes_the_ccxt_renamed_rows() {
+        use rust_decimal_macros::dec;
+        use serde_json::json;
+
+        let f: FundingSample = serde_json::from_value(json!({
+            "timestamp": 1776033960368_i64, "fundingRate": "0.000000016",
+            "premium_index": "0.004192", "mark_price": "49756.75", "oracle_price": "49549.0"
+        }))
+        .unwrap();
+        assert_eq!(f.funding_rate, dec!(0.000000016));
+
+        let p: Position = serde_json::from_value(json!({
+            "symbol": "BTC-USDX-PERP", "side": "Long", "size": "0.5", "entryPrice": "49500.00",
+            "unrealizedPnl": "250.50", "realizedPnl": "0.00", "liquidationPrice": null,
+            "liquidationPrice_error": "margin_state_not_mirrored", "notional": "25000.50",
+            "notional_error": null, "roe": "0.2004", "roe_error": null, "initialMargin": "1250.03",
+            "initialMargin_error": null, "max_leverage": 20, "max_leverage_error": null,
+            "funding_paid": "12.50", "leverage": null, "leverage_error": "margin_state_not_mirrored"
+        }))
+        .unwrap();
+        assert_eq!(p.market_id, "BTC-USDX-PERP");
+        assert_eq!(p.entry_price, dec!(49500.00));
+        assert_eq!(p.unrealized_pnl, dec!(250.50));
+        assert_eq!(p.notional_value, Some(dec!(25000.50)));
+        assert_eq!(p.margin_used, Some(dec!(1250.03)));
+
+        let c: ClosedPosition = serde_json::from_value(json!({
+            "symbol": "BTC-USDX-PERP", "side": "Long", "size": "0.5", "entryPrice": "49500",
+            "lastPrice": "50000", "realizedPnl": "250", "lastUpdateTimestamp": 1779225381434_i64
+        }))
+        .unwrap();
+        assert_eq!(c.entry_price, Some(dec!(49500)));
+        assert_eq!(c.realized_pnl, Some(dec!(250)));
+
+        let order = json!({
+            "id": "0b9a3c1e-0000-4000-8000-000000000001", "symbol": "BTC-USDX-PERP",
+            "account_id": "0x1111111111111111111111111111111111111111", "side": "Buy",
+            "type": "Limit", "timeInForce": "GTC", "price": "50000", "amount": "0.5",
+            "filled": "0.2", "remaining": "0.3", "status": "PartiallyFilled",
+            "clientOrderId": "my-1", "timestamp": 1779225381434_i64,
+            "datetime": "2026-05-19T21:16:21.434Z", "lastUpdateTimestamp": 1779225391434_i64,
+            "reduceOnly": false, "postOnly": false, "is_liquidation": false
+        });
+        let o: Order = serde_json::from_value(order.clone()).unwrap();
+        assert_eq!(o.market_id, "BTC-USDX-PERP");
+        assert_eq!(o.order_type, OrderType::Limit);
+        assert_eq!(o.time_in_force, TimeInForce::Gtc);
+        assert_eq!(o.quantity, dec!(0.5));
+        assert_eq!(o.filled_qty, dec!(0.2));
+        assert_eq!(o.client_order_id.as_deref(), Some("my-1"));
+        assert_eq!((o.created_at, o.updated_at), (1779225381434, 1779225391434));
+
+        let h: OrderHistoryEntry = serde_json::from_value(order).unwrap();
+        assert_eq!(h.market_id.as_deref(), Some("BTC-USDX-PERP"));
+        assert_eq!(h.order_type.as_deref(), Some("Limit"));
+        assert_eq!((h.size, h.filled_qty), (Some(dec!(0.5)), Some(dec!(0.2))));
+        assert_eq!(
+            (h.created_at_ms, h.completed_at_ms),
+            (Some(1779225381434), Some(1779225391434))
+        );
+
+        let a: AccountFunding = serde_json::from_value(json!({
+            "symbol": "BTC-USDX-PERP", "amount": "-1.25", "direction": "paid",
+            "funding_rate": "0.0001", "position_size": "0.5", "timestamp": 1779225381434_i64
+        }))
+        .unwrap();
+        assert_eq!(a.market_id, "BTC-USDX-PERP");
+
+        let w: FundsEntry = serde_json::from_value(json!({
+            "id": 42, "kind": "withdrawal", "address": "0x1111111111111111111111111111111111111111",
+            "amount": "500.00", "currency": "USDX", "timestamp": 1779225381434_i64,
+            "status": "confirmed",
+            "txid": "0xabababababababababababababababababababababababababababababababab",
+            "updated": 1779225391434_i64
+        }))
+        .unwrap();
+        assert_eq!(w.account, "0x1111111111111111111111111111111111111111");
+        assert_eq!(w.asset, "USDX");
+        assert!(w.tx_hash.is_some());
+    }
 
     #[test]
     fn created_api_key_debug_redacts_secret() {

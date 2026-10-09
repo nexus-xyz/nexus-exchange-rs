@@ -30,11 +30,23 @@ impl core::fmt::Debug for nexus_exchange::auth::AgentRegistration
 pub fn nexus_exchange::auth::AgentRegistration::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl serde_core::ser::Serialize for nexus_exchange::auth::AgentRegistration
 pub fn nexus_exchange::auth::AgentRegistration::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct nexus_exchange::auth::AgentRevocation
+pub nexus_exchange::auth::AgentRevocation::account: alloc::string::String
+pub nexus_exchange::auth::AgentRevocation::agent: alloc::string::String
+pub nexus_exchange::auth::AgentRevocation::chain_id: u64
+pub nexus_exchange::auth::AgentRevocation::nonce: u64
+pub nexus_exchange::auth::AgentRevocation::signature: alloc::string::String
+impl core::clone::Clone for nexus_exchange::auth::AgentRevocation
+pub fn nexus_exchange::auth::AgentRevocation::clone(&self) -> Self
+impl core::fmt::Debug for nexus_exchange::auth::AgentRevocation
+pub fn nexus_exchange::auth::AgentRevocation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct nexus_exchange::auth::AgentSigner
 impl nexus_exchange::AgentSigner
 pub fn nexus_exchange::AgentSigner::address(&self) -> alloc::string::String
 pub fn nexus_exchange::AgentSigner::from_hex(impl core::convert::Into<alloc::string::String>) -> nexus_exchange::Result<Self>
 pub fn nexus_exchange::AgentSigner::into_arc(self) -> alloc::rcs::arc::Arc<dyn nexus_exchange::auth::Credential>
+pub fn nexus_exchange::AgentSigner::with_account(self, &str) -> nexus_exchange::Result<Self>
+pub fn nexus_exchange::AgentSigner::with_acting_account(self, &str) -> nexus_exchange::Result<Self>
 impl core::fmt::Debug for nexus_exchange::AgentSigner
 pub fn nexus_exchange::AgentSigner::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl nexus_exchange::auth::Credential for nexus_exchange::AgentSigner
@@ -45,6 +57,7 @@ impl nexus_exchange::EthSigner
 pub fn nexus_exchange::EthSigner::address(&self) -> alloc::string::String
 pub fn nexus_exchange::EthSigner::from_hex(impl core::convert::Into<alloc::string::String>) -> nexus_exchange::Result<Self>
 pub fn nexus_exchange::EthSigner::register_agent(&self, &str, u64, u64, u64, &nexus_exchange::Network, core::option::Option<alloc::string::String>) -> nexus_exchange::Result<nexus_exchange::auth::AgentRegistration>
+pub fn nexus_exchange::EthSigner::revoke_agent(&self, &str, u64, u64, &nexus_exchange::Network) -> nexus_exchange::Result<nexus_exchange::auth::AgentRevocation>
 pub fn nexus_exchange::EthSigner::sign_in(&self) -> nexus_exchange::Result<nexus_exchange::auth::LoginRequest>
 impl core::fmt::Debug for nexus_exchange::EthSigner
 pub fn nexus_exchange::EthSigner::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -59,6 +72,7 @@ impl serde_core::ser::Serialize for nexus_exchange::auth::LoginRequest
 pub fn nexus_exchange::auth::LoginRequest::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 #[non_exhaustive] pub struct nexus_exchange::auth::SigningContext<'a>
 pub nexus_exchange::auth::SigningContext::body: &'a [u8]
+pub nexus_exchange::auth::SigningContext::deployment_domain: core::option::Option<&'a str>
 pub nexus_exchange::auth::SigningContext::method: &'a str
 pub nexus_exchange::auth::SigningContext::path: &'a str
 pub nexus_exchange::auth::SigningContext::query: &'a str
@@ -1568,6 +1582,7 @@ pub nexus_exchange::Network::Mainnet
 pub nexus_exchange::Network::Testnet
 impl nexus_exchange::Network
 pub fn nexus_exchange::Network::base_url(&self) -> &str
+pub fn nexus_exchange::Network::deployment_domain(&self) -> core::option::Option<&str>
 pub fn nexus_exchange::Network::funds(&self) -> nexus_exchange::Funds
 pub fn nexus_exchange::Network::has_faucet(&self) -> bool
 pub fn nexus_exchange::Network::label(&self) -> &str
@@ -1682,6 +1697,8 @@ impl nexus_exchange::AgentSigner
 pub fn nexus_exchange::AgentSigner::address(&self) -> alloc::string::String
 pub fn nexus_exchange::AgentSigner::from_hex(impl core::convert::Into<alloc::string::String>) -> nexus_exchange::Result<Self>
 pub fn nexus_exchange::AgentSigner::into_arc(self) -> alloc::rcs::arc::Arc<dyn nexus_exchange::auth::Credential>
+pub fn nexus_exchange::AgentSigner::with_account(self, &str) -> nexus_exchange::Result<Self>
+pub fn nexus_exchange::AgentSigner::with_acting_account(self, &str) -> nexus_exchange::Result<Self>
 impl core::fmt::Debug for nexus_exchange::AgentSigner
 pub fn nexus_exchange::AgentSigner::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl nexus_exchange::auth::Credential for nexus_exchange::AgentSigner
@@ -1772,7 +1789,7 @@ pub async fn nexus_exchange::Client::preview_order(&self, &nexus_exchange::types
 pub async fn nexus_exchange::Client::register_agent(&self, &nexus_exchange::auth::AgentRegistration) -> nexus_exchange::Result<nexus_exchange::types::AgentRegistered>
 pub async fn nexus_exchange::Client::remove_margin(&self, &str, rust_decimal::decimal::Decimal) -> nexus_exchange::Result<nexus_exchange::types::MarginAdjustment>
 pub async fn nexus_exchange::Client::reset_account_tier(&self, &str) -> nexus_exchange::Result<serde_json::value::Value>
-pub async fn nexus_exchange::Client::revoke_agent(&self, &str) -> nexus_exchange::Result<serde_json::value::Value>
+pub async fn nexus_exchange::Client::revoke_agent(&self, &nexus_exchange::auth::AgentRevocation) -> nexus_exchange::Result<serde_json::value::Value>
 pub async fn nexus_exchange::Client::set_account_tier(&self, &str, &str) -> nexus_exchange::Result<nexus_exchange::types::TierOverride>
 pub async fn nexus_exchange::Client::set_cancel_on_disconnect(&self, bool) -> nexus_exchange::Result<nexus_exchange::types::CancelOnDisconnectStatus>
 pub async fn nexus_exchange::Client::set_tier(&self, &str, &str) -> nexus_exchange::Result<nexus_exchange::types::TierOverride>
@@ -1801,6 +1818,7 @@ pub fn nexus_exchange::Config::network(&self) -> &nexus_exchange::Network
 pub fn nexus_exchange::Config::new(nexus_exchange::Network) -> Self
 pub fn nexus_exchange::Config::session_token(self, impl core::convert::Into<alloc::string::String>) -> Self
 pub fn nexus_exchange::Config::user_agent(&self) -> &str
+pub fn nexus_exchange::Config::with_action_signer(self, nexus_exchange::AgentSigner) -> Self
 pub fn nexus_exchange::Config::with_base_url(impl core::convert::Into<alloc::string::String>) -> Self
 pub fn nexus_exchange::Config::with_channel_capacity(self, usize) -> Self
 pub fn nexus_exchange::Config::with_credential(self, alloc::rcs::arc::Arc<dyn nexus_exchange::auth::Credential>) -> Self
@@ -1823,6 +1841,7 @@ pub struct nexus_exchange::CustomNetwork
 impl nexus_exchange::CustomNetwork
 pub fn nexus_exchange::CustomNetwork::label(&self) -> &str
 pub fn nexus_exchange::CustomNetwork::new(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>, nexus_exchange::Funds) -> nexus_exchange::Result<Self>
+pub fn nexus_exchange::CustomNetwork::with_deployment_domain(self, impl core::convert::Into<alloc::string::String>) -> Self
 pub fn nexus_exchange::CustomNetwork::with_faucet(self, bool) -> Self
 pub fn nexus_exchange::CustomNetwork::with_signing_domain(self, nexus_exchange::SigningDomain) -> Self
 pub fn nexus_exchange::CustomNetwork::with_ws_url(self, impl core::convert::Into<alloc::string::String>) -> nexus_exchange::Result<Self>
@@ -1839,6 +1858,7 @@ impl nexus_exchange::EthSigner
 pub fn nexus_exchange::EthSigner::address(&self) -> alloc::string::String
 pub fn nexus_exchange::EthSigner::from_hex(impl core::convert::Into<alloc::string::String>) -> nexus_exchange::Result<Self>
 pub fn nexus_exchange::EthSigner::register_agent(&self, &str, u64, u64, u64, &nexus_exchange::Network, core::option::Option<alloc::string::String>) -> nexus_exchange::Result<nexus_exchange::auth::AgentRegistration>
+pub fn nexus_exchange::EthSigner::revoke_agent(&self, &str, u64, u64, &nexus_exchange::Network) -> nexus_exchange::Result<nexus_exchange::auth::AgentRevocation>
 pub fn nexus_exchange::EthSigner::sign_in(&self) -> nexus_exchange::Result<nexus_exchange::auth::LoginRequest>
 impl core::fmt::Debug for nexus_exchange::EthSigner
 pub fn nexus_exchange::EthSigner::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result

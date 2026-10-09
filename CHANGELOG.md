@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.13.0...v0.13.1) - 2026-10-09
+
+### Added
+
+- *(auth)* sign the typed trading actions on the eight order routes (ENG-20652) ([#180](https://github.com/nexus-xyz/nexus-exchange-rs/pull/180))
+
+### Fixed
+
+- *(types)* decode the CCXT-renamed fields on funding, orders, positions and funds (ENG-20916) ([#179](https://github.com/nexus-xyz/nexus-exchange-rs/pull/179))
+
+## [0.13.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.12.0...v0.13.0) - 2026-10-08
+
+### Added
+
+- *(auth)* [**breaking**] revoke agents with the wallet signature (ENG-20579) ([#178](https://github.com/nexus-xyz/nexus-exchange-rs/pull/178))
+
+### Fixed
+
+- *(types)* [**breaking**] send amend size and order client_id under the engine's names (ENG-20051) ([#176](https://github.com/nexus-xyz/nexus-exchange-rs/pull/176))
+- *(types)* decode served market rows (id/base/quote) (ENG-19677) ([#174](https://github.com/nexus-xyz/nexus-exchange-rs/pull/174))
+
+### Other
+
+- state real coverage and beta status in the README (ENG-20357) ([#177](https://github.com/nexus-xyz/nexus-exchange-rs/pull/177))
+
 ## [0.12.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.11.1...v0.12.0) - 2026-10-01
 
 ### Added

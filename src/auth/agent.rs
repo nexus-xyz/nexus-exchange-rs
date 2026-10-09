@@ -34,6 +34,19 @@
 //! The known-answer vectors in this module's tests were produced by the
 //! exchange frontend's own signer (`@noble/curves`) and checked independently
 //! with `eth-account`.
+//!
+//! # Signed trading actions
+//!
+//! On a target with a [deployment domain](crate::Network::deployment_domain),
+//! the eight order-path routes sign their EIP-712 trading struct instead (spec
+//! "Signed trading actions"): `x-agent`, `x-action-signature`,
+//! `x-action-timestamp` and `x-action-nonce`, plus `x-acting-account` when the
+//! action is for another account. No `x-signature`, `x-timestamp` or
+//! `x-nonce`: the server picks the format from which headers are present. The
+//! struct names the account it acts on, so the signer must know it; see
+//! [`AgentSigner::with_account`]. Every other request keeps the canonical
+//! string, and both formats draw from the one nonce sequence below, as the
+//! server keeps one per agent.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -42,9 +55,10 @@ use secrecy::SecretString;
 use sha2::Sha256;
 use sha3::{Digest, Keccak256};
 
-use super::eth::{address_of, sign_prehash, signing_key, to_hex_address};
+use super::eth::{address_of, parse_address, sign_prehash, signing_key, to_hex_address};
+use super::trading::{self, Envelope};
 use super::{Credential, SigningContext, WriteQueue};
-use crate::Result;
+use crate::{Error, Result};
 
 /// Signs REST requests with a registered agent key: the `x-agent`,
 /// `x-timestamp`, `x-nonce` and `x-signature` headers.
@@ -95,6 +109,10 @@ pub struct AgentSigner {
     last_nonce: AtomicU64,
     /// Orders this signer's mutating requests; see the type docs.
     queue: WriteQueue,
+    /// The account that registered this agent, which a trading struct names.
+    account: Option<[u8; 20]>,
+    /// The account to trade instead, e.g. a subaccount (`x-acting-account`).
+    acting_account: Option<[u8; 20]>,
 }
 
 impl AgentSigner {
@@ -111,7 +129,83 @@ impl AgentSigner {
             address,
             last_nonce: AtomicU64::new(0),
             queue: WriteQueue::new(),
+            account: None,
+            acting_account: None,
         })
+    }
+
+    /// Name the account that registered this agent (the owner wallet,
+    /// `0x`-prefixed hex). A signed trading action names the account it acts
+    /// on, so the eight order-path routes need it on a target with a
+    /// [deployment domain](crate::Network::deployment_domain).
+    ///
+    /// Returns [`crate::TerminalError::InvalidRequest`] if `account` is not a
+    /// 20-byte hex address.
+    pub fn with_account(mut self, account: &str) -> Result<Self> {
+        self.account = Some(parse_account(account)?);
+        Ok(self)
+    }
+
+    /// Trade `account` instead of the agent's own, e.g. a subaccount of it.
+    /// Signed trading actions then name `account` and send it as
+    /// `x-acting-account`.
+    ///
+    /// The server refuses an action for another account with `403
+    /// ActingAccountUnverified` until it enforces signed actions.
+    pub fn with_acting_account(mut self, account: &str) -> Result<Self> {
+        self.acting_account = Some(parse_account(account)?);
+        Ok(self)
+    }
+
+    /// The signed-action headers for `ctx`, or `None` when `ctx` is not one of
+    /// the eight trading routes or the target declares no deployment domain.
+    /// Draws a nonce only when it signs.
+    pub(crate) fn action_headers(
+        &self,
+        ctx: &SigningContext<'_>,
+    ) -> Result<Option<Vec<(&'static str, String)>>> {
+        if ctx.deployment_domain.is_none() || !trading::is_trading_route(ctx.method, ctx.path) {
+            return Ok(None);
+        }
+        let nonce = self.next_nonce(ctx.timestamp_ms);
+        self.action_headers_with_nonce(ctx, nonce)
+    }
+
+    /// [`action_headers`](Self::action_headers) with an explicit nonce.
+    fn action_headers_with_nonce(
+        &self,
+        ctx: &SigningContext<'_>,
+        nonce: u64,
+    ) -> Result<Option<Vec<(&'static str, String)>>> {
+        let Some(domain) = ctx.deployment_domain else {
+            return Ok(None);
+        };
+        let account = self.acting_account.or(self.account).ok_or_else(|| {
+            Error::credentials(
+                "a signed trading action names the account it acts on: call \
+                 AgentSigner::with_account with the wallet that registered this agent",
+            )
+        })?;
+        let envelope = Envelope {
+            account,
+            domain,
+            timestamp_ms: ctx.timestamp_ms,
+            nonce,
+        };
+        let Some(digest) =
+            trading::request_digest(ctx.method, ctx.path, ctx.query, ctx.body, &envelope)?
+        else {
+            return Ok(None);
+        };
+        let mut headers = vec![
+            ("x-action-signature", sign_prehash(&self.key, &digest)?),
+            ("x-action-timestamp", ctx.timestamp_ms.to_string()),
+            ("x-action-nonce", nonce.to_string()),
+        ];
+        if self.acting_account.is_some() && self.acting_account != self.account {
+            headers.push(("x-acting-account", to_hex_address(&account)));
+        }
+        Ok(Some(headers))
     }
 
     /// The agent's address as lowercase `0x`-prefixed hex. This is the value
@@ -163,7 +257,14 @@ impl AgentSigner {
 impl Credential for AgentSigner {
     /// Build the four agent-auth headers for a request. The nonce is issued by
     /// the signer (see [`AgentSigner`]); `ctx.timestamp_ms` is its floor.
+    /// On a trading route of a target with a deployment domain, `x-agent`
+    /// plus the signed action instead (see the module docs).
     fn auth_headers(&self, ctx: &SigningContext<'_>) -> Result<Vec<(&'static str, String)>> {
+        if let Some(action) = self.action_headers(ctx)? {
+            let mut headers = vec![("x-agent", self.address())];
+            headers.extend(action);
+            return Ok(headers);
+        }
         let nonce = self.next_nonce(ctx.timestamp_ms);
         self.headers_with_nonce(ctx, nonce)
     }
@@ -171,6 +272,11 @@ impl Credential for AgentSigner {
     fn write_queue(&self) -> Option<&WriteQueue> {
         Some(&self.queue)
     }
+}
+
+fn parse_account(account: &str) -> Result<[u8; 20]> {
+    parse_address(account)
+        .map_err(|_| Error::invalid_request("account must be a 20-byte hex address"))
 }
 
 /// Build the agent-key canonical string:
@@ -204,6 +310,7 @@ mod tests {
             query,
             body,
             timestamp_ms,
+            deployment_domain: None,
         }
     }
 
@@ -373,6 +480,156 @@ mod tests {
         all.sort_unstable();
         all.dedup();
         assert_eq!(all.len(), 800);
+    }
+
+    const OWNER: &str = "0x1111111111111111111111111111111111111111";
+    const LIMIT_BODY: &str = r#"{"market_id":"BTC-USDX-PERP","side":"Buy","order_type":"Limit","price":"65000.5","quantity":"0.25","time_in_force":"GTC","stp":"CancelNewest","client_id":"order-1","max_slippage_bps":50}"#;
+
+    fn typed_ctx<'a>(method: &'a str, path: &'a str, body: &'a [u8]) -> SigningContext<'a> {
+        SigningContext {
+            deployment_domain: Some("prd-testnet"),
+            ..ctx(method, path, "", body, 1_700_000_000_000)
+        }
+    }
+
+    /// The signed action recovers to the agent over the server's pinned
+    /// `PlaceOrder` digest (`trading_intent.rs`, same envelope), and carries
+    /// none of the canonical-string headers, which would select that format.
+    #[test]
+    fn trading_route_signs_the_pinned_struct() {
+        let signer = AgentSigner::from_hex(VECTORS[1].key)
+            .unwrap()
+            .with_account(OWNER)
+            .unwrap();
+        let c = typed_ctx("POST", "/orders", LIMIT_BODY.as_bytes());
+        let headers = signer.action_headers_with_nonce(&c, 7).unwrap().unwrap();
+        assert_eq!(get(&headers, "x-action-timestamp"), "1700000000000");
+        assert_eq!(get(&headers, "x-action-nonce"), "7");
+        assert!(headers.iter().all(|(k, _)| *k != "x-acting-account"));
+        let digest: [u8; 32] =
+            hex::decode("15c5dd8665e1f92b194fb0b4932c561532a5100da669f8dbd402b8335fd58c7b")
+                .unwrap()
+                .try_into()
+                .unwrap();
+        let sig =
+            hex::decode(get(&headers, "x-action-signature").trim_start_matches("0x")).unwrap();
+        let signature = Signature::from_slice(&sig[..64]).unwrap();
+        assert!(signature.normalize_s().is_none(), "must be low-S");
+        let vk = VerifyingKey::recover_from_prehash(
+            &digest,
+            &signature,
+            RecoveryId::from_byte(sig[64] - 27).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(address_of_key(&vk), signer.address());
+
+        let all = signer.auth_headers(&c).unwrap();
+        let names: Vec<_> = all.iter().map(|(k, _)| *k).collect();
+        assert_eq!(
+            names,
+            [
+                "x-agent",
+                "x-action-signature",
+                "x-action-timestamp",
+                "x-action-nonce"
+            ]
+        );
+    }
+
+    fn address_of_key(vk: &VerifyingKey) -> String {
+        let point = vk.to_encoded_point(false);
+        format!(
+            "0x{}",
+            hex::encode(&Keccak256::digest(&point.as_bytes()[1..])[12..])
+        )
+    }
+
+    #[test]
+    fn other_routes_and_undeclared_domains_keep_the_canonical_string() {
+        let signer = AgentSigner::from_hex(VECTORS[1].key).unwrap();
+        for c in [
+            typed_ctx("POST", "/orders/preview", b"{}"),
+            typed_ctx("GET", "/orders", b""),
+            ctx(
+                "POST",
+                "/orders",
+                "",
+                LIMIT_BODY.as_bytes(),
+                1_700_000_000_000,
+            ),
+        ] {
+            let headers = signer.auth_headers(&c).unwrap();
+            assert!(
+                headers.iter().any(|(k, _)| *k == "x-signature"),
+                "{} {}",
+                c.method,
+                c.path
+            );
+            assert!(headers.iter().all(|(k, _)| !k.starts_with("x-action")));
+        }
+    }
+
+    #[test]
+    fn a_trading_action_without_an_account_is_refused() {
+        let signer = AgentSigner::from_hex(VECTORS[1].key).unwrap();
+        let c = typed_ctx("DELETE", "/orders", b"");
+        assert!(matches!(
+            signer.auth_headers(&c),
+            Err(crate::Error::Terminal(crate::TerminalError::Credentials(_)))
+        ));
+    }
+
+    #[test]
+    fn acting_for_a_subaccount_names_it() {
+        let sub = "0x2222222222222222222222222222222222222222";
+        let signer = AgentSigner::from_hex(VECTORS[1].key)
+            .unwrap()
+            .with_account(OWNER)
+            .unwrap()
+            .with_acting_account(sub)
+            .unwrap();
+        let c = typed_ctx("DELETE", "/orders", b"");
+        let headers = signer.action_headers_with_nonce(&c, 7).unwrap().unwrap();
+        assert_eq!(get(&headers, "x-acting-account"), sub);
+        let own = AgentSigner::from_hex(VECTORS[1].key)
+            .unwrap()
+            .with_account(OWNER)
+            .unwrap()
+            .action_headers_with_nonce(&c, 7)
+            .unwrap()
+            .unwrap();
+        assert_ne!(
+            get(&headers, "x-action-signature"),
+            get(&own, "x-action-signature"),
+            "the acting account is signed"
+        );
+        assert!(AgentSigner::from_hex(VECTORS[1].key)
+            .unwrap()
+            .with_acting_account("0x1234")
+            .is_err());
+    }
+
+    /// Both formats draw from one nonce sequence: the server keeps one per agent.
+    #[test]
+    fn typed_and_canonical_requests_share_the_nonce_sequence() {
+        let signer = AgentSigner::from_hex(VECTORS[1].key)
+            .unwrap()
+            .with_account(OWNER)
+            .unwrap();
+        let typed = signer
+            .auth_headers(&typed_ctx("DELETE", "/orders", b""))
+            .unwrap();
+        let canonical = signer
+            .auth_headers(&ctx(
+                "POST",
+                "/orders/preview",
+                "",
+                b"{}",
+                1_700_000_000_000,
+            ))
+            .unwrap();
+        assert_eq!(get(&typed, "x-action-nonce"), "1700000000000");
+        assert_eq!(get(&canonical, "x-nonce"), "1700000000001");
     }
 
     #[test]

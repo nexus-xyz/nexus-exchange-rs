@@ -1,10 +1,11 @@
-//! EVM wallet signing for the two wallet-authorized flows: EIP-191 session
-//! login (`signIn`) and EIP-712 agent-key registration (`registerAgent`).
+//! EVM wallet signing for the wallet-authorized flows: EIP-191 session login
+//! (`signIn`), EIP-712 agent-key registration (`registerAgent`) and EIP-712
+//! agent-key revocation (`revokeAgent`).
 //!
 //! [`EthSigner`] holds a secp256k1 private key in a [`SecretString`] and
-//! produces the *signed request bodies* for those endpoints. It is a pure
+//! produces the *signed requests* for those endpoints. It is a pure
 //! signer: deterministic, side-effect free, and ignorant of the network — the
-//! caller hands the body to the [`Client`](crate::Client) to send. Nonces and
+//! caller hands the result to the [`Client`](crate::Client) to send. Nonces and
 //! expiries are caller-supplied so signing carries no hidden clock.
 
 use crate::{Error, Network, Result};
@@ -25,8 +26,9 @@ pub(crate) const EIP712_DOMAIN_NAME: &str = "Nexus Exchange";
 /// [`EIP712_DOMAIN_NAME`].
 pub(crate) const EIP712_DOMAIN_VERSION: &str = "1";
 
-/// The `RegisterAgent` domain `salt` for a named network: `keccak256(network)`,
-/// exactly as the server derives it (ENG-15643). Sourced by
+/// The agent-management domain `salt` (`RegisterAgent`, `RevokeAgentKey`) for a
+/// named network: `keccak256(network)`, exactly as the server derives it
+/// (ENG-15643). Sourced by
 /// [`Network::signing_domain`](crate::Network::signing_domain).
 pub(crate) fn network_salt(network: &str) -> [u8; 32] {
     finalize32(Keccak256::new_with_prefix(network.as_bytes()))
@@ -64,6 +66,28 @@ pub struct AgentRegistration {
     /// Optional human-readable label.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+}
+
+/// Signed `DELETE /agents/{address}` authorization (EIP-712 `RevokeAgentKey`).
+///
+/// Produced by [`EthSigner::revoke_agent`]; hand it to
+/// [`Client::revoke_agent`](crate::Client::revoke_agent), which sends it as the
+/// four `x-wallet-*` headers.
+#[derive(Debug, Clone)]
+pub struct AgentRevocation {
+    /// Owner wallet address (`0x`-prefixed, lowercase), sent as
+    /// `x-wallet-account`.
+    pub account: String,
+    /// Agent address being revoked (`0x`-prefixed, lowercase), the `{address}`
+    /// path segment.
+    pub agent: String,
+    /// Unix-millisecond nonce, sent as `x-wallet-nonce`.
+    pub nonce: u64,
+    /// EIP-712 signature over `RevokeAgentKey{account, agent, nonce}`,
+    /// `0x`-prefixed (65 bytes), sent as `x-wallet-signature`.
+    pub signature: String,
+    /// The domain `chainId` it was signed with, sent as `x-wallet-chain-id`.
+    pub chain_id: u64,
 }
 
 /// An EVM wallet key that authorizes the wallet-signed auth flows.
@@ -132,20 +156,7 @@ impl EthSigner {
         network: &Network,
         label: Option<String>,
     ) -> Result<AgentRegistration> {
-        let salt = network
-            .signing_domain()
-            .and_then(|domain| domain.salt)
-            .ok_or_else(|| {
-                Error::invalid_request(format!(
-                    "no RegisterAgent signing salt is known for network {:?}: the server \
-                     binds agent registrations to its network name (salt = \
-                     keccak256(network)), and a custom target names none. Pass \
-                     Network::Mainnet, Network::Testnet or Network::Local, whichever the \
-                     target server runs as. The salt only names the network; the client \
-                     you send the registration through still picks the host.",
-                    network.label()
-                ))
-            })?;
+        let salt = agent_domain_salt(network, "RegisterAgent")?;
         let agent_addr = parse_address(agent)?;
         let digest = register_agent_digest(&agent_addr, expires_at_ms, nonce, chain_id, &salt);
         let signature = self.sign_digest(&digest)?;
@@ -159,12 +170,68 @@ impl EthSigner {
         })
     }
 
+    /// Sign an agent-key revocation with EIP-712 (`RevokeAgentKey`), yielding
+    /// the wallet headers for `DELETE /agents/{address}`.
+    ///
+    /// The server accepts only this wallet signature on a revoke: HMAC, session
+    /// and agent credentials are refused, so a client holding just an agent key
+    /// can still revoke it.
+    ///
+    /// `agent` is the agent address to revoke (`0x`-prefixed, 20 bytes).
+    /// `nonce` is caller-supplied Unix milliseconds: the server accepts it only
+    /// within `[now - 5min, now + 60s]`, and only when it is strictly greater
+    /// than the last nonce this wallet used for a rename or revoke (single use),
+    /// so the current Unix-ms time is the natural choice. `chain_id` is the
+    /// EIP-712 domain chain id, exactly as for
+    /// [`register_agent`](Self::register_agent).
+    ///
+    /// `network` salts the domain the same way it does for `register_agent`,
+    /// and a [`Network::Custom`] target is refused the same way.
+    pub fn revoke_agent(
+        &self,
+        agent: &str,
+        nonce: u64,
+        chain_id: u64,
+        network: &Network,
+    ) -> Result<AgentRevocation> {
+        let salt = agent_domain_salt(network, "RevokeAgentKey")?;
+        let agent_addr = parse_address(agent)?;
+        let digest = revoke_agent_key_digest(&self.address, &agent_addr, nonce, chain_id, &salt);
+        Ok(AgentRevocation {
+            account: self.address(),
+            agent: to_hex_address(&agent_addr),
+            nonce,
+            signature: self.sign_digest(&digest)?,
+            chain_id,
+        })
+    }
+
     /// Sign a 32-byte prehash, returning a `0x`-prefixed 65-byte `r||s||v`
     /// signature with `v ∈ {27, 28}` (Ethereum convention). The signature is
     /// deterministic (RFC 6979) and low-S normalized (EIP-2).
     fn sign_digest(&self, digest: &[u8; 32]) -> Result<String> {
         sign_prehash(&self.key, digest)
     }
+}
+
+/// The agent-management domain salt for `network`, or why there is none.
+///
+/// `message` names the EIP-712 message type being signed, for the error.
+fn agent_domain_salt(network: &Network, message: &str) -> Result<[u8; 32]> {
+    network
+        .signing_domain()
+        .and_then(|domain| domain.salt)
+        .ok_or_else(|| {
+            Error::invalid_request(format!(
+                "no {message} signing salt is known for network {:?}: the server \
+                 binds agent-management signatures to its network name (salt = \
+                 keccak256(network)), and a custom target names none. Pass \
+                 Network::Mainnet, Network::Testnet or Network::Local, whichever the \
+                 target server runs as. The salt only names the network; the client \
+                 you send the signed request through still picks the host.",
+                network.label()
+            ))
+        })
 }
 
 /// Sign a 32-byte prehash with the hex secp256k1 key in `key`, returning a
@@ -215,17 +282,10 @@ fn eip191_digest(message: &[u8]) -> [u8; 32] {
     finalize32(hasher)
 }
 
-/// EIP-712 digest for `RegisterAgent{agent, expiresAt, nonce}` under the
-/// `Nexus Exchange` domain with `salt` and no `verifyingContract`:
-/// `keccak256(0x1901 || domainSeparator || hashStruct(message))`. Matches the
-/// server's `agent_store::eip712::register_agent_digest`.
-fn register_agent_digest(
-    agent: &[u8; 20],
-    expires_at: u64,
-    nonce: u64,
-    chain_id: u64,
-    salt: &[u8; 32],
-) -> [u8; 32] {
+/// The agent-management EIP-712 domain separator: the `Nexus Exchange` domain
+/// with `chain_id`, `salt` and no `verifyingContract`. Shared by
+/// `RegisterAgent` and `RevokeAgentKey`.
+fn domain_separator(chain_id: u64, salt: &[u8; 32]) -> [u8; 32] {
     let domain_type_hash =
         Keccak256::digest(b"EIP712Domain(string name,string version,uint256 chainId,bytes32 salt)");
     let mut dh = Keccak256::new();
@@ -234,8 +294,28 @@ fn register_agent_digest(
     dh.update(Keccak256::digest(EIP712_DOMAIN_VERSION.as_bytes()));
     dh.update(u256(chain_id));
     dh.update(salt);
-    let domain_separator = dh.finalize();
+    finalize32(dh)
+}
 
+/// `keccak256(0x1901 || domainSeparator || hashStruct)` under the
+/// agent-management domain.
+fn typed_data_digest(chain_id: u64, salt: &[u8; 32], hash_struct: Keccak256) -> [u8; 32] {
+    let mut h = Keccak256::new();
+    h.update([0x19, 0x01]);
+    h.update(domain_separator(chain_id, salt));
+    h.update(hash_struct.finalize());
+    finalize32(h)
+}
+
+/// EIP-712 digest for `RegisterAgent{agent, expiresAt, nonce}`. Matches the
+/// server's `agent_store::eip712::register_agent_digest`.
+fn register_agent_digest(
+    agent: &[u8; 20],
+    expires_at: u64,
+    nonce: u64,
+    chain_id: u64,
+    salt: &[u8; 32],
+) -> [u8; 32] {
     let struct_type_hash =
         Keccak256::digest(b"RegisterAgent(address agent,uint64 expiresAt,uint64 nonce)");
     let mut sh = Keccak256::new();
@@ -243,17 +323,30 @@ fn register_agent_digest(
     sh.update(address_word(agent));
     sh.update(u256(expires_at));
     sh.update(u256(nonce));
-    let hash_struct = sh.finalize();
+    typed_data_digest(chain_id, salt, sh)
+}
 
-    let mut h = Keccak256::new();
-    h.update([0x19, 0x01]);
-    h.update(domain_separator);
-    h.update(hash_struct);
-    finalize32(h)
+/// EIP-712 digest for `RevokeAgentKey{account, agent, nonce}`. Matches the
+/// accounts service's `agent_management_auth` revoke digest.
+fn revoke_agent_key_digest(
+    account: &[u8; 20],
+    agent: &[u8; 20],
+    nonce: u64,
+    chain_id: u64,
+    salt: &[u8; 32],
+) -> [u8; 32] {
+    let struct_type_hash =
+        Keccak256::digest(b"RevokeAgentKey(address account,address agent,uint64 nonce)");
+    let mut sh = Keccak256::new();
+    sh.update(struct_type_hash);
+    sh.update(address_word(account));
+    sh.update(address_word(agent));
+    sh.update(u256(nonce));
+    typed_data_digest(chain_id, salt, sh)
 }
 
 /// Collect a Keccak256 hasher into a fixed `[u8; 32]`.
-fn finalize32(hasher: Keccak256) -> [u8; 32] {
+pub(super) fn finalize32(hasher: Keccak256) -> [u8; 32] {
     let out = hasher.finalize();
     let mut d = [0u8; 32];
     d.copy_from_slice(&out);
@@ -261,14 +354,14 @@ fn finalize32(hasher: Keccak256) -> [u8; 32] {
 }
 
 /// Left-pad a `u64` into a 32-byte big-endian ABI word (`uint256`).
-fn u256(v: u64) -> [u8; 32] {
+pub(super) fn u256(v: u64) -> [u8; 32] {
     let mut b = [0u8; 32];
     b[24..].copy_from_slice(&v.to_be_bytes());
     b
 }
 
 /// Right-align a 20-byte address into a 32-byte ABI word (`address`).
-fn address_word(addr: &[u8; 20]) -> [u8; 32] {
+pub(super) fn address_word(addr: &[u8; 20]) -> [u8; 32] {
     let mut b = [0u8; 32];
     b[12..].copy_from_slice(addr);
     b
@@ -282,7 +375,7 @@ fn strip_0x(s: &str) -> &str {
 }
 
 /// Parse a `0x`-prefixed 20-byte hex address.
-fn parse_address(s: &str) -> Result<[u8; 20]> {
+pub(super) fn parse_address(s: &str) -> Result<[u8; 20]> {
     let bytes = hex::decode(strip_0x(s))
         .map_err(|_| Error::invalid_request("agent address must be hex"))?;
     if bytes.len() != 20 {
@@ -435,6 +528,48 @@ mod tests {
         );
     }
 
+    /// Pinned against the accounts service itself: inputs and digest are its
+    /// `PINNED_REVOKE` (testnet salt), the same pin mm-runner checks.
+    #[test]
+    fn revoke_agent_matches_the_accounts_service_pin() {
+        let digest = revoke_agent_key_digest(
+            &[0x11; 20],
+            &[0xab; 20],
+            1_790_000_000_000,
+            20_056,
+            &network_salt("testnet"),
+        );
+        assert_eq!(
+            hex::encode(digest),
+            "73669adde69e6f7cd9f9ecc0825887403ee05d5fc6322d462e91c42920192bcb"
+        );
+    }
+
+    #[test]
+    fn revoke_agent_recovers_to_wallet() {
+        let signer = EthSigner::from_hex(TEST_KEY).unwrap();
+        let agent = "0xABABABABABABABABABABABABABABABABABABABAB";
+        let rev = signer
+            .revoke_agent(agent, 1_790_000_000_000, KAT_CHAIN_ID, &Network::Testnet)
+            .unwrap();
+        assert_eq!(rev.account, TEST_ADDR);
+        assert_eq!(rev.agent, agent.to_lowercase());
+        assert_eq!(rev.nonce, 1_790_000_000_000);
+        assert_eq!(rev.chain_id, KAT_CHAIN_ID);
+
+        let digest = revoke_agent_key_digest(
+            &parse_address(TEST_ADDR).unwrap(),
+            &[0xab; 20],
+            1_790_000_000_000,
+            KAT_CHAIN_ID,
+            &network_salt("testnet"),
+        );
+        assert_eq!(
+            address_from_signature(&rev.signature, &digest),
+            parse_address(TEST_ADDR).unwrap()
+        );
+    }
+
     /// The salts published in the spec's `x-nexus-networks[*].signing_domain`.
     #[test]
     fn network_salt_matches_the_spec() {
@@ -474,9 +609,10 @@ mod tests {
     }
 
     /// A custom target names no network, so there is no salt to sign under,
-    /// and an unsalted registration would only be refused by the server.
+    /// and an unsalted registration or revocation would only be refused by the
+    /// server.
     #[test]
-    fn register_agent_refuses_a_target_with_no_salt() {
+    fn agent_signing_refuses_a_target_with_no_salt() {
         let signer = EthSigner::from_hex(TEST_KEY).unwrap();
         let custom = crate::CustomNetwork::new("dev", "http://localhost:1", crate::Funds::Play)
             .unwrap()
@@ -488,13 +624,22 @@ mod tests {
             Err(Error::Terminal(crate::TerminalError::InvalidRequest(msg)))
                 if msg.contains("no RegisterAgent signing salt")
         ));
+        assert!(matches!(
+            signer.revoke_agent(KAT_AGENT, KAT_NONCE, KAT_CHAIN_ID, &network),
+            Err(Error::Terminal(crate::TerminalError::InvalidRequest(msg)))
+                if msg.contains("no RevokeAgentKey signing salt")
+        ));
     }
 
     #[test]
-    fn register_agent_rejects_bad_agent_address() {
+    fn agent_signing_rejects_bad_agent_address() {
         let signer = EthSigner::from_hex(TEST_KEY).unwrap();
         assert!(matches!(
             signer.register_agent("0x1234", 1, 1, 1, &Network::Testnet, None),
+            Err(Error::Terminal(crate::TerminalError::InvalidRequest(_)))
+        ));
+        assert!(matches!(
+            signer.revoke_agent("0x1234", 1, 1, &Network::Testnet),
             Err(Error::Terminal(crate::TerminalError::InvalidRequest(_)))
         ));
     }

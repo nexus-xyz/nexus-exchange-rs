@@ -14,13 +14,17 @@
 //!
 //!   [`AgentSigner`] implements it for the third scheme: agent-key request
 //!   signing (`x-agent` / `x-timestamp` / `x-nonce` / `x-signature`, a
-//!   recoverable secp256k1 signature over a keccak256 prehash).
+//!   recoverable secp256k1 signature over a keccak256 prehash). On a target
+//!   with a [deployment domain](crate::Network::deployment_domain) it signs the
+//!   eight order-path routes as typed trading actions instead (`x-action-*`),
+//!   and [`Config::with_action_signer`](crate::Config::with_action_signer) adds
+//!   that signed action to an HMAC key's requests.
 //! - [`Nonce`] — the source of the millisecond timestamp stamped on each signed
 //!   request. Defaults to [`SystemTimeNonce`]; pluggable for clock-skew
 //!   correction or deterministic tests.
 //! - [`EthSigner`] — an EVM wallet key that produces the EIP-191 `signIn` and
-//!   EIP-712 `registerAgent` payloads. The agent key registered this way then
-//!   signs requests through [`AgentSigner`].
+//!   EIP-712 `registerAgent` / `revokeAgent` payloads. The agent key registered
+//!   this way then signs requests through [`AgentSigner`].
 //!
 //! Every secret lives in a [`secrecy::SecretString`], and this module signs —
 //! it never stores sessions, refreshes tokens, or otherwise manages state.
@@ -31,9 +35,10 @@
 pub(crate) mod eth;
 
 mod agent;
+pub(crate) mod trading;
 
 pub use agent::AgentSigner;
-pub use eth::{AgentRegistration, EthSigner, LoginRequest, SIGN_IN_MESSAGE};
+pub use eth::{AgentRegistration, AgentRevocation, EthSigner, LoginRequest, SIGN_IN_MESSAGE};
 
 use std::fmt;
 use std::sync::Arc;
@@ -62,6 +67,11 @@ pub struct SigningContext<'a> {
     pub body: &'a [u8],
     /// Millisecond timestamp/nonce for this request.
     pub timestamp_ms: u64,
+    /// The deployment's name for signed trading actions (e.g. `devnet`), from
+    /// [`Network::deployment_domain`](crate::Network::deployment_domain).
+    /// `None` when the target declares none; [`AgentSigner`] then signs the
+    /// canonical string on every route.
+    pub deployment_domain: Option<&'a str>,
 }
 
 impl<'a> SigningContext<'a> {
@@ -81,6 +91,7 @@ impl<'a> SigningContext<'a> {
             query,
             body,
             timestamp_ms,
+            deployment_domain: None,
         }
     }
 }
@@ -255,6 +266,7 @@ mod tests {
             query,
             body,
             timestamp_ms: 1_776_033_900_000,
+            deployment_domain: None,
         }
     }
 

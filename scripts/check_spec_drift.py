@@ -200,6 +200,7 @@ HELPER_METHOD = {
     "signed_put": "PUT",
     "signed_delete": "DELETE",
     "signed_delete_with_query": "DELETE",
+    "delete_unsigned": "DELETE",
     "signed_patch_with_query": "PATCH",
 }
 

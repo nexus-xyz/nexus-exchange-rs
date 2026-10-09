@@ -1223,7 +1223,6 @@ pub struct ClosedPosition {
         alias = "entryPrice",
         with = "rust_decimal::serde::str_option"
     )]
-    #[serde(alias = "entryPrice")]
     pub entry_price: Option<Decimal>,
     /// Price the position closed at. Served as `lastPrice` from spec `0.9.74` —
     /// the CLOSED reading of that name, not the open position's last traded
@@ -1237,7 +1236,6 @@ pub struct ClosedPosition {
         alias = "realizedPnl",
         with = "rust_decimal::serde::str_option"
     )]
-    #[serde(alias = "realizedPnl")]
     pub realized_pnl: Option<Decimal>,
     /// Unix timestamp (ms) the position closed at. `None` when unreported —
     /// **not** `0`, which would date every such close to the Unix epoch. Served

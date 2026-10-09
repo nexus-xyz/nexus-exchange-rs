@@ -345,13 +345,17 @@ impl Client {
         let base = self.base()?;
         let creds = self.creds()?;
         let qs = serde_urlencoded::to_string(query).unwrap_or_default();
-        let headers = creds.auth_headers(&SigningContext {
-            method: "GET",
-            path,
-            query: &qs,
-            body: b"",
-            timestamp_ms: self.nonce(),
-        })?;
+        let headers = self.sign(
+            creds,
+            SigningContext {
+                method: "GET",
+                path,
+                query: &qs,
+                body: b"",
+                timestamp_ms: self.nonce(),
+                deployment_domain: None,
+            },
+        )?;
         let url = if qs.is_empty() {
             format!("{base}{path}")
         } else {
@@ -424,13 +428,17 @@ impl Client {
         let body_bytes = serde_json::to_vec(body)?;
         let creds = self.creds()?;
         let _turn = write_turn(creds).await;
-        let headers = creds.auth_headers(&SigningContext {
-            method: "PATCH",
-            path,
-            query: &qs,
-            body: &body_bytes,
-            timestamp_ms: self.nonce(),
-        })?;
+        let headers = self.sign(
+            creds,
+            SigningContext {
+                method: "PATCH",
+                path,
+                query: &qs,
+                body: &body_bytes,
+                timestamp_ms: self.nonce(),
+                deployment_domain: None,
+            },
+        )?;
         let url = if qs.is_empty() {
             format!("{base}{path}")
         } else {
@@ -460,6 +468,30 @@ impl Client {
             .ok_or_else(|| Error::credentials("this endpoint requires credentials"))
     }
 
+    /// Authenticate `ctx` with `creds`, under the target's deployment domain,
+    /// and add the [action signer](crate::Config::with_action_signer)'s signed action
+    /// when `creds` did not sign one itself.
+    fn sign(
+        &self,
+        creds: &dyn Credential,
+        ctx: SigningContext<'_>,
+    ) -> Result<Vec<(&'static str, String)>> {
+        let ctx = SigningContext {
+            deployment_domain: self.config.network.deployment_domain(),
+            ..ctx
+        };
+        let mut headers = creds.auth_headers(&ctx)?;
+        if let Some(signer) = &self.config.action_signer {
+            if headers
+                .iter()
+                .all(|(name, _)| *name != "x-action-signature")
+            {
+                headers.extend(signer.action_headers(&ctx)?.unwrap_or_default());
+            }
+        }
+        Ok(headers)
+    }
+
     /// Next millisecond timestamp/nonce from the configured [`Nonce`] source.
     fn nonce(&self) -> u64 {
         self.config.nonce.next()
@@ -476,13 +508,17 @@ impl Client {
         let body_bytes = serde_json::to_vec(body)?;
         let creds = self.creds()?;
         let _turn = write_turn(creds).await;
-        let headers = creds.auth_headers(&SigningContext {
-            method: method.as_str(),
-            path,
-            query: "",
-            body: &body_bytes,
-            timestamp_ms: self.nonce(),
-        })?;
+        let headers = self.sign(
+            creds,
+            SigningContext {
+                method: method.as_str(),
+                path,
+                query: "",
+                body: &body_bytes,
+                timestamp_ms: self.nonce(),
+                deployment_domain: None,
+            },
+        )?;
         let mut req = self
             .http
             .request(method, format!("{base}{path}"))
@@ -511,13 +547,17 @@ impl Client {
         let base = self.base()?;
         let creds = self.creds()?;
         let _turn = write_turn(creds).await;
-        let headers = creds.auth_headers(&SigningContext {
-            method: method.as_str(),
-            path,
-            query: &qs,
-            body: b"",
-            timestamp_ms: self.nonce(),
-        })?;
+        let headers = self.sign(
+            creds,
+            SigningContext {
+                method: method.as_str(),
+                path,
+                query: &qs,
+                body: b"",
+                timestamp_ms: self.nonce(),
+                deployment_domain: None,
+            },
+        )?;
         let url = if qs.is_empty() {
             format!("{base}{path}")
         } else {
@@ -844,6 +884,7 @@ mod tests {
                 query: "",
                 body: &[],
                 timestamp_ms: 1_700_000_000_000,
+                deployment_domain: None,
             })
             .unwrap()
             .into_iter()

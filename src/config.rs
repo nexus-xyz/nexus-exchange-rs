@@ -190,6 +190,7 @@ pub struct CustomNetwork {
     funds: Funds,
     has_faucet: bool,
     signing_domain: Option<SigningDomain>,
+    deployment_domain: Option<String>,
 }
 
 impl CustomNetwork {
@@ -224,6 +225,7 @@ impl CustomNetwork {
             funds,
             has_faucet: false,
             signing_domain: None,
+            deployment_domain: None,
         })
     }
 
@@ -272,6 +274,15 @@ impl CustomNetwork {
         self
     }
 
+    /// Declare the deployment's name, the `domain` its signed trading actions
+    /// carry (`devnet` on the internal apps-dev deployment). It is the value
+    /// the deployment's operator configures, and it is not discoverable from
+    /// the host. See [`Network::deployment_domain`].
+    pub fn with_deployment_domain(mut self, domain: impl Into<String>) -> Self {
+        self.deployment_domain = Some(domain.into());
+        self
+    }
+
     /// The caller-supplied label. Identifies this target in diagnostics and is
     /// the key under which per-network credentials are namespaced, which is why
     /// it is required and constrained (see [`new`](Self::new)).
@@ -302,6 +313,7 @@ impl CustomNetwork {
             funds: Funds::Unknown,
             has_faucet: false,
             signing_domain: None,
+            deployment_domain: None,
         }
     }
 }
@@ -570,6 +582,25 @@ impl Network {
                 salt: Some(crate::auth::eth::network_salt(self.label())),
             }),
             Network::Custom(custom) => custom.signing_domain,
+        }
+    }
+
+    /// The deployment name signed trading actions carry in their `domain`
+    /// field, or `None` when this target declares none.
+    ///
+    /// When it is `Some`, an [`AgentSigner`](crate::AgentSigner) signs the
+    /// eight order-path routes as typed trading actions (`x-action-*`) and a
+    /// [`Config::with_action_signer`] adds one to an HMAC key's requests. When
+    /// it is `None`, requests are signed as before.
+    ///
+    /// `None` for every built-in network: the public hosts' agent verifier
+    /// configures no deployment domain today and refuses a typed action, so the
+    /// SDK does not guess one. A [`Custom`](Self::Custom) target reports what
+    /// [`CustomNetwork::with_deployment_domain`] declared.
+    pub fn deployment_domain(&self) -> Option<&str> {
+        match self {
+            Network::Custom(custom) => custom.deployment_domain.as_deref(),
+            Network::Mainnet | Network::Testnet | Network::Local => None,
         }
     }
 }
@@ -967,6 +998,7 @@ pub struct Config {
     pub(crate) ws: WsConfig,
     pub(crate) rate_limit: RateLimit,
     pub(crate) credentials: Option<Arc<dyn Credential>>,
+    pub(crate) action_signer: Option<Arc<crate::AgentSigner>>,
     pub(crate) nonce: Arc<dyn Nonce>,
     pub(crate) timeout: Duration,
     pub(crate) retry: RetryConfig,
@@ -986,6 +1018,7 @@ impl Config {
             ws: WsConfig::default(),
             rate_limit: RateLimit::default(),
             credentials: None,
+            action_signer: None,
             nonce: Arc::new(SystemTimeNonce),
             timeout: DEFAULT_TIMEOUT,
             retry: RetryConfig::default(),
@@ -1153,6 +1186,25 @@ impl Config {
     /// [`AgentSigner`](crate::AgentSigner).
     pub fn agent_key(mut self, signer: crate::AgentSigner) -> Self {
         self.credentials = Some(signer.into_arc());
+        self
+    }
+
+    /// Sign the trading actions of requests the configured credential
+    /// authenticates, such as an HMAC key's, with this registered agent key.
+    ///
+    /// The server reads an HMAC key as identifying the caller only: each of the
+    /// eight order-path routes also takes an EIP-712 action signed by the
+    /// account's key or an agent key active for it, and refuses an order
+    /// without one once it enforces signed actions. On a target with a
+    /// [deployment domain](Network::deployment_domain), this adds
+    /// `x-action-signature`, `x-action-timestamp` and `x-action-nonce` (and
+    /// `x-acting-account`, see
+    /// [`AgentSigner::with_acting_account`](crate::AgentSigner::with_acting_account))
+    /// to those routes. Name the agent's account with
+    /// [`AgentSigner::with_account`](crate::AgentSigner::with_account). Not
+    /// needed with [`agent_key`](Self::agent_key), which signs its own actions.
+    pub fn with_action_signer(mut self, signer: crate::AgentSigner) -> Self {
+        self.action_signer = Some(Arc::new(signer));
         self
     }
 

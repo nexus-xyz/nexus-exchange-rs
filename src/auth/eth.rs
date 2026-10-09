@@ -346,7 +346,7 @@ fn revoke_agent_key_digest(
 }
 
 /// Collect a Keccak256 hasher into a fixed `[u8; 32]`.
-fn finalize32(hasher: Keccak256) -> [u8; 32] {
+pub(super) fn finalize32(hasher: Keccak256) -> [u8; 32] {
     let out = hasher.finalize();
     let mut d = [0u8; 32];
     d.copy_from_slice(&out);
@@ -354,14 +354,14 @@ fn finalize32(hasher: Keccak256) -> [u8; 32] {
 }
 
 /// Left-pad a `u64` into a 32-byte big-endian ABI word (`uint256`).
-fn u256(v: u64) -> [u8; 32] {
+pub(super) fn u256(v: u64) -> [u8; 32] {
     let mut b = [0u8; 32];
     b[24..].copy_from_slice(&v.to_be_bytes());
     b
 }
 
 /// Right-align a 20-byte address into a 32-byte ABI word (`address`).
-fn address_word(addr: &[u8; 20]) -> [u8; 32] {
+pub(super) fn address_word(addr: &[u8; 20]) -> [u8; 32] {
     let mut b = [0u8; 32];
     b[12..].copy_from_slice(addr);
     b
@@ -375,7 +375,7 @@ fn strip_0x(s: &str) -> &str {
 }
 
 /// Parse a `0x`-prefixed 20-byte hex address.
-fn parse_address(s: &str) -> Result<[u8; 20]> {
+pub(super) fn parse_address(s: &str) -> Result<[u8; 20]> {
     let bytes = hex::decode(strip_0x(s))
         .map_err(|_| Error::invalid_request("agent address must be hex"))?;
     if bytes.len() != 20 {

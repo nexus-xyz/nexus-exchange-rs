@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.13.0...v0.13.1) - 2026-10-09
+
+### Added
+
+- *(auth)* sign the typed trading actions on the eight order routes (ENG-20652) ([#180](https://github.com/nexus-xyz/nexus-exchange-rs/pull/180))
+
+### Fixed
+
+- *(types)* decode the CCXT-renamed fields on funding, orders, positions and funds (ENG-20916) ([#179](https://github.com/nexus-xyz/nexus-exchange-rs/pull/179))
+
 ## [0.13.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.12.0...v0.13.0) - 2026-10-08
 
 ### Added

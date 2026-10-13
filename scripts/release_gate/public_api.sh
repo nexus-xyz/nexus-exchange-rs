@@ -63,6 +63,12 @@ if [ "$mode" = "write" ]; then
   exit 0
 fi
 
+# Without the committed file, `diff` fails as an error, not as a difference, and the counts below
+# would read "0 gone, 0 new". Say what is wrong instead.
+if [ ! -f "$SNAPSHOT" ]; then
+  echo "::error title=prepublish-surface::$SNAPSHOT is missing. Run scripts/release_gate/public_api.sh --write and commit it."
+  exit 1
+fi
 if diff -u --label "$SNAPSHOT (committed)" --label "$SNAPSHOT (built ${name}-${version}.crate)" \
   "$SNAPSHOT" "$work/public-api.txt" > "$work/diff.txt"; then
   echo "public surface matches $SNAPSHOT ($(wc -l < "$SNAPSHOT") items)"

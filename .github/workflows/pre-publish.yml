@@ -18,9 +18,10 @@ name: Pre-publish
 # skipped reports nothing, and the PR waits on it forever. What changes on a release PR (head branch
 # `release-plz-*`), or on a PR that edits this gate:
 #   * smoke makes the testnet read. Elsewhere it packs and builds a consumer only, and says so.
-#     Either way, smoke.sh first runs the built consumer against nothing (must exit 2, unreachable)
-#     and against a local stub that has no markets (must exit 1, failed), so the exit codes the
-#     job's outcome rests on are exercised on every PR. See the header of smoke.sh.
+#     Either way, smoke.sh first runs the built consumer against nothing and against a local stub
+#     answering 503 (both must exit 2, unreachable), and against a local stub that has no markets
+#     (must exit 1, failed), so exits 2 and 1 are exercised on every PR. Exit 0 (passed) is
+#     exercised only by the testnet read itself. See the header of smoke.sh.
 #   * verdict is enforced on a release PR. Elsewhere it reports what the next release will need.
 # The surface check is enforced on every PR, because the PR that changes the API is where the
 # snapshot has to move.

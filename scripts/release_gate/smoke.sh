@@ -10,12 +10,15 @@
 # on 1 and on 2, under different names. Unreachable is not a pass, and it is not the SDK's fault:
 # re-run the job once testnet answers.
 #
-# Those outcomes are exercised, not only asserted. In both modes, right after the build and before
-# any testnet read, the just-built smoke runs twice with NEXUS_SMOKE_BASE_URL overridden: at
-# http://127.0.0.1:1, where nothing listens, it must exit 2; at stub_server.py, which answers every
-# request with an empty list, it must exit 1. Any other code fails this script with a
-# `prepublish-smoke (outcomes)` error naming the case. The probes run the binary directly, so the
-# annotations below for a real 1 or 2 are not printed for them.
+# Exits 2 and 1 are exercised on every PR, not only asserted. In both modes, right after the build
+# and before any testnet read, the just-built smoke runs three times with NEXUS_SMOKE_BASE_URL
+# overridden: at http://127.0.0.1:1, where nothing listens, it must exit 2; at stub_server.py 503,
+# which answers every request with a 503 like an outage, it must exit 2; at stub_server.py, which
+# answers every request with an empty list, it must exit 1. Exit 0 is exercised only by the real
+# read, so only on a release PR or a change to this gate. Each probe runs under a 60 s timeout, and
+# a wrong code or a timeout fails this script with a `prepublish-smoke (outcomes)` error naming the
+# case. The probes run the binary directly with its stdout and stderr captured, so none of the
+# annotations below for a real 1 or 2 are printed for them: each logs one plain line instead.
 set -euo pipefail
 
 mode="read"
@@ -69,35 +72,54 @@ smoke="${target_dir}/debug/nexus-exchange-smoke"
 
 # The outcome probes (header). $1 names the case, $2 is the base URL, $3 the exit code it must give.
 probe() {
-  local out got
+  local got first
   set +e
-  out="$(NEXUS_SMOKE_BASE_URL="$2" "$smoke")"
+  NEXUS_SMOKE_BASE_URL="$2" timeout 60 "$smoke" > "$work/probe.out" 2>&1
   got=$?
   set -e
-  echo "outcome probe, $1: exit ${got}: ${out}"
+  first="$(head -n 1 "$work/probe.out")"
+  echo "outcome probe, $1: exit ${got}: ${first}"
+  if [ "$got" = 124 ]; then
+    echo "::error title=prepublish-smoke (outcomes)::$1: the smoke did not finish within 60 s, so its exit codes can't be trusted."
+    exit 1
+  fi
   if [ "$got" != "$3" ]; then
-    echo "::error title=prepublish-smoke (outcomes)::$1: the smoke should exit $3 and exited ${got}, so its exit codes can't be trusted. ${out}"
+    echo "::error title=prepublish-smoke (outcomes)::$1: the smoke should exit $3 and exited ${got}, so its exit codes can't be trusted. ${first}"
     exit 1
   fi
 }
 
+# Starts stub_server.py with the given arguments (none, or a status) and sets stub_pid and port.
+start_stub() {
+  python3 -I scripts/release_gate/stub_server.py "$@" > "$work/stub.out" &
+  stub_pid=$!
+  # The stub prints its port as its first line; wait for that line, or for the stub to die.
+  for _ in $(seq 100); do
+    if [ "$(wc -l < "$work/stub.out")" -ge 1 ] || ! kill -0 "$stub_pid" 2> /dev/null; then break; fi
+    sleep 0.1
+  done
+  port="$(head -n 1 "$work/stub.out")"
+  if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+    echo "::error title=prepublish-smoke (outcomes)::stub_server.py $* did not print a port (got '${port}'), so its case could not run."
+    exit 1
+  fi
+}
+
+stop_stub() {
+  kill "$stub_pid" 2> /dev/null || true
+  wait "$stub_pid" 2> /dev/null || true
+  stub_pid=""
+}
+
 probe "nothing listening (http://127.0.0.1:1)" "http://127.0.0.1:1" 2
 
-python3 -I scripts/release_gate/stub_server.py > "$work/stub.out" &
-stub_pid=$!
-# The stub prints its port as its first line; wait for that line, or for the stub to die.
-for _ in $(seq 100); do
-  if [ "$(wc -l < "$work/stub.out")" -ge 1 ] || ! kill -0 "$stub_pid" 2> /dev/null; then break; fi
-  sleep 0.1
-done
-port="$(head -n 1 "$work/stub.out")"
-if ! [[ "$port" =~ ^[0-9]+$ ]]; then
-  echo "::error title=prepublish-smoke (outcomes)::stub_server.py did not print a port (got '${port}'), so the exit-1 case could not run."
-  exit 1
-fi
+start_stub 503
+probe "a stub that answers 503 (http://127.0.0.1:${port})" "http://127.0.0.1:${port}" 2
+stop_stub
+
+start_stub
 probe "a stub that answers with no markets (http://127.0.0.1:${port})" "http://127.0.0.1:${port}" 1
-kill "$stub_pid" 2> /dev/null || true
-stub_pid=""
+stop_stub
 
 summary() {
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then

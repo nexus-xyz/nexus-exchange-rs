@@ -19,6 +19,15 @@ The Rust SDK for the Nexus Exchange API.
 
 - `cargo fmt`, `cargo clippy -- -D warnings`, and `cargo test` all pass — CI
   enforces these.
+- If you changed the public API, regenerate `public-api.txt` with
+  `scripts/release_gate/public_api.sh --write` and commit it in the same PR.
+  `prepublish-surface` fails on any difference, so a removal shows up in the diff
+  a reviewer reads (ENG-18798). The listing names items by their dependency and
+  std paths (`serde_core::`, `rust_decimal::`, `alloc::rcs::arc::Arc`), so a
+  dependency bump, or a bump of `PUBLIC_API_NIGHTLY` in
+  `.github/workflows/pre-publish.yml` (with `CARGO_PUBLIC_API_VERSION`, see the
+  header of `public_api.sh`), can need a `--write` commit even when nothing
+  changes for users.
 
 ## API contract
 

@@ -1,6 +1,12 @@
 # Global config section (called [workspace] in release-plz schema, not a Cargo workspace assertion).
 [workspace]
 allow_dirty = false
+# Publish only when the push to main is a release PR's merge (ENG-18798). The default, true, makes
+# `release-plz release` publish HEAD on ANY push while main's version is unpublished, for example
+# after a release PR merged and its publish failed. Then the next push, a bot's auto-merged spec
+# bump included, would publish a crate nobody reviewed as a release. With false, a failed publish
+# is retried by re-running the release PR merge's own run, which only a person does.
+release_always = false
 
 [[package]]
 name = "nexus-exchange"

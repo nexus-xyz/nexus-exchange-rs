@@ -15,7 +15,8 @@
 # overridden: at http://127.0.0.1:1, where nothing listens, it must exit 2; at stub_server.py 503,
 # which answers every request with a 503 like an outage, it must exit 2; at stub_server.py, which
 # answers every request with an empty list, it must exit 1. Exit 0 is exercised only by the real
-# read, so only on a release PR or a change to this gate. Each probe runs under a 60 s timeout, and
+# read, so only on a release PR or a change to this gate. Each probe runs under a 180 s timeout
+# (`timeout`, or `gtimeout`; with neither, as on a stock Mac, without a limit, and it says so), and
 # a wrong code or a timeout fails this script with a `prepublish-smoke (outcomes)` error naming the
 # case. The probes run the binary directly with its stdout and stderr captured, so none of the
 # annotations below for a real 1 or 2 are printed for them: each logs one plain line instead.
@@ -33,9 +34,9 @@ cd "$root"
 # The target directory too, not a hardcoded ./target: `cargo package` writes into
 # CARGO_TARGET_DIR (or build.target-dir) when one is set.
 meta="$(cargo metadata --no-deps --format-version 1)"
-name="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["name"])' <<<"$meta")"
-version="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])' <<<"$meta")"
-target_dir="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])' <<<"$meta")"
+name="$(python3 -I -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["name"])' <<<"$meta")"
+version="$(python3 -I -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])' <<<"$meta")"
+target_dir="$(python3 -I -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])' <<<"$meta")"
 
 work="$(mktemp -d)"
 stub_pid=""
@@ -70,17 +71,29 @@ CARGO_TARGET_DIR="$target_dir" cargo build --quiet --manifest-path "$work/smoke/
 echo "built a consumer of ${name}-${version}.crate"
 smoke="${target_dir}/debug/nexus-exchange-smoke"
 
+# 180 s, not less: the SDK retries transient errors with backoff before it gives up. `timeout` is GNU
+# coreutils; a Mac may have it as `gtimeout`, or not at all, and then the probes run unbounded.
+if command -v timeout > /dev/null; then
+  probe_timeout=(timeout 180)
+elif command -v gtimeout > /dev/null; then
+  probe_timeout=(gtimeout 180)
+else
+  probe_timeout=()
+  echo "note: neither timeout nor gtimeout is installed, so the outcome probes run without a time limit"
+fi
+
 # The outcome probes (header). $1 names the case, $2 is the base URL, $3 the exit code it must give.
 probe() {
   local got first
   set +e
-  NEXUS_SMOKE_BASE_URL="$2" timeout 60 "$smoke" > "$work/probe.out" 2>&1
+  # The `+` form, because bash 3.2 (a Mac's) treats an empty array as unset under `set -u`.
+  NEXUS_SMOKE_BASE_URL="$2" ${probe_timeout[@]+"${probe_timeout[@]}"} "$smoke" > "$work/probe.out" 2>&1
   got=$?
   set -e
   first="$(head -n 1 "$work/probe.out")"
   echo "outcome probe, $1: exit ${got}: ${first}"
   if [ "$got" = 124 ]; then
-    echo "::error title=prepublish-smoke (outcomes)::$1: the smoke did not finish within 60 s, so its exit codes can't be trusted."
+    echo "::error title=prepublish-smoke (outcomes)::$1: the smoke did not finish within 180 s, so its exit codes can't be trusted."
     exit 1
   fi
   if [ "$got" != "$3" ]; then
@@ -91,6 +104,8 @@ probe() {
 
 # Starts stub_server.py with the given arguments (none, or a status) and sets stub_pid and port.
 start_stub() {
+  # Created first, so the wait below never reads a file the stub has not opened yet.
+  : > "$work/stub.out"
   python3 -I scripts/release_gate/stub_server.py "$@" > "$work/stub.out" &
   stub_pid=$!
   # The stub prints its port as its first line; wait for that line, or for the stub to die.

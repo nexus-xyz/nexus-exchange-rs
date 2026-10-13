@@ -9,6 +9,13 @@
 # Exit codes, kept apart on purpose: 0 passed, 1 failed, 2 testnet unreachable. The workflow fails
 # on 1 and on 2, under different names. Unreachable is not a pass, and it is not the SDK's fault:
 # re-run the job once testnet answers.
+#
+# Those outcomes are exercised, not only asserted. In both modes, right after the build and before
+# any testnet read, the just-built smoke runs twice with NEXUS_SMOKE_BASE_URL overridden: at
+# http://127.0.0.1:1, where nothing listens, it must exit 2; at stub_server.py, which answers every
+# request with an empty list, it must exit 1. Any other code fails this script with a
+# `prepublish-smoke (outcomes)` error naming the case. The probes run the binary directly, so the
+# annotations below for a real 1 or 2 are not printed for them.
 set -euo pipefail
 
 mode="read"
@@ -28,7 +35,12 @@ version="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0
 target_dir="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])' <<<"$meta")"
 
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+stub_pid=""
+cleanup() {
+  if [ -n "$stub_pid" ]; then kill "$stub_pid" 2> /dev/null || true; fi
+  rm -rf "$work"
+}
+trap cleanup EXIT
 
 cargo package --locked --allow-dirty --no-verify --quiet
 tar -xzf "${target_dir}/package/${name}-${version}.crate" -C "$work"
@@ -53,6 +65,39 @@ EOF
 cp "$work/${name}-${version}/Cargo.lock" "$work/smoke/Cargo.lock"
 CARGO_TARGET_DIR="$target_dir" cargo build --quiet --manifest-path "$work/smoke/Cargo.toml"
 echo "built a consumer of ${name}-${version}.crate"
+smoke="${target_dir}/debug/nexus-exchange-smoke"
+
+# The outcome probes (header). $1 names the case, $2 is the base URL, $3 the exit code it must give.
+probe() {
+  local out got
+  set +e
+  out="$(NEXUS_SMOKE_BASE_URL="$2" "$smoke")"
+  got=$?
+  set -e
+  echo "outcome probe, $1: exit ${got}: ${out}"
+  if [ "$got" != "$3" ]; then
+    echo "::error title=prepublish-smoke (outcomes)::$1: the smoke should exit $3 and exited ${got}, so its exit codes can't be trusted. ${out}"
+    exit 1
+  fi
+}
+
+probe "nothing listening (http://127.0.0.1:1)" "http://127.0.0.1:1" 2
+
+python3 -I scripts/release_gate/stub_server.py > "$work/stub.out" &
+stub_pid=$!
+# The stub prints its port as its first line; wait for that line, or for the stub to die.
+for _ in $(seq 100); do
+  if [ "$(wc -l < "$work/stub.out")" -ge 1 ] || ! kill -0 "$stub_pid" 2> /dev/null; then break; fi
+  sleep 0.1
+done
+port="$(head -n 1 "$work/stub.out")"
+if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+  echo "::error title=prepublish-smoke (outcomes)::stub_server.py did not print a port (got '${port}'), so the exit-1 case could not run."
+  exit 1
+fi
+probe "a stub that answers with no markets (http://127.0.0.1:${port})" "http://127.0.0.1:${port}" 1
+kill "$stub_pid" 2> /dev/null || true
+stub_pid=""
 
 summary() {
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
@@ -67,7 +112,7 @@ if [ "$mode" = "build" ]; then
 fi
 
 set +e
-line="$("${target_dir}/debug/nexus-exchange-smoke")"
+line="$("$smoke")"
 code=$?
 set -e
 echo "$line"

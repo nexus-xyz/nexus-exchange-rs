@@ -49,9 +49,9 @@ fi
 # The target directory too, not a hardcoded ./target: `cargo package` writes into
 # CARGO_TARGET_DIR (or build.target-dir) when one is set.
 meta="$(cargo metadata --no-deps --format-version 1)"
-name="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["name"])' <<<"$meta")"
-version="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])' <<<"$meta")"
-target_dir="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])' <<<"$meta")"
+name="$(python3 -I -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["name"])' <<<"$meta")"
+version="$(python3 -I -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])' <<<"$meta")"
+target_dir="$(python3 -I -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])' <<<"$meta")"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -77,8 +77,8 @@ if diff -u --label "$SNAPSHOT (committed)" --label "$SNAPSHOT (built ${name}-${v
   exit 0
 fi
 
-removed="$(grep -c '^-[^-]' "$work/diff.txt" || true)"
-added="$(grep -c '^+[^+]' "$work/diff.txt" || true)"
+removed="$(tail -n +3 "$work/diff.txt" | grep -c '^-' || true)"
+added="$(tail -n +3 "$work/diff.txt" | grep -c '^+' || true)"
 cat "$work/diff.txt"
 echo "::error title=prepublish-surface::The built crate's public API differs from $SNAPSHOT: ${removed} item(s) gone or changed, ${added} new. If that is deliberate, run scripts/release_gate/public_api.sh --write and commit $SNAPSHOT in this PR, so the change is in the diff a reviewer reads. A removal or change is breaking."
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then

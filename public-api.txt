@@ -589,9 +589,9 @@ impl<'de> serde_core::de::Deserialize<'de> for nexus_exchange::types::TimeInForc
 pub fn nexus_exchange::types::TimeInForce::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 #[non_exhaustive] pub struct nexus_exchange::types::AccountFees
 pub nexus_exchange::types::AccountFees::discounts: alloc::vec::Vec<nexus_exchange::types::FeeDiscount>
-pub nexus_exchange::types::AccountFees::maker_fee_bps: i32
+pub nexus_exchange::types::AccountFees::maker_fee_bps: rust_decimal::decimal::Decimal
 pub nexus_exchange::types::AccountFees::schedule: alloc::string::String
-pub nexus_exchange::types::AccountFees::taker_fee_bps: i32
+pub nexus_exchange::types::AccountFees::taker_fee_bps: rust_decimal::decimal::Decimal
 pub nexus_exchange::types::AccountFees::tier: alloc::string::String
 pub nexus_exchange::types::AccountFees::volume_30d: rust_decimal::decimal::Decimal
 pub nexus_exchange::types::AccountFees::volume_30d_estimated: bool

@@ -33,6 +33,9 @@ jobs:
           # secret exists.
           token: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          # Pinned by SHA, the action can't read the toolchain from its ref name.
+          toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # release-plz publishes only when this push is a release PR's merge (`release_always = false`
       # in release-plz.toml). Ask the same question here, so a crates.io token is minted only for
@@ -108,6 +111,9 @@ jobs:
           # merge BEFORE the RELEASE_PLZ_TOKEN secret exists.
           token: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          # Pinned by SHA, the action can't read the toolchain from its ref name.
+          toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: MarcoIeni/release-plz-action@8921286633dfa0c4020f7f30bd1c14fe19cbb10e # v0.5.142
         with:

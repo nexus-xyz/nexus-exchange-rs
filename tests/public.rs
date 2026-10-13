@@ -64,6 +64,28 @@ async fn fetch_markets_decodes_the_served_shape() {
     assert_eq!(m.max_leverage, 50);
 }
 
+/// From spec 0.9.123 `taker_fee_bps` / `maker_rebate_bps` can be a tenth of a
+/// bps (ENG-21111). `Market` does not type them (the pinned spec does not
+/// declare them), so a row carrying a fractional rate must still decode.
+#[tokio::test]
+async fn fetch_markets_decodes_whole_and_fractional_fee_rates() {
+    // Parsed from text, so a whole rate stays a JSON integer (`5`, not `5.0`).
+    for (taker, maker) in [("5", "-2"), ("2.8", "-0.4"), ("2.8", "0.4")] {
+        let mut row = served_market();
+        row["taker_fee_bps"] = serde_json::from_str(taker).unwrap();
+        row["maker_rebate_bps"] = serde_json::from_str(maker).unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/markets"))
+            .respond_with(ResponseTemplate::new(200).set_body_json([row]))
+            .mount(&server)
+            .await;
+
+        let markets = client(server.uri()).fetch_markets().await.unwrap();
+        assert_eq!(markets[0].market_id, "BTC-USDX-PERP");
+    }
+}
+
 #[test]
 fn market_without_an_identifier_fails_to_decode() {
     // The identifiers stay required: a missing one is a decode error, not "".

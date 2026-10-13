@@ -32,7 +32,9 @@
 //! [`PortfolioPoint::equity`] derived from the same value), and [`Position`]
 //! (`leverage` only — the API sends it as a JSON number; every monetary field on
 //! [`Position`], including the enriched risk fields, is a `str`-adapter field
-//! and therefore exact).
+//! and therefore exact). [`AccountFees`] (`maker_fee_bps`, `taker_fee_bps`) is
+//! a `float`-adapter type too, but its rates have at most one decimal place, so
+//! the adapter recovers them exactly (`2.8` decodes as exactly `2.8`).
 //!
 //! The clean fix is on the API side: if these endpoints emitted decimal strings
 //! like the others, the SDK could use the `str` adapter everywhere and every
@@ -1555,12 +1557,22 @@ pub struct EquityPoint {
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct AccountFees {
-    /// Effective maker fee, in basis points. **Negative means the maker is paid
-    /// a rebate** — e.g. `-2` is a 0.02% rebate — so this is deliberately
-    /// signed.
-    pub maker_fee_bps: i32,
-    /// Effective taker fee, in basis points — e.g. `5` is a 0.05% fee.
-    pub taker_fee_bps: i32,
+    /// Effective maker fee, in basis points, to 0.1 bps. **Negative means the
+    /// maker is paid a rebate** — e.g. `-2` is a 0.02% rebate and `-0.4` a
+    /// 0.004% rebate — so this is deliberately signed. **Positive means the
+    /// maker pays a fee.**
+    ///
+    /// Sent as a JSON number: an integer for a whole rate, one decimal place
+    /// for a fractional one (from spec 0.9.123). It uses the `float` serde
+    /// adapter, and a rate with one decimal place survives that adapter
+    /// exactly: `-0.4` decodes as exactly `-0.4`.
+    #[serde(with = "rust_decimal::serde::float")]
+    pub maker_fee_bps: Decimal,
+    /// Effective taker fee, in basis points, to 0.1 bps — e.g. `5` is a 0.05%
+    /// fee and `2.8` a 0.028% fee. Decoded like
+    /// [`maker_fee_bps`](Self::maker_fee_bps), and exact in the same way.
+    #[serde(with = "rust_decimal::serde::float")]
+    pub taker_fee_bps: Decimal,
     /// Fee tier for the account. Currently always `base`: there are no
     /// per-account fee tiers yet (distinct from rate-limit tiers). Treat as an
     /// **open string** — new values appear when the fee model lands.

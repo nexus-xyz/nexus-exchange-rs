@@ -724,9 +724,11 @@ impl Client {
     /// (`GET /account/fees`). Requires credentials.
     ///
     /// Returns the forward-looking schedule rate, not a realized per-fill
-    /// average. Note [`AccountFees::maker_fee_bps`] is signed — a negative value
-    /// is a maker *rebate* — and [`AccountFees::schedule`] scopes which
-    /// per-market schedule the rate belongs to.
+    /// average. The rates are [`Decimal`](crate::types::Decimal) basis points
+    /// and may be fractional (`2.8`). Note [`AccountFees::maker_fee_bps`] is
+    /// signed — a negative value is a maker *rebate*, a positive one a fee the
+    /// maker pays — and [`AccountFees::schedule`] scopes which per-market
+    /// schedule the rate belongs to.
     pub async fn fetch_trading_fees(&self) -> Result<AccountFees> {
         self.signed_get("/account/fees", &[]).await
     }

@@ -79,7 +79,7 @@ async fn register_agent_posts_eip712_body_and_parses() {
         .register_agent(
             agent,
             1_782_000_000_000,
-            1,
+            1_781_913_600_000,
             20056,
             &nexus_exchange::Network::Local,
             Some("my-bot".into()),
@@ -92,7 +92,7 @@ async fn register_agent_posts_eip712_body_and_parses() {
             "wallet": TEST_ADDR,
             "agent": agent,
             "expires_at": 1_782_000_000_000u64,
-            "nonce": 1,
+            "nonce": 1_781_913_600_000u64,
             "signature": registration.signature,
             "label": "my-bot",
         })))

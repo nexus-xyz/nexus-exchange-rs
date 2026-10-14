@@ -58,7 +58,8 @@ pub struct AgentRegistration {
     pub agent: String,
     /// Expiry as Unix milliseconds.
     pub expires_at: u64,
-    /// Monotonic nonce.
+    /// The signing time as Unix milliseconds. The server refuses it when it is
+    /// older than 5 minutes or more than 60 s ahead of its clock.
     pub nonce: u64,
     /// EIP-712 signature over `RegisterAgent{agent, expiresAt, nonce}`,
     /// `0x`-prefixed (65 bytes).
@@ -135,9 +136,13 @@ impl EthSigner {
     /// `POST /agents/register` body.
     ///
     /// `agent` is the agent keypair's address (`0x`-prefixed, 20 bytes).
-    /// `expires_at_ms` and `nonce` are caller-supplied — the spec expects the
-    /// expiry in `[now+1d, now+90d]` and suggests the current Unix-ms timestamp
-    /// as a safe starting nonce. `chain_id` is the EIP-712 domain chain id (the
+    /// `expires_at_ms` and `nonce` are caller-supplied. The spec expects the
+    /// expiry in `[now+1d, now+90d]`. `nonce` is the signing time in Unix
+    /// milliseconds: read the clock once, right before signing, and send the
+    /// result promptly. The server refuses a nonce older than 5 minutes or more
+    /// than 60 s ahead of its clock (the window revoke uses), and one that is not
+    /// above the last nonce served for this agent key, so a constant or a
+    /// counter is refused. `chain_id` is the EIP-712 domain chain id (the
     /// exchange's testnet chain id); it is part of the signed payload, so it
     /// must match what the server verifies against.
     ///

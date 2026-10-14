@@ -58,8 +58,10 @@ pub struct AgentRegistration {
     pub agent: String,
     /// Expiry as Unix milliseconds.
     pub expires_at: u64,
-    /// The signing time as Unix milliseconds. The server refuses it when it is
-    /// older than 5 minutes or more than 60 s ahead of its clock.
+    /// The signing time as Unix milliseconds. The server refuses a nonce that
+    /// is not above the last one served for this agent key; once freshness is
+    /// enforced (ENG-21517), it also refuses one older than 5 minutes or more
+    /// than 60 s ahead of its clock.
     pub nonce: u64,
     /// EIP-712 signature over `RegisterAgent{agent, expiresAt, nonce}`,
     /// `0x`-prefixed (65 bytes).
@@ -139,12 +141,13 @@ impl EthSigner {
     /// `expires_at_ms` and `nonce` are caller-supplied. The spec expects the
     /// expiry in `[now+1d, now+90d]`. `nonce` is the signing time in Unix
     /// milliseconds: read the clock once, right before signing, and send the
-    /// result promptly. The server refuses a nonce older than 5 minutes or more
-    /// than 60 s ahead of its clock (the window revoke uses), and one that is not
-    /// above the last nonce served for this agent key, so a constant or a
-    /// counter is refused. `chain_id` is the EIP-712 domain chain id (the
-    /// exchange's testnet chain id); it is part of the signed payload, so it
-    /// must match what the server verifies against.
+    /// result promptly. The server refuses a nonce that is not above the last
+    /// one served for this agent key, so a constant fails; once freshness is
+    /// enforced (ENG-21517), it also refuses one older than 5 minutes or more
+    /// than 60 s ahead of its clock, so a counter will stop working too.
+    /// `chain_id` is the EIP-712 domain chain id (the exchange's testnet chain
+    /// id); it is part of the signed payload, so it must match what the server
+    /// verifies against.
     ///
     /// `network` is the network the registration is for. The server salts the
     /// `RegisterAgent` domain with `keccak256(network name)` (ENG-15643), so a

@@ -23,6 +23,7 @@ pub nexus_exchange::auth::AgentRegistration::expires_at: u64
 pub nexus_exchange::auth::AgentRegistration::label: core::option::Option<alloc::string::String>
 pub nexus_exchange::auth::AgentRegistration::nonce: u64
 pub nexus_exchange::auth::AgentRegistration::signature: alloc::string::String
+pub nexus_exchange::auth::AgentRegistration::terms_version: core::option::Option<u32>
 pub nexus_exchange::auth::AgentRegistration::wallet: alloc::string::String
 impl core::clone::Clone for nexus_exchange::auth::AgentRegistration
 pub fn nexus_exchange::auth::AgentRegistration::clone(&self) -> Self
@@ -57,6 +58,7 @@ impl nexus_exchange::EthSigner
 pub fn nexus_exchange::EthSigner::address(&self) -> alloc::string::String
 pub fn nexus_exchange::EthSigner::from_hex(impl core::convert::Into<alloc::string::String>) -> nexus_exchange::Result<Self>
 pub fn nexus_exchange::EthSigner::register_agent(&self, &str, u64, u64, u64, &nexus_exchange::Network, core::option::Option<alloc::string::String>) -> nexus_exchange::Result<nexus_exchange::auth::AgentRegistration>
+pub fn nexus_exchange::EthSigner::register_agent_with_terms(&self, &str, u64, u64, u64, &nexus_exchange::Network, u32, core::option::Option<alloc::string::String>) -> nexus_exchange::Result<nexus_exchange::auth::AgentRegistration>
 pub fn nexus_exchange::EthSigner::revoke_agent(&self, &str, u64, u64, &nexus_exchange::Network) -> nexus_exchange::Result<nexus_exchange::auth::AgentRevocation>
 pub fn nexus_exchange::EthSigner::sign_in(&self) -> nexus_exchange::Result<nexus_exchange::auth::LoginRequest>
 impl core::fmt::Debug for nexus_exchange::EthSigner
@@ -1858,6 +1860,7 @@ impl nexus_exchange::EthSigner
 pub fn nexus_exchange::EthSigner::address(&self) -> alloc::string::String
 pub fn nexus_exchange::EthSigner::from_hex(impl core::convert::Into<alloc::string::String>) -> nexus_exchange::Result<Self>
 pub fn nexus_exchange::EthSigner::register_agent(&self, &str, u64, u64, u64, &nexus_exchange::Network, core::option::Option<alloc::string::String>) -> nexus_exchange::Result<nexus_exchange::auth::AgentRegistration>
+pub fn nexus_exchange::EthSigner::register_agent_with_terms(&self, &str, u64, u64, u64, &nexus_exchange::Network, u32, core::option::Option<alloc::string::String>) -> nexus_exchange::Result<nexus_exchange::auth::AgentRegistration>
 pub fn nexus_exchange::EthSigner::revoke_agent(&self, &str, u64, u64, &nexus_exchange::Network) -> nexus_exchange::Result<nexus_exchange::auth::AgentRevocation>
 pub fn nexus_exchange::EthSigner::sign_in(&self) -> nexus_exchange::Result<nexus_exchange::auth::LoginRequest>
 impl core::fmt::Debug for nexus_exchange::EthSigner

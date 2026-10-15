@@ -63,12 +63,18 @@ pub struct AgentRegistration {
     /// enforced (ENG-21517), it also refuses one older than 5 minutes or more
     /// than 60 s ahead of its clock.
     pub nonce: u64,
-    /// EIP-712 signature over `RegisterAgent{agent, expiresAt, nonce}`,
-    /// `0x`-prefixed (65 bytes).
+    /// EIP-712 signature over `RegisterAgent{agent, expiresAt, nonce}`, or
+    /// over `RegisterAgent{agent, expiresAt, nonce, termsVersion}` when
+    /// [`terms_version`](Self::terms_version) is set, `0x`-prefixed (65 bytes).
     pub signature: String,
     /// Optional human-readable label.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// The terms-of-use version the wallet accepted, signed inside
+    /// `RegisterAgent`. Set by [`EthSigner::register_agent_with_terms`];
+    /// `None` is the three-field message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terms_version: Option<u32>,
 }
 
 /// Signed `DELETE /agents/{address}` authorization (EIP-712 `RevokeAgentKey`).
@@ -164,9 +170,62 @@ impl EthSigner {
         network: &Network,
         label: Option<String>,
     ) -> Result<AgentRegistration> {
+        self.sign_registration(agent, expires_at_ms, nonce, chain_id, network, None, label)
+    }
+
+    /// [`register_agent`](Self::register_agent), signing the terms-of-use
+    /// version the user accepted into the message:
+    /// `RegisterAgent{agent, expiresAt, nonce, uint32 termsVersion}`, same
+    /// domain, and `terms_version` in the request body.
+    ///
+    /// Once the exchange requires a terms version, a registration without the
+    /// current one is refused with 403 `TermsVersionNotCurrent`. Until the
+    /// exchange verifies this shape on `POST /agents/register` (ENG-20416), it
+    /// answers 401 `signer_mismatch`, so keep using
+    /// [`register_agent`](Self::register_agent) until then.
+    #[allow(clippy::too_many_arguments)]
+    pub fn register_agent_with_terms(
+        &self,
+        agent: &str,
+        expires_at_ms: u64,
+        nonce: u64,
+        chain_id: u64,
+        network: &Network,
+        terms_version: u32,
+        label: Option<String>,
+    ) -> Result<AgentRegistration> {
+        self.sign_registration(
+            agent,
+            expires_at_ms,
+            nonce,
+            chain_id,
+            network,
+            Some(terms_version),
+            label,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn sign_registration(
+        &self,
+        agent: &str,
+        expires_at_ms: u64,
+        nonce: u64,
+        chain_id: u64,
+        network: &Network,
+        terms_version: Option<u32>,
+        label: Option<String>,
+    ) -> Result<AgentRegistration> {
         let salt = agent_domain_salt(network, "RegisterAgent")?;
         let agent_addr = parse_address(agent)?;
-        let digest = register_agent_digest(&agent_addr, expires_at_ms, nonce, chain_id, &salt);
+        let digest = register_agent_digest(
+            &agent_addr,
+            expires_at_ms,
+            nonce,
+            terms_version,
+            chain_id,
+            &salt,
+        );
         let signature = self.sign_digest(&digest)?;
         Ok(AgentRegistration {
             wallet: self.address(),
@@ -175,6 +234,7 @@ impl EthSigner {
             nonce,
             signature,
             label,
+            terms_version,
         })
     }
 
@@ -315,22 +375,31 @@ fn typed_data_digest(chain_id: u64, salt: &[u8; 32], hash_struct: Keccak256) -> 
     finalize32(h)
 }
 
-/// EIP-712 digest for `RegisterAgent{agent, expiresAt, nonce}`. Matches the
-/// server's `agent_store::eip712::register_agent_digest`.
+/// EIP-712 digest for `RegisterAgent{agent, expiresAt, nonce}`, or with
+/// `uint32 termsVersion` appended when `terms_version` is set. Matches the
+/// server's `register_agent::digest` and `digest_with_terms`.
 fn register_agent_digest(
     agent: &[u8; 20],
     expires_at: u64,
     nonce: u64,
+    terms_version: Option<u32>,
     chain_id: u64,
     salt: &[u8; 32],
 ) -> [u8; 32] {
-    let struct_type_hash =
-        Keccak256::digest(b"RegisterAgent(address agent,uint64 expiresAt,uint64 nonce)");
+    let struct_type_hash: &[u8] = match terms_version {
+        None => b"RegisterAgent(address agent,uint64 expiresAt,uint64 nonce)",
+        Some(_) => {
+            b"RegisterAgent(address agent,uint64 expiresAt,uint64 nonce,uint32 termsVersion)"
+        }
+    };
     let mut sh = Keccak256::new();
-    sh.update(struct_type_hash);
+    sh.update(Keccak256::digest(struct_type_hash));
     sh.update(address_word(agent));
     sh.update(u256(expires_at));
     sh.update(u256(nonce));
+    if let Some(version) = terms_version {
+        sh.update(u256(u64::from(version)));
+    }
     typed_data_digest(chain_id, salt, sh)
 }
 
@@ -469,6 +538,7 @@ mod tests {
             &parse_address(KAT_AGENT).unwrap(),
             KAT_EXPIRES_MS,
             KAT_NONCE,
+            None,
             KAT_CHAIN_ID,
             &network_salt("testnet"),
         );
@@ -513,6 +583,7 @@ mod tests {
             &agent_addr,
             KAT_EXPIRES_MS,
             KAT_NONCE,
+            None,
             KAT_CHAIN_ID,
             &network_salt("testnet"),
         );
@@ -534,6 +605,64 @@ mod tests {
             req.signature,
             "0x40cc533ba443982d33463c30426a3e81569d07d68be841daefb2bf6baf4c890403efb48f19c76ab06bceec7530b149a5c91d71688f6c7009de47a99d2e68af951c"
         );
+    }
+
+    /// The four-field shape, pinned against the server's
+    /// `register_agent::tests::the_digest_with_terms_for_each_network_matches_its_pinned_vector`.
+    #[test]
+    fn register_agent_with_terms_matches_the_servers_vectors() {
+        let agent_addr = parse_address(KAT_AGENT).unwrap();
+        for (network, want) in [
+            (
+                "mainnet",
+                "422802a8fc760529083693ce0a8cc3b06b2492b25723b0a4b88a26a28ec86a85",
+            ),
+            (
+                "testnet",
+                "92cd47c15ae7986416f4508923012810d6e12a22d8d8e7d734aa75d07025ad7d",
+            ),
+            (
+                "local",
+                "43c47ae217cff37b5e7b8aa5c0b82ede02d73953a3ea749270213296e1825dd9",
+            ),
+        ] {
+            let digest = register_agent_digest(
+                &agent_addr,
+                KAT_EXPIRES_MS,
+                KAT_NONCE,
+                Some(1),
+                KAT_CHAIN_ID,
+                &network_salt(network),
+            );
+            assert_eq!(hex::encode(digest), want, "{network}");
+        }
+        let req = EthSigner::from_hex(TEST_KEY)
+            .unwrap()
+            .register_agent_with_terms(
+                KAT_AGENT,
+                KAT_EXPIRES_MS,
+                KAT_NONCE,
+                KAT_CHAIN_ID,
+                &Network::Testnet,
+                1,
+                None,
+            )
+            .unwrap();
+        assert_eq!(req.terms_version, Some(1));
+        let digest = register_agent_digest(
+            &agent_addr,
+            KAT_EXPIRES_MS,
+            KAT_NONCE,
+            Some(1),
+            KAT_CHAIN_ID,
+            &network_salt("testnet"),
+        );
+        assert_eq!(
+            address_from_signature(&req.signature, &digest),
+            parse_address(TEST_ADDR).unwrap()
+        );
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["terms_version"], 1);
     }
 
     /// Pinned against the accounts service itself: inputs and digest are its
@@ -667,6 +796,7 @@ mod tests {
             .unwrap();
         let json = serde_json::to_string(&req).unwrap();
         assert!(!json.contains("label"));
+        assert!(!json.contains("terms_version"));
     }
 
     // --- recovery helper (test-only) ------------------------------------

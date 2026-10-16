@@ -1,0 +1,56 @@
+name: cargo-public-api cache
+
+# Writes the cargo-public-api binary that pre-publish.yml's prepublish-surface restores, from main
+# (ENG-21487). A cache written by a pull_request run is scoped to that PR's ref, so no other PR can
+# read it, and every PR built the tool from source (minutes). One written here is readable by every
+# PR into main. Each PR that restores it counts as a use, so GitHub doesn't evict it while PRs keep
+# coming; the weekly run puts it back if it does go. cargo-public-api publishes no prebuilt binary,
+# so building it once here is the cheapest way.
+#
+# The version and the cache key come from pre-publish.yml, read at run time, so the two can't
+# drift: bumping CARGO_PUBLIC_API_VERSION there runs this on the merge and writes the new key.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pre-publish.yml'
+      - '.github/workflows/cargo-public-api-cache.yml'
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read the version pre-publish.yml installs
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(sed -nE 's/^  CARGO_PUBLIC_API_VERSION: *([0-9][0-9.]*) *$/\1/p' .github/workflows/pre-publish.yml)"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error title=cargo-public-api cache::Could not read CARGO_PUBLIC_API_VERSION from .github/workflows/pre-publish.yml (got '${version}'). Its env block must keep the form 'CARGO_PUBLIC_API_VERSION: X.Y.Z'."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # The same path and key as pre-publish.yml's "Cache cargo-public-api" step: both must change
+      # together.
+      - name: Cache cargo-public-api
+        id: cpa-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-public-api
+          key: cargo-public-api-${{ steps.version.outputs.version }}-${{ runner.os }}
+      - name: Install cargo-public-api
+        if: steps.cpa-cache.outputs.cache-hit != 'true'
+        env:
+          CARGO_PUBLIC_API_VERSION: ${{ steps.version.outputs.version }}
+        run: cargo install cargo-public-api --version "$CARGO_PUBLIC_API_VERSION" --locked

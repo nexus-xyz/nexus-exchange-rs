@@ -74,8 +74,9 @@ jobs:
       # after a crates.io owner adds the trusted publisher (owner nexus-xyz, repo nexus-exchange-rs,
       # workflow release-plz.yml, no environment). Until then the exchange fails, which
       # continue-on-error absorbs, and the publish falls back to CARGO_REGISTRY_TOKEN. Once the
-      # publisher exists and that token is revoked and deleted, the fallback is empty, and a failed
-      # exchange fails the publish loudly instead of silently using something else.
+      # publisher exists and that token is revoked and deleted, the fallback is empty: a failed
+      # exchange then leaves release-plz with no token, it tries trusted publishing itself (see the
+      # release step), and if that fails too the publish fails loudly, never on something else.
       #
       # Not release-plz's own trusted publishing: it only tries OIDC when no token is set at all
       # (release_plz_core release.rs, `should_use_trusted_publishing`), so it can't run alongside the
@@ -99,9 +100,15 @@ jobs:
       - uses: MarcoIeni/release-plz-action@8921286633dfa0c4020f7f30bd1c14fe19cbb10e # v0.5.142
         with:
           command: release
+          # The `token` input, not the CARGO_REGISTRY_TOKEN variable (ENG-21487). With neither
+          # credential (the stored token deleted, and no OIDC token from the step above), an
+          # expression in `env:` still sets the variable, to "", and release-plz reads a set
+          # variable as a token: it skips its own trusted publishing and publishes with "". The
+          # action passes `--token` only when the input is non-empty, so then release-plz sees no
+          # token at all and mints one through trusted publishing itself.
+          token: ${{ steps.crates-io.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
 
   # Opens and refreshes the release PR. Serialised per branch so two runs never edit it at once. A
   # cancelled pending run here loses nothing: the next run refreshes the same PR from a newer main.

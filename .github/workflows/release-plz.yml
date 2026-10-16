@@ -31,7 +31,7 @@ jobs:
       # Since 10-07 the org no longer lets GITHUB_TOKEN open PRs, and an App token is not subject to
       # that setting; its PRs also normally run CI without waiting for an "Approve and run workflows" click.
       # Falls back to GITHUB_TOKEN until the repo has both RELEASE_BOT_APP_ID and RELEASE_BOT_PRIVATE_KEY.
-      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app-token
         if: env.HAS_RELEASE_BOT == 'true'
         with:
@@ -121,7 +121,7 @@ jobs:
       # Since 10-07 the org no longer lets GITHUB_TOKEN open PRs, and an App token is not subject to
       # that setting; its PRs also normally run CI without waiting for an "Approve and run workflows" click.
       # Falls back to GITHUB_TOKEN until the repo has both RELEASE_BOT_APP_ID and RELEASE_BOT_PRIVATE_KEY.
-      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app-token
         if: env.HAS_RELEASE_BOT == 'true'
         with:

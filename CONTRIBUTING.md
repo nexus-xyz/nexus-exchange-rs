@@ -94,8 +94,10 @@ release-plz publishes only commits associated with a PR from such a branch
 and `pre-publish.yml` treats it as a release PR.
 
 **Before merging, the pre-publish checks have to be green on the release PR**
-(`.github/workflows/pre-publish.yml`, ENG-18798). release-plz opens the PR with
-the default token, so its runs wait for **Approve and run workflows** on the PR.
+(`.github/workflows/pre-publish.yml`, ENG-18798). release-plz opens the PR as
+the `nexus-release-bot2` App (ENG-22238), so its runs start on their own. If the
+repo is missing the `RELEASE_BOT_*` secrets, `release-plz.yml` falls back to the
+default token, which the org no longer lets open PRs.
 
 - `prepublish-surface`: the packed crate's public API equals `public-api.txt`.
 - `prepublish-smoke`: the packed crate, built into a clean consumer, lists markets

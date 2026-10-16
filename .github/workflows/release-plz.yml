@@ -24,14 +24,24 @@ jobs:
       # crates.io trusted publishing (ENG-18798): lets the publish step trade this run's OIDC token
       # for a 30-minute crates.io token instead of using a long-lived one. See the steps below.
       id-token: write
+    env:
+      HAS_RELEASE_BOT: ${{ secrets.RELEASE_BOT_APP_ID != '' }}
     steps:
+      # The App token release-plz runs as (nexus-release-bot2, as in -go, -cli and -mcp; ENG-22238).
+      # Since 10-07 the org no longer lets GITHUB_TOKEN open PRs, and an App token is not subject to
+      # that setting; its PRs also run CI without waiting for an "Approve and run workflows" click.
+      # Falls back to GITHUB_TOKEN until the repo has the App secrets.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        if: env.HAS_RELEASE_BOT == 'true'
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          # Prefer a real PAT / GitHub App token (see the release-plz-pr job). Falls back to the
-          # default GITHUB_TOKEN so this workflow is safe to merge BEFORE the RELEASE_PLZ_TOKEN
-          # secret exists.
-          token: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+          # The App token from the first step; GITHUB_TOKEN until the App secrets exist.
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
         with:
           # Pinned by SHA, the action can't read the toolchain from its ref name.
@@ -87,7 +97,7 @@ jobs:
         with:
           command: release
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
 
   # Opens and refreshes the release PR. Serialised per branch so two runs never edit it at once. A
@@ -101,15 +111,26 @@ jobs:
     concurrency:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
+    env:
+      HAS_RELEASE_BOT: ${{ secrets.RELEASE_BOT_APP_ID != '' }}
     steps:
+      # The App token release-plz runs as (nexus-release-bot2, as in -go, -cli and -mcp; ENG-22238).
+      # Since 10-07 the org no longer lets GITHUB_TOKEN open PRs, and an App token is not subject to
+      # that setting; its PRs also run CI without waiting for an "Approve and run workflows" click.
+      # Falls back to GITHUB_TOKEN until the repo has the App secrets.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        if: env.HAS_RELEASE_BOT == 'true'
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          # Prefer a real PAT / GitHub App token so release-plz's release PRs are
-          # authored by that identity and their checks start without a click.
-          # Falls back to the default GITHUB_TOKEN so this workflow is safe to
-          # merge BEFORE the RELEASE_PLZ_TOKEN secret exists.
-          token: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+          # The App token from the first step, so release-plz's release PRs are
+          # authored by the App and their checks start without a click.
+          # GITHUB_TOKEN until the App secrets exist.
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
         with:
           # Pinned by SHA, the action can't read the toolchain from its ref name.
@@ -119,15 +140,11 @@ jobs:
         with:
           command: release-pr
         env:
-          # Once a RELEASE_PLZ_TOKEN (a fine-grained PAT or GitHub App token with
-          # contents + pull-requests write) is added as a repo secret, release-plz's
-          # PRs will be opened as that identity and their checks will start on
-          # their own. Until then this falls back to the default token. In this
-          # repo that does create the release PR's runs, but every one is parked
-          # in `action_required` until someone clicks "Approve and run workflows"
-          # on the PR, after each refresh of the PR (seen on #175: CI, Security
-          # and Spec drift at 2026-10-08T01:11Z). The pre-publish checks wait on
-          # the same click; pre-publish.yml and CONTRIBUTING.md say so.
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+          # With the App token, release-plz's PRs are opened as the App and their
+          # checks start on their own. The GITHUB_TOKEN fallback can no longer open
+          # the PR at all since 10-07; before that, every run on its PRs parked in
+          # `action_required` until someone clicked "Approve and run workflows"
+          # (seen on #175: CI, Security and Spec drift at 2026-10-08T01:11Z).
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           # As in release-plz's quickstart. `release-pr` never publishes.
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

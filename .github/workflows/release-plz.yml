@@ -25,19 +25,21 @@ jobs:
       # for a 30-minute crates.io token instead of using a long-lived one. See the steps below.
       id-token: write
     env:
-      HAS_RELEASE_BOT: ${{ secrets.RELEASE_BOT_APP_ID != '' && secrets.RELEASE_BOT_PRIVATE_KEY != '' }}
+      HAS_RELEASE_BOT: ${{ secrets.RELEASE_BOT_CLIENT_ID != '' && secrets.RELEASE_BOT_PRIVATE_KEY != '' }}
     steps:
       # The App token release-plz runs as (nexus-release-bot2, as in -go, -cli and -mcp; ENG-22238).
       # Since 10-07 the org no longer lets GITHUB_TOKEN open PRs, and an App token is not subject to
       # that setting; its PRs also normally run CI without waiting for an "Approve and run workflows" click.
-      # Falls back to GITHUB_TOKEN until the repo has both RELEASE_BOT_APP_ID and RELEASE_BOT_PRIVATE_KEY.
+      # Falls back to GITHUB_TOKEN until the repo has both RELEASE_BOT_CLIENT_ID and
+      # RELEASE_BOT_PRIVATE_KEY.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         if: env.HAS_RELEASE_BOT == 'true'
         with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          client-id: ${{ secrets.RELEASE_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-          # No wider than this job's own grant.
+          # Ask for only what this job needs. Without these the token gets every permission the App's
+          # installation has; the job's own `permissions:` block does not cap an App token.
           permission-contents: write
           permission-pull-requests: read
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -115,19 +117,21 @@ jobs:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
     env:
-      HAS_RELEASE_BOT: ${{ secrets.RELEASE_BOT_APP_ID != '' && secrets.RELEASE_BOT_PRIVATE_KEY != '' }}
+      HAS_RELEASE_BOT: ${{ secrets.RELEASE_BOT_CLIENT_ID != '' && secrets.RELEASE_BOT_PRIVATE_KEY != '' }}
     steps:
       # The App token release-plz runs as (nexus-release-bot2, as in -go, -cli and -mcp; ENG-22238).
       # Since 10-07 the org no longer lets GITHUB_TOKEN open PRs, and an App token is not subject to
       # that setting; its PRs also normally run CI without waiting for an "Approve and run workflows" click.
-      # Falls back to GITHUB_TOKEN until the repo has both RELEASE_BOT_APP_ID and RELEASE_BOT_PRIVATE_KEY.
+      # Falls back to GITHUB_TOKEN until the repo has both RELEASE_BOT_CLIENT_ID and
+      # RELEASE_BOT_PRIVATE_KEY.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         if: env.HAS_RELEASE_BOT == 'true'
         with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          client-id: ${{ secrets.RELEASE_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-          # No wider than this job's own grant.
+          # Ask for only what this job needs. Without these the token gets every permission the App's
+          # installation has; the job's own `permissions:` block does not cap an App token.
           permission-contents: write
           permission-pull-requests: write
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

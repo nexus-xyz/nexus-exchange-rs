@@ -96,7 +96,7 @@ and `pre-publish.yml` treats it as a release PR.
 **Before merging, the pre-publish checks have to be green on the release PR**
 (`.github/workflows/pre-publish.yml`, ENG-18798). release-plz opens the PR as
 the `nexus-release-bot2` App (ENG-22238), which needs the repo secrets
-`RELEASE_BOT_APP_ID` and `RELEASE_BOT_PRIVATE_KEY`, so its runs should start
+`RELEASE_BOT_CLIENT_ID` and `RELEASE_BOT_PRIVATE_KEY`, so its runs should start
 on their own. The first App release PR may still park in `action_required`, since the App has no merged commit here yet; click **Approve and run workflows** on it once. Without both secrets, `release-plz.yml` falls back to the default
 token, which the org no longer lets open PRs.
 

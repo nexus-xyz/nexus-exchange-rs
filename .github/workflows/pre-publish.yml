@@ -26,9 +26,9 @@ name: Pre-publish
 # The surface check is enforced on every PR, because the PR that changes the API is where the
 # snapshot has to move.
 #
-# The release PR's runs start on their own: release-plz opens it as the nexus-release-bot2 App
-# (ENG-22238), whose PRs this repo's approval policy does not hold. Under the old GITHUB_TOKEN they
-# parked in `action_required` until someone clicked "Approve and run workflows" on the PR.
+# The release PR's runs should start on their own: release-plz opens it as the nexus-release-bot2
+# App (ENG-22238). The App's first release PR here may still park in `action_required`, before it
+# has a merged commit; then someone clicks "Approve and run workflows" on the PR once.
 
 on:
   pull_request:

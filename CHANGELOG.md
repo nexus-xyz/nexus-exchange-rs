@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.13.1...v0.14.0) - 2026-10-30
+
+### Added
+
+- *(auth)* [**breaking**] sign RegisterAgent with the accepted terms version (ENG-21315) ([#186](https://github.com/nexus-xyz/nexus-exchange-rs/pull/186))
+
+### Fixed
+
+- *(types)* [**breaking**] decode fractional fee rates (ENG-21111) ([#182](https://github.com/nexus-xyz/nexus-exchange-rs/pull/182))
+
+### Other
+
+- *(release)* pin create-github-app-token to v3.2.0 and pass client-id (ENG-22238) ([#191](https://github.com/nexus-xyz/nexus-exchange-rs/pull/191))
+- mark the repository archived (ENG-22796) ([#195](https://github.com/nexus-xyz/nexus-exchange-rs/pull/195))
+- *(release-gate)* pre-publish gate follow-ups from the ENG-18798 reviews (ENG-21487) ([#190](https://github.com/nexus-xyz/nexus-exchange-rs/pull/190))
+- *(release)* run release-plz as the nexus-release-bot2 App so it can open release PRs (ENG-22238) ([#187](https://github.com/nexus-xyz/nexus-exchange-rs/pull/187))
+- *(auth)* the agent register nonce is the signing time (ENG-21898) ([#185](https://github.com/nexus-xyz/nexus-exchange-rs/pull/185))
+- gate the release PR with pre-publish checks, and publish only from its merge (ENG-18798) ([#173](https://github.com/nexus-xyz/nexus-exchange-rs/pull/173))
+
 ## [0.13.1](https://github.com/nexus-xyz/nexus-exchange-rs/compare/v0.13.0...v0.13.1) - 2026-10-09
 
 ### Added
